@@ -36,7 +36,6 @@ const {
   servedAge,
   ingestSystems,
   staleness,
-  stalePopupLine,
   markerOpacity,
   glideClock,
   trainLatLng,
@@ -54,9 +53,11 @@ const {
   withheldFix,
   vanishingFocusMessage,
   vanishingFocusPlan,
-  positionLineHtml,
+  positionWords,
   positionClause,
-  vehicleStaleLine,
+  popupFreshHtml,
+  feedStateWords,
+  feedDotState,
   composeAnnouncements,
   railroadTrainName,
   subwayTrainName,
@@ -458,33 +459,80 @@ test("6.3 railroadAtItsStation: a train names its station AND is drawn on it, or
   assert.equal(railroadAtItsStation(null), false);
 });
 
-test("6.3 a popup's position line and a name's clause are one answer, and silent for a fresh fix", () => {
+test("6.3 a popup's position row and a name's clause are one answer, and silent for a fresh fix", () => {
   const fresh = q(row(NOW - 5, "reported"));
   const aged = q(row(NOW - 300, "reported"));
   const sched = q(row(NOW - 5, "placed"));
-  assert.equal(positionLineHtml(fresh), "");
-  assert.equal(positionLineHtml(aged), '<br><span class="popup-sub">live GPS, as of 5m ago</span>');
-  assert.equal(positionLineHtml(sched), '<br><span class="popup-sub">scheduled position (no GPS)</span>');
-  assert.equal(positionLineHtml(null), "");
+  // MR5: positionWords replaces positionLineHtml and returns the WORDS. The markup around them is
+  // section 5's grid now (popupRowsHtml), which drops a row whose value is empty, so the silence
+  // this asserts is the same silence: no words, no row.
+  assert.equal(positionWords(fresh), "");
+  assert.equal(positionWords(aged), "live GPS, as of 5m ago");
+  assert.equal(positionWords(sched), "scheduled position (no GPS)");
+  assert.equal(positionWords(null), "");
   assert.equal(positionClause(fresh), null);
   assert.equal(positionClause(aged), "live GPS, as of 5m ago");
   assert.equal(positionClause(sched), "scheduled position, no GPS");
   assert.equal(positionClause(null), null);
 });
 
-test("6.3 a vehicle popup's system line speaks only for what its position's words did not say", () => {
+/* MR5 (ruling Q2): THE SAME SEVEN CASES, ASKED OF THE FOOTER, because the footer took the line's
+   job. vehicleStaleLine is deleted; popupFreshHtml keeps its rule exactly and adds the two states it
+   never had. The cases below are 6.3's own, unchanged in what they assert and re-pointed at the
+   function that answers now, so the coverage this rule has always had survives the move rather than
+   being rewritten into something easier.
+
+   WHAT "SAID ONCE" LOOKS LIKE NOW is the one difference, and it is the ruling's: the line returned
+   the empty string, the footer returns its SQUARE AND NOTHING ELSE. A rider cannot tell "this feed is
+   live" from "this popup forgot to say" unless the mark is always there, so the square stays; the
+   words leave the screen AND the accessibility tree, because the Position row above has already said
+   them. `shown` is the footer's form of "says its own" and `spoken` is the LIVE state's form of it
+   (the one state with nothing for an eye, which a screen reader still needs), and both are asserted
+   against the words the state actually has rather than against a literal.
+
+   RULING R2 IS WHY THAT SENTENCE CHANGED, and the assertion under it changed with it. Until R2 the
+   suppressed words went into the same visually-hidden span the live state uses, so a screen reader
+   heard the Position row's age and then the footer's: two ages about one train, which is the defect
+   the rule in popupFreshHtml's own comment forbids in as many words. `said` now beats `live`.
+
+   AND THE LOOP BELOW IS THE ONLY PLACE THAT PRECEDENCE IS PINNED in this file, which is worth
+   knowing before anyone trims it: its second row is a LIVE feed under an older stated fix, so an
+   implementation that tested `live` first would pass every other assertion here. helpers.test.js
+   holds the same case, so the two tiers hold it independently. */
+test("6.3 / MR5 Q2: a vehicle's footer speaks only for what its position's words did not say", () => {
+  const footer = (age, position) => popupFreshHtml({ state: feedDotState({ age }), age, position });
+  const words = (age) => feedStateWords({ state: feedDotState({ age }), age });
+  const shown = (age) => footer(age, null).endsWith(`${words(age)}</div>`);
+  const spoken = (out, age) => out.includes(`<span class="visually-hidden">${words(age)}</span>`);
+  const square = (age) => `data-state="${feedDotState({ age })}"`;
+
   const undated = q(row(null, "reported"), mnr);
-  // Metro-North's undated fix states no age, so a stale MNR's line is the only age there is.
-  assert.equal(vehicleStaleLine(400, undated), stalePopupLine(400));
-  // A fix whose words state an age at least as old as its system's: said once.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 420, "reported"))), "");
-  assert.equal(vehicleStaleLine(30, q(row(NOW - 300, "reported"))), "");
-  assert.equal(vehicleStaleLine(null, q(row(NOW - 300, "reported"))), "");
-  // Words younger than the system's age leave the system's line to say its own.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 100, "reported"))), stalePopupLine(400));
-  // A fresh fix in a stale system, and nothing stale at all, exactly as C2 drew them.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 5, "reported"))), stalePopupLine(400));
-  assert.equal(vehicleStaleLine(30, q(row(NOW - 5, "reported"))), "");
+  // Metro-North's undated fix states no age, so a stale MNR's footer is the only age there is.
+  assert.ok(footer(400, undated).endsWith(`${words(400)}</div>`), "an undated fix leaves the footer to speak");
+  /* A fix whose words state an age at least as old as the feed's: said once BY THE ROW ABOVE, so the
+     footer adds nothing to either channel, and still marked. The absence is asserted over the whole
+     string rather than as `!spoken(...)`, and that is not belt and braces: a footer that printed the
+     suppressed words VISIBLY would satisfy `!spoken` and nothing else in this repo would notice,
+     which is the "a test that cannot fail" shape appearing inside the fix for it. */
+  for (const [age, pos] of [[400, q(row(NOW - 420, "reported"))], [30, q(row(NOW - 300, "reported"))], [null, q(row(NOW - 300, "reported"))]]) {
+    const out = footer(age, pos);
+    assert.ok(!out.includes(words(age)), `age ${age}: the position said it, so the footer says it nowhere`);
+    assert.ok(out.includes(square(age)), `age ${age}: the square is never withheld`);
+  }
+  // Words younger than the feed's age leave the footer to say its own.
+  assert.ok(footer(400, q(row(NOW - 100, "reported"))).endsWith(`${words(400)}</div>`));
+  // A fresh fix in a stale feed, and nothing stale at all, exactly as C2 drew them.
+  assert.ok(footer(400, q(row(NOW - 5, "reported"))).endsWith(`${words(400)}</div>`));
+  assert.ok(shown(400), "a stale feed with no position shows its age");
+  /* AND THE LAST OF C2's CASES IS THE ONE THE FOOTER CHANGES ON PURPOSE. vehicleStaleLine rendered
+     NOTHING for a fresh system; the footer renders its square with "Live · 5s" in the tree, because
+     this app has no word for live on any surface (memo D9) and a rider still needs to see that the
+     feed is current. feedDotState is what decides that, and it is the strip's own judgment. */
+  const fresh = footer(30, q(row(NOW - 5, "reported")));
+  assert.equal(feedDotState({ age: 30 }), "live");
+  assert.ok(fresh.includes('data-state="live"'), "a fresh feed still draws its square");
+  assert.ok(spoken(fresh, 30), "and says Live in the tree, where an eye sees only the square");
+  assert.ok(!/>Live/.test(fresh.replace(/<span class="visually-hidden">[^<]*<\/span>/, "")), "and nowhere else");
 });
 
 test("6.3 one write per render: a poll's announcements compose into one sentence, in order", () => {
@@ -671,14 +719,15 @@ test("6.3 every vehicle surface says its position from one answer: the popup's w
     subwayTrainName({ route_id: "1", stop_name: "Times Sq-42 St", direction: "Northbound" }, sched),
     "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
   );
+  // MR5: the popup's position is the last ROW of section 5's grid rather than a trailing line.
   assert.match(
     pathTrainPopupHtml({ route_id: "862" }, null, "#d93a30", sched),
-    /<span class="popup-sub">scheduled position \(no GPS\)<\/span>$/,
+    /<div class="k">Position<\/div>\n<div class="v">scheduled position \(no GPS\)<\/div><\/div>\n$/,
   );
   assert.equal(pathTrainName({ route_id: "862" }, null, sched), "PATH route 862, PATH, scheduled position, no GPS");
   assert.match(
     njtTrainPopupHtml({ route_id: "9" }, "Northeast Corridor", "#DD3439", estimate),
-    /<span class="popup-sub">estimated from a prediction<\/span>$/,
+    /<div class="k">Position<\/div>\n<div class="v">estimated from a prediction<\/div><\/div>\n$/,
   );
   assert.equal(
     njtTrainName({ route_id: "9", train_num: "3800" }, "Northeast Corridor", estimate),
@@ -925,4 +974,81 @@ test("6.3 a no-times Metro-North placement is still a placement: the provenance 
   assert.equal(drawnFromPrediction(train), true);
   assert.equal(railroadAtItsStation(train), true);
   assert.equal(q(train, mnr).compact, "scheduled (no GPS)");
+});
+
+/* ===== MR5, ruling Q1: every popup's position row is positionWords' ======================
+
+   THE ONE SURFACE THAT DID NOT USE IT, and the reason this needs a test in this file at all.
+   systems/railroad.js's popup rendered `position.compact` from a line of its own,
+   UNCONDITIONALLY, and it was the app's only surface that did. Two rider-visible differences
+   followed: a `placed` train said "scheduled (no GPS)" instead of the contract's "scheduled
+   position (no GPS)", and a FRESH GPS fix said "live GPS" where every other surface says nothing,
+   because silence means current (memo D9).
+
+   IN NODE, BY READING THE SOURCE, because systems/railroad.js needs Leaflet and a document and
+   cannot be required here. That is the same escape frontend/railtag.test.js takes for the NJ
+   Transit head (finding N6) and for the same reason: the claim is about which function a builder
+   calls, which is a fact about the file. The e2e pins hold what the popup then SAYS.
+
+   AND THE STRINGS ARE ASSERTED HERE TOO, from positionQualifier directly, so this test says what
+   the two changes ARE rather than only which call site moved. A reader who wants the before can
+   see it in the ledger; what is below is the after, derived from the contract rather than typed. */
+/* COMMENTS STRIPPED FIRST, AND THAT IS NOT FUSSINESS: the comment this stage wrote at the changed
+   line SAYS "position.compact", because explaining what moved requires naming it. Scraping the raw
+   source found the word in the prose and failed a correct build. pins.spec.js P5b paid for the same
+   thing in its literal extractor and ended up with a character scanner; a source this small needs
+   only the two comment forms removed, in one pass, longest-first so a line comment inside a block
+   comment cannot end it early. */
+const withoutComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+test("MR5 Q1: the railroad popup takes its position row from positionWords, not position.compact", () => {
+  const src = withoutComments(readFileSync(join(__dirname, "systems", "railroad.js"), "utf8"));
+  const body = src.slice(src.indexOf("function railroadPopup("));
+  const fn = body.slice(0, body.indexOf("\n}"));
+
+  assert.match(fn, /positionWords\(position\)/, "the railroad popup must render through positionWords");
+  assert.ok(
+    !/position\.compact/.test(fn),
+    "the railroad popup still reads position.compact, which is the one surface that chose its own form",
+  );
+  // And nowhere else in the app does either: positionWords is the only popup reader of a
+  // position's words now, and .compact has no popup caller at all.
+  for (const rel of ["systems/subway.js", "systems/buses.js", "systems/njt.js", "systems/path.js", "systems/ferry.js"]) {
+    const other = withoutComments(readFileSync(join(__dirname, rel), "utf8"));
+    assert.ok(!/position\.compact/.test(other), `${rel} renders position.compact itself`);
+  }
+  // AND THE SCRAPE IS NOT VACUOUS: the slice really is the function, not an empty string that
+  // trivially contains no forbidden text. This is the check that would have caught a bad indexOf.
+  assert.ok(fn.length > 400, `the railroadPopup slice is only ${fn.length} characters, so it found the wrong thing`);
+  assert.match(fn, /routeAlertsBlock\(/, "and it is the popup builder, which opens with its alerts block");
+});
+
+test("MR5 Q1: the two strings the unification changes, and the two it does not", () => {
+  const board = { now: 1000, servedAt: 1000, system: "LIRR" };
+  const line = (row, b = board) => positionWords(positionQualifier(row, b));
+
+  // ONE: a placed train gains the contract's own word. `.compact` is what the railroad popup used
+  // to print and it still exists, so the difference is asserted rather than described.
+  const placed = positionQualifier({ observed_at: 1000, provenance: "placed" }, board);
+  assert.equal(placed.compact, "scheduled (no GPS)");
+  assert.equal(placed.words, "scheduled position (no GPS)");
+  assert.match(line({ observed_at: 1000, provenance: "placed" }), /scheduled position \(no GPS\)/);
+
+  // TWO: a FRESH reported fix says nothing at all, which is the silence rule reaching this popup.
+  const fresh = positionQualifier({ observed_at: 1000, provenance: "reported" }, board);
+  assert.equal(fresh.kind, "", "a current fix is the unqualified kind");
+  assert.equal(fresh.words, "live GPS", "the words exist; it is the LINE that is withheld");
+  assert.equal(line({ observed_at: 1000, provenance: "reported" }), "", "and the popup prints none of it");
+
+  // AND THE TWO THAT DO NOT MOVE, which is what keeps this a unification rather than a silencing.
+  // An aged fix still speaks, and an estimate always did.
+  const aged = line({ observed_at: 700, provenance: "reported" });
+  assert.match(aged, /live GPS, as of 5m ago/, "an aged fix still says how old it is");
+  assert.match(line({ observed_at: 1000, provenance: "estimated" }), /estimated from a prediction/);
+
+  // The empty-words guard the ruling asked for, which positionQualifier cannot currently trigger:
+  // asserted against a hand-made position so the guard is exercised rather than merely present.
+  assert.equal(positionWords({ kind: "placed", words: "" }), "");
+  assert.equal(positionWords({ kind: "", words: "live GPS" }), "");
+  assert.equal(positionWords(null), "");
 });

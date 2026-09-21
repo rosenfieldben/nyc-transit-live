@@ -219,7 +219,7 @@ const UNDECIDABLE_SHAPES = [
     // "parent then child" pattern would miss for no good reason.
     where: (id) => /svg[^ ]* text/.test(id),
     // ROUND 2 CORRECTED THIS DECIDER. It used to name layout.spec.js A4g, which samples
-    // .arr-badge, .station-chip, .leaflet-popup-content b and .arr-dir, and touches no SVG
+    // .arr-badge, .station-chip, a popup's .pt title and .dir headings, and touches no SVG
     // text node anywhere. The exception therefore pointed at a spec that decided a different
     // surface, which is the exact "suppression with a sentence attached" the pairing rule
     // exists to prevent. A1z below now measures these glyphs against their own backing
@@ -312,18 +312,28 @@ const UNDECIDABLE_SHAPES = [
        limit about overlap, decided by measurement, exactly as the station label above is.
 
        SCOPED BY THE SVG'S OWN CLASS, which railTagSvg writes and nothing else uses. A1z4
-       closes the hole the way A1z3 does for tooltips, by asserting that every `svg.rail-tag`
-       on the page is a rail train's tag, so a second surface adopting the class fails there
-       rather than widening this silently. */
+       closes the hole the way A1z3 does for tooltips, by asserting where every `svg.rail-tag`
+       on the page is: on the map under a rail tag marker, or inside a rail train's own popup
+       title, counted separately, so a third surface adopting the class fails there rather than
+       widening this silently.
+
+       AND THE POPUP IS IN THAT CLOSURE BECAUSE OF THIS EXCEPTION, which a reviewer had to point
+       out. MR5 copies a vehicle's mark into its popup title, so this gate's own "popup open with
+       cross-link" state carries `svg.rail-tag text` nodes INSIDE the scanned popup, at three
+       widths in both themes, and they are suppressed here. A1z4 did not open a popup, so the
+       decider named below was deciding about a document state the gate does not scan: the excuse
+       and the measurement were about two different pages. A1z4 now opens one, with both tag
+       bodies, and measures those glyphs too. */
     name: "a commuter rail tag's type, overlapped by a neighbouring tag at regional zoom",
     rule: "color-contrast",
     message: /background color could not be determined because it is overlapped by another element/,
     where: (id) => /svg\.rail-tag text/.test(id),
     decider:
       "a11y.spec.js A1z4 reads each tag's printed ink and the fill of the block it is printed " +
-      "on straight off the drawn page, in both themes, and requires AA; railtag.test.js " +
-      "measures the same pair in node over all 31 (route_color, route_text_color) pairs the " +
-      "three feeds publish, which is what found that eight of them do not clear as published.",
+      "on straight off the drawn page, in both themes, on the map AND inside a rail train's " +
+      "popup title (both tag bodies), and requires AA; railtag.test.js measures the same pair " +
+      "in node over all 31 (route_color, route_text_color) pairs the three feeds publish, " +
+      "which is what found that eight of them do not clear as published.",
   },
   {
     name: "the skip link, judged by a static rule that cannot run the page",
@@ -566,6 +576,9 @@ const STATES = [
       // draft took `find((r) => r.marker.getPopup())`, meaning "the first railroad with any
       // popup bound", and every railroad has one. Measured, it opened MNR|mnr-gps-1:
       //   {"text":"MNR · HudsonTrain 1797live GPS","hasCrossLink":false,"buttons":[]}
+      // (that capture is history: MR5's ruling Q1 retired the popup's "live GPS" on a FRESH fix,
+      // so the same draft today would capture "MNR · HudsonTrain 1797". The defect it records is
+      // unchanged, and so is the predicate below that fixed it.)
       // so the state named "with cross-link" scanned a popup that has no buttons at all,
       // and the page-wide gate had never examined a cross-link in any state. The reviewer
       // who found it proved the cost by emptying the cross-link's accessible name: the
@@ -587,7 +600,9 @@ const STATES = [
            frame 0  opacity 0     frame 1  opacity 0     frame 2  opacity 0.083
          The near-black body text survives that; the muted ink does not. CI reported
          color-contrast on exactly the two muted nodes at 1280 (.popup-sub #666,
-         .popup-crosslink #1d4ed8) and four nodes at 375, while this machine passed the same
+         .popup-crosslink #1d4ed8: both are what CI printed at the time, and MR5 has since
+         tokenised the first and renamed the second to .xlink) and four nodes at 375, while
+         this machine passed the same
          commit 16 runs out of 16. A gate whose verdict depends on how fast the machine is
          is not a gate. */
       await expectState(
@@ -599,7 +614,7 @@ const STATES = [
     // The cross-link is named as a target, so the anti-vacuity check fails if the scan
     // stops reaching it. That is the half the first draft was missing: the state reached
     // the wrong popup AND nothing asked whether a cross-link had been examined.
-    targets: ["leaflet-popup", "popup-crosslink"],
+    targets: ["leaflet-popup", "xlink"],
     // BOTH THEMES, by ruling. A popup is the surface a rider reads longest and the one MR1
     // does not restyle: its vocabulary is MR5's. Scanning it in the dark theme now is how
     // "unchanged" stops being an assumption, and it is what will catch MR5 the first time a
@@ -792,8 +807,10 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
          three commuter train rows into the two tag bodies it draws, and split the subway station
          row so the transfer ring gets the name finding F16 asked for: 18 - 2 - 1 + 1 = 16, plus
          the note. A literal rather than a range, because a count that tolerated drift would not
-         have caught any of the six rows MR3 left describing marks the app had stopped drawing. */
-      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(17);
+         have caught any of the six rows MR3 left describing marks the app had stopped drawing.
+         MR5 adds two more for finding F17, the tag's head in its two axes, so eighteen rows plus
+         the note is nineteen. */
+      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(19);
       const dim = measured.rows.filter((r) => r.ratio === null || r.ratio < 4.5);
       expect(dim, `${label}: every Key panel row must clear AA on the header's surface`).toEqual([]);
     }
@@ -1270,8 +1287,44 @@ test("A1z4. every commuter rail tag's type is legible on the block it is printed
   // spec measuring nothing passes.
   await expect(page.locator("svg.rail-tag")).toHaveCount(6);
 
+  /* AND THE SEVENTH TAG, WHICH IS MR5's, AND WHICH THIS SPEC DID NOT SEE. A reviewer's finding, and
+     it is about the axe exception above rather than about a colour: `svg.rail-tag text` is excused
+     from the color-contrast rule on the strength of THIS spec asserting that every `svg.rail-tag` on
+     the page belongs to a rail tag marker. Section 5 copies a vehicle's own mark into its popup
+     title, so a railroad or NJ Transit train popup now draws a seventh `svg.rail-tag` inside
+     `.leaflet-popup-content` - and the axe gate's own "popup open with cross-link" state opens
+     exactly that popup, at three widths in both themes, where those glyphs are suppressed by an
+     exception whose named decider was looking at a document with no popup in it. The closure was a
+     count over a class this stage widened, which is the shape this phase keeps paying for.
+
+     SO THE POPUP IS A MEASURED PLACE HERE, and both tag BODIES are, because they print different
+     pairs: a solid body prints the theme's paper on the agency's ink, an outlined one prints ink on
+     paper with the branch colour as a stripe. One popup at a time, since Leaflet keeps one open. */
+  const closePopups = async () => {
+    await page.evaluate(() => map.closePopup());
+    /* AND WAIT FOR THE ELEMENT TO GO, not just for the close: Leaflet fades a closed popup out over
+       200ms and removes the element on a timer, so a popup opened immediately after closing another
+       gives a document with TWO popups in it for a fifth of a second. Measured here, as the count
+       assertion below failing with 2. */
+    await expect(page.locator(".leaflet-popup-content")).toHaveCount(0);
+  };
+  const railPopup = async (body) => {
+    await closePopups();
+    await page.evaluate((want) => {
+      const records = [...railroads.values(), ...njtTrainRecords.values()];
+      const wanted = records.find((r) => (r.marker.getIcon().options.className ?? "").includes(`rail-tag-${want}`));
+      if (!wanted) throw new Error(`the fixture no longer has a rail train with a ${want} tag body`);
+      wanted.marker.openPopup();
+    }, body);
+    await expect(page.locator(`.leaflet-popup-content .pmark svg.rail-tag-${body}`)).toHaveCount(1);
+    await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+  };
+
   for (const theme of ["light", "dark"]) {
     if (theme !== "light") await setTheme(page, theme);
+    for (const inPopup of [null, "solid", "outlined"]) {
+    if (inPopup) await railPopup(inPopup);
+    else await closePopups();
     const measured = await page.evaluate(() => {
       const srgb = (c) => {
         const v = c / 255;
@@ -1316,38 +1369,58 @@ test("A1z4. every commuter rail tag's type is legible on the block it is printed
           rows.push({
             block: i === 0 ? "agency" : "branch",
             body: outlined ? "outlined" : "solid",
+            where: svg.closest(".leaflet-popup-content") ? "popup" : "map",
             glyph: text.textContent,
             ratio: ink && paint ? ratio(ink, paint) : null,
             why: ink && paint ? null : "no block found under the glyph",
           });
         });
       }
+      /* THE SCOPE CLOSURE this exception depends on, the same one A1z3 makes for tooltips:
+         railTagSvg is the only thing that writes this class, so every svg.rail-tag is a rail
+         train's tag - drawn on the map by its marker, or copied into that train's own popup
+         title by section 5's popupMarkHtml. BOTH PLACES ARE NAMED, and a third one fails here
+         rather than widening the exception quietly: the two counts are returned so the caller
+         can say how many are in each, which is what makes this a closure rather than a list of
+         allowed ancestors that anything could be added to. */
+      const place = (svg) =>
+        svg.closest(".rail-tag-marker") ? "marker" : svg.closest(".leaflet-popup-content .pmark") ? "popup" : "loose";
       return {
-        // THE SCOPE CLOSURE this exception depends on, the same one A1z3 makes for tooltips:
-        // railTagSvg is the only thing that writes this class, so every svg.rail-tag is a rail
-        // train's tag. A second surface adopting it fails here rather than widening the
-        // exception quietly.
-        allAreTags: tags.every((svg) => svg.closest(".rail-tag-marker") !== null),
+        places: tags.reduce((counts, svg) => ({ ...counts, [place(svg)]: (counts[place(svg)] ?? 0) + 1 }), {}),
         // And every one is out of the reading order, which is the other half of the statement.
         allAriaHidden: tags.every((svg) => svg.getAttribute("aria-hidden") === "true"),
         rows,
       };
     });
 
-    expect(measured.allAreTags, `${theme}: every svg.rail-tag must belong to a rail tag marker`).toBe(true);
-    expect(measured.allAriaHidden, `${theme}: every tag must be out of the reading order`).toBe(true);
-    // Two glyphs per tag, six tags: twelve measurements, or the loop below decides nothing.
-    expect(measured.rows.length, `${theme}: the scan must find type to measure`).toBe(12);
+    const what = `${theme}, ${inPopup ? `${inPopup} tag in a popup` : "map only"}`;
+    // NO LOOSE TAG, and the marker count unchanged by a popup: the exception covers a tag a rail
+    // marker draws and a tag a rail popup borrows, and nothing else on the page may carry the class.
+    expect(measured.places.loose ?? 0, `${what}: an svg.rail-tag outside a marker and outside a popup`).toBe(0);
+    expect(measured.places.marker, `${what}: the map's own six tags`).toBe(6);
+    expect(measured.places.popup ?? 0, `${what}: the popup's borrowed tag`).toBe(inPopup ? 1 : 0);
+    expect(measured.allAriaHidden, `${what}: every tag must be out of the reading order`).toBe(true);
+    // Two glyphs per tag: twelve measurements on the map, fourteen with a popup open, or the loop
+    // below decides nothing.
+    expect(measured.rows.length, `${what}: the scan must find type to measure`).toBe(inPopup ? 14 : 12);
+    // AND THE POPUP'S OWN TWO ARE IN IT, so a popup that stopped drawing a mark, or drew one the
+    // geometry walk cannot read, fails rather than reducing this pass to the map's twelve again.
+    expect(
+      measured.rows.filter((r) => r.where === "popup").length,
+      `${what}: the popup's own glyphs must be measured, not just counted`,
+    ).toBe(inPopup ? 2 : 0);
 
     for (const row of measured.rows) {
-      expect(row.why ?? null, `${theme}: ${row.body} ${row.block} "${row.glyph}"`).toBe(null);
+      expect(row.why ?? null, `${what}: ${row.where} ${row.body} ${row.block} "${row.glyph}"`).toBe(null);
       expect(
         row.ratio,
-        `${theme}: the ${row.block} glyph "${row.glyph}" on a ${row.body} body reads ` +
+        `${what}: the ${row.block} glyph "${row.glyph}" on a ${row.body} body in the ${row.where} reads ` +
           `${row.ratio?.toFixed(2)} against the block under it`,
       ).toBeGreaterThanOrEqual(4.5);
     }
+    }
   }
+  await closePopups();
 });
 
 test("A1l. the gate has teeth: a defect anywhere on the page IS caught", async ({ page }) => {

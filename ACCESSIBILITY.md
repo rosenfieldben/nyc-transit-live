@@ -189,23 +189,27 @@ Three things stop that gate from being decoration:
   letter in dark; the subway and PATH station dots' fill; the regional rail and
   AirTrain station squares' stroke; the rail tag's ink blocks; the bus mark's
   own fill, taken from the muted wheel rather than the raw one; the ferry dock's
-  fill; and PATH's diamond, which is the feed's own published red. `theme.spec.js D5d` measures them against the
+  fill; the ferry boat's ink edge, which this stage added so that every family
+  clears; and PATH's diamond, which is the feed's own published red. `theme.spec.js D5d` measures them against the
   theme's `--paper`, every mark of every family rather than one per family, and
   `pins.spec.js P4c` is the witness: it pins each number paint by paint, so a
   repaint that lowers one is a changed pin rather than a quiet pass.
-- **One paint is reported rather than promised, and it is the ferry boat's hull
-  in the light theme, at 1.31.** A boat is filled with the colour NYC Ferry
-  publishes for its route, and South Brooklyn's `#ffd100` is that colour; the
-  hull's only other paint is the paper casing every mark on this map carries,
-  which cannot raise a fill's ratio against paper. So the floor is stated as a
-  measurement and not as a promise: the same hull reads 3.74 in the dark theme,
-  and every other boat clears in both. What tells a rider which boat this is,
-  besides the hull, is its popup and its row in the station panel, which is the
-  text equivalent the rest of this document describes. Giving the hull an ink
-  edge inside its casing would let the paragraph above promise the floor for
-  every family without touching a published fill, and `theme.spec.js D5d`
-  asserts this exemption by measurement rather than by comment, so it fails on
-  the day that changes.
+- **There is no longer a paint that is reported rather than promised, and the
+  one that was is worth keeping on the record.** Until this stage the ferry
+  boat's hull was the single paint on this map under the floor: 1.31 in the
+  light theme, because a boat is filled with the colour NYC Ferry publishes for
+  its route, South Brooklyn's `#ffd100` is that colour, and the hull's only
+  other paint was the paper casing every mark carries, which cannot raise a
+  fill's ratio against paper. That was stated here as a measurement rather than
+  as a promise, and `theme.spec.js D5d` held it by asserting the value was
+  **below** 3, with the note that the day a stage gave the hull an ink edge the
+  assertion would fail and this paragraph could be strengthened. That is what
+  happened: the hull now carries an ink edge inside its casing, the paint that
+  finds a boat is one this app chose, and it measures **14.86 in both themes**.
+  The published fill is untouched, which is the other half of the ruling; `D5d`
+  asserts that too, by reading the hull's fill and requiring the feed's yellow
+  to still be there. The exemption is gone because the measurement moved, not
+  because the sentence was edited.
 - Vehicle markers and the named controls meet the WCAG 2.2 **24px target
   floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`. Two things do
   not, and `A4b` asserts the exception rather than hiding it: Leaflet's

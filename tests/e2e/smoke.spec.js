@@ -7,6 +7,8 @@
 const { test, expect } = require("@playwright/test");
 const fx = require("./fixtures/api");
 const { installMocks, json, emptyFeedAt } = require("./mock");
+// MR5: a mark is one token when this file pins a popup's markup (popup.js says why).
+const { withoutMarks } = require("./popup");
 
 // Common setup: intercept everything, freeze the clock at FROZEN_MS, then load the
 // app. Returns the mock ctx so a test can flip overrides / read hit counts.
@@ -309,8 +311,9 @@ test("8. AirTrain: static branches, scheduled popup (not live), toggle", async (
   await page.evaluate(() => airtrainStationLayer.getLayers()[1].openPopup());
   await expect(popup(page)).toContainText("Federal Circle");
   await expect(popup(page)).toContainText("no live tracking");
-  await expect(popup(page)).toContainText("Jamaica: every ~7 min");
-  await expect(popup(page)).toContainText("Howard Beach: every ~7 min");
+  // MR5: a branch is a label cell and its headway is a value cell, so the colon is the column.
+  await expect(popup(page)).toContainText("Jamaica every ~7 min (scheduled)");
+  await expect(popup(page)).toContainText("Howard Beach every ~7 min (scheduled)");
   await expect(popup(page)).toContainText("(scheduled)");
 
   // It is a PLAIN popup, not the live-arrivals component: the shared countdown
@@ -363,7 +366,7 @@ test("9. alerts: a matching subway alert renders above arrivals; a colliding rai
   // The alert block sits ABOVE the direction sections.
   const order = await page.evaluate(() => {
     const html = document.querySelector(".leaflet-popup-content").innerHTML;
-    return { block: html.indexOf("alert-block"), dir: html.indexOf("arr-dir") };
+    return { block: html.indexOf("alert-block"), dir: html.indexOf('class="dir"') };
   });
   expect(order.block).toBeGreaterThanOrEqual(0);
   expect(order.block).toBeLessThan(order.dir);
@@ -1465,16 +1468,26 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
   await expect(status).toHaveClass(/error/);
   expect(await status.textContent()).not.toContain("LIRR");
 
-  // The MNR train's popup says how old its data is; the LIRR one says nothing.
+  /* The MNR train's popup says how old its data is; the LIRR one says nothing.
+     MR5 (ruling Q2) MOVED THIS INTO THE FOOTER and the claim is unchanged. vehicleStaleLine's
+     `<div class="popup-stale">as of 7m ago</div>` is now popupFreshHtml's `.fresh` footer, whose
+     words are the feed strip's own ("As of 7m ago", capitalised because the strip says it that
+     way and the footer says it the strip's way by ruling). The CSS uppercases them; the TEXT
+     node is what toContainText reads, so this is the string and not the rendering. */
   await page.evaluate(() => railroads.get("MNR|mnr-gps-1").marker.openPopup());
-  await expect(popup(page)).toContainText("as of 7m ago");
-  // The healthy system's popup carries no age line at all. Asserted on the rendered
-  // markup rather than by opening a second popup, which would race the first one's
-  // teardown in the DOM.
+  await expect(popup(page)).toContainText("As of 7m ago");
+  /* THE HEALTHY SYSTEM'S POPUP CARRIES NO AGE AN EYE CAN READ, which is the same claim in the
+     footer's terms rather than the line's. Both popups now have a footer, because the square is
+     present in all three states: a rider cannot tell "this feed is live" from "this popup forgot
+     to say" unless the mark is always there. What differs is the WORDS, so that is what is
+     asserted, on both sides. Asserted on the rendered markup rather than by opening a second
+     popup, which would race the first one's teardown in the DOM. */
   const lirrHtml = await page.evaluate(() => railroadPopup(railroads.get("LIRR|lirr-placed-1")));
-  expect(lirrHtml).not.toContain("popup-stale");
+  expect(lirrHtml, "a healthy feed still draws its square").toContain('data-state="live"');
+  expect(lirrHtml, "and says no age at all").not.toContain("As of");
   const mnrHtml = await page.evaluate(() => railroadPopup(railroads.get("MNR|mnr-gps-1")));
-  expect(mnrHtml).toContain("popup-stale");
+  expect(mnrHtml, "a stale feed's square says so").toContain('data-state="stale"');
+  expect(mnrHtml, "and its age is shown, not hidden").toMatch(/aria-hidden="true"><\/span>As of 7m ago/);
 
   // Past the backend's retention cap the MNR data GOES (the backend stops serving
   // it), and the status line must keep naming the outage so the disappearance is
@@ -1804,7 +1817,20 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
   // source words it exactly as it did pre-C2: no system name, because its one system
   // IS the source).
   await page.evaluate(() => pathTrainRecords.get("p-2").marker.openPopup());
-  await expect(popup(page)).toContainText("as of 3m ago");
+  /* THE AGE IS DISCLOSED ONCE, BY THE POSITION ROW, and ruling R2 is why this assertion changed.
+     MR5's Q2 moved the age into the footer and this line read "As of 3m ago", the footer's
+     capitalisation. R2 then ruled that a footer whose Position row has already stated an age at
+     least as old as the feed's says its words in NEITHER channel, and this popup is exactly that
+     case: PATH's position is placed from its trip update and states the same 3m, so the footer is
+     the square alone. `toContainText` reads visually-hidden text, which is why this passed while
+     the words were merely hidden from an eye and fails now that they are gone from the tree too.
+
+     So the assertion is the rider's: the age is on screen once, in the Position row's own words,
+     and the footer's capitalised form of it is NOT beside it. Both halves, because "the age is
+     disclosed" and "it is disclosed once" are different claims and R2 is about the second. */
+  await expect(popup(page)).toContainText("scheduled position (no GPS), as of 3m ago");
+  await expect(popup(page)).not.toContainText("As of 3m ago");
+  await expect(page.locator(".leaflet-popup-content .fresh-dot")).toHaveAttribute("data-state", "stale");
   await expect(page.locator("#status")).toContainText("PATH: as of 3m ago");
 
   // Recovery: a fresh poll un-dims and the glide resumes. Its trains are dated by that
@@ -1927,10 +1953,12 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
      solid one), so the stripe is where to read it, and it is the LAST rect in the svg.
 
      AND THE VALUE MOVED TOO, from #4a4e69 to #6d6e71, which is the README's stated neutral for
-     an unknown route. TWO NEUTRALS ARE ON SCREEN FOR ROUTE 17 UNTIL MR5: the tag and the line
-     take the design's #6d6e71 and the popup head still takes njtColor's older #4a4e69, because
-     the popups are stage MR5 and P1k pins this one byte for byte. The pin is what proves the
-     popup did not move here, and MR5 is where the two converge. */
+     an unknown route. TWO NEUTRALS WERE ON SCREEN FOR ROUTE 17 UNTIL MR5, which is finding N6: the
+     tag and the line took the design's #6d6e71 while the popup head took njtColor's older #4a4e69.
+     MR5 round 1 moved the head and ruling R1 moved the last two readers a rider can see, the station
+     board's badge and the panel's chip, so this value is now every NJ Transit surface's answer for a
+     route the routes endpoint does not carry. This spec opens route 17's popup, so it is also where
+     that convergence is visible: the head above and the stripe below are one colour. */
   expect(
     await page.evaluate(() => {
       const rects = njtTrainRecords.get("njt:9001").marker.getElement().querySelectorAll("rect");
@@ -1966,9 +1994,10 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
   // review round found missing. models.NjtTrain's stop_id is "where it is, OR the
   // stop it is heading for", so gating the cross-link on stop_id alone put "Also
   // here: New York Penn Station" on a train drawn 8.7 km short of it, one line under
-  // "Next stop: New York Penn Station".
+  // its Next stop row. (MR5: that row's label and value are two cells, so the colon the
+  // sentence used to carry is the column between them.)
   await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
-  await expect(popup(page)).toContainText("Next stop: New York Penn Station");
+  await expect(popup(page)).toContainText("Next stop New York Penn Station");
   expect(await popup(page).textContent()).not.toContain("Also here");
   await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.closePopup());
   await page.clock.runFor(300);
@@ -2117,9 +2146,13 @@ test("C2f. NJ Transit dims and ages on its own while the railroads stay live (C2
   );
   expect(live).not.toBe(frozen);
 
-  // And the popup says how old the data is.
+  /* And the popup says how old the data is, in its footer. MR5 (ruling Q2) moved that from
+     vehicleStaleLine into popupFreshHtml, which says it in the feed strip's own words, so the
+     capital is the strip's and not a typo. The age is asserted whole rather than as a bare "as of":
+     this was the third site in this file to assert the old form, and the other two named the age, so
+     a substring that matched either capitalisation would have hidden which one shipped. */
   await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
-  await expect(popup(page)).toContainText("as of");
+  await expect(popup(page)).toContainText("As of 7m ago");
 });
 
 test("C2g. NJ Transit dims with no poll landing at all, which is the sweep's own job", async ({
@@ -2483,17 +2516,44 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
 
   // THE POPUP, the same board through the same helper, rendered as spans beside the
   // countdowns. Asserted as the popup's actual markup, not as a call to the renderer.
+  /* MR5: SECTION 5's GRID. The qualifier rides the row's middle cell and the countdown its own, so
+     each arrival is three cells; the bucket heading is `.dir`; and the kicker above the title
+     carries this station's route marks, normalised by `withoutMarks` (popup.js) because a plate is
+     four hundred characters of SVG. The words, the order and the six qualified rows are exactly what
+     they were.
+
+     THE MARK TOKEN CARRIES THE PLATE'S OWN ARGUMENTS, which is a reviewer's correction to that
+     normaliser: the route it draws, the size the kicker drew it at (17, the design's small mark) and
+     the fills it declares. The last two are this board's own colours, the same pair the row badges
+     below carry, so a kicker drawing a green 2 or a red 5 fails here rather than reading as
+     [mark 2][mark 5] either way; the first is the plate's own backing, which entered the token when
+     ruling R3 taught the normaliser to read a fill declared in a `style` attribute.
+
+     AND THE ROUTES ARE SPOKEN (R3): the marks are aria-hidden, so the kicker carries the words in
+     A1's visually-hidden class for a rider who cannot see them. Prospect Av serves two routes, which
+     is under the cap, so no count is drawn here. */
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
-  const five = (text) => `<span class="arr-badge" style="background:#1e8449;color:#ffffff">5</span> ${text}`;
-  const two = (text) => `<span class="arr-badge" style="background:#c0392b;color:#ffffff">2</span> ${text}`;
+  // The countdown cell's class is spelled by the CALLER here, not derived from the word, so the
+  // accent on a row reading "now" is pinned rather than reproduced: section 5 asks for it and
+  // popupArrRowsHtml adds it from formatCountdown's own answer.
+  const row = (mark, middle, n, cls = "n") => `<span>${mark}</span>\n<span>${middle}</span>\n<span class="${cls}">${n}</span>`;
+  const five = (middle, n, cls) => row('<span class="arr-badge" style="background:#1e8449;color:#ffffff">5</span>', middle, n, cls);
+  const two = (middle, n, cls) => row('<span class="arr-badge" style="background:#c0392b;color:#ffffff">2</span>', middle, n, cls);
   await expect(popup(page)).toContainText("Prospect Av");
   await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
-  expect(await popup(page).innerHTML()).toBe(
-    "<b>Prospect Av</b>" +
-      '<div class="arr-dir">Northbound</div>' +
-      [five(`2 min${q}`), two(`3 min${q}`), five("3 min"), two("5 min"), five(`10 min${q}`), five("12 min")].join("<br>") +
-      '<div class="arr-dir">Southbound</div>' +
-      [two(`now${q}`), five(`3 min${q}`), five("3 min"), two("9 min"), two(`9 min${q}`), five("12 min")].join("<br>"),
+  expect(withoutMarks(await popup(page).innerHTML())).toBe(
+    '<div class="pk"><span>Subway</span>\n' +
+      '<span>[mark 2 17x17 var(--paper),#c0392b,#ffffff][mark 5 17x17 var(--paper),#1e8449,#ffffff]' +
+      '<span class="visually-hidden">2, 5</span></span></div>\n' +
+      '<div class="pt"><span>Prospect Av</span></div>\n' +
+      '<div class="dir">Northbound</div>\n' +
+      '<div class="arr">' +
+      [five(q, "2 min"), two(q, "3 min"), five("", "3 min"), two("", "5 min"), five(q, "10 min"), five("", "12 min")].join("\n") +
+      "</div>\n" +
+      '<div class="dir">Southbound</div>\n' +
+      '<div class="arr">' +
+      [two(q, "now", "n now"), five(q, "3 min"), five("", "3 min"), two("", "9 min"), two(q, "9 min"), five("", "12 min")].join("\n") +
+      "</div>\n",
   );
 
   // REPEATEDLY: the next background refresh is a second successful poll returning the
@@ -2653,11 +2713,25 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   expect(tally(lirr)).toEqual({ reported: 38, estimated: 6, placed: 56 });
   expect(tally(mnr)).toEqual({ reported: 33, placed: 3 });
 
-  // (a) NO OLD FIX READS AS A LIVE ONE. The acceptance as its own conjunction: no marker
-  // whose own observation is over 90 s is at full opacity with a bare "live GPS"...
-  const bare = (m) => m.popup.includes('<span class="popup-sub">live GPS</span>');
+  /* (a) NO OLD FIX READS AS A LIVE ONE. The acceptance as its own conjunction: no marker whose own
+     observation is over 90 s is at full opacity while its popup says nothing about its position...
+
+     MR5 (ruling Q1) CHANGED WHAT A FRESH FIX SAYS, so it changed what "reads as live" looks like.
+     This popup used to print `position.compact` from a line of its own and was the app's only
+     surface that named a CURRENT fix out loud: a fresh one said "live GPS". It now says nothing,
+     because silence means current (memo D9) and every other surface already obeyed that. So the
+     tell for "this reads as live" is no longer a bare "live GPS" in the popup, it is the ABSENCE of
+     a position line, which is what a fresh one now has. An AGED fix still speaks, and the loop below
+     is unchanged. The marker's accessible NAME still says "live GPS" either way, because
+     positionClause renders `.spoken` and that is a different surface with a different rule: a name
+     has no silence to mean anything with. */
+  /* MR5 (the vocabulary): the position is a ROW of section 5's grid now, so the tell is the
+     Position row rather than a muted span. Matched on the label AND its value cell, because a row
+     is only a row when it has both: `<div class="k">Position</div>\n<div class="v">...` . */
+  const POSITION_ROW = /<div class="k">Position<\/div>\n<div class="v">(live GPS|estimated|scheduled|showing|age unknown)/;
+  const silent = (m) => !POSITION_ROW.test(m.popup);
   const old = lirr.filter((m) => m.age > 90);
-  expect(old.filter((m) => m.opacity === 1 && bare(m))).toEqual([]);
+  expect(old.filter((m) => m.opacity === 1 && silent(m))).toEqual([]);
   // ...and each half on its own, because either one missing is F01 back on one surface.
   // EVERY marker over 90 s is dimmed (the 11 qualified fixes and the 53 placements riding
   // a prediction that old), and every one under it, in this healthy railroad, is not.
@@ -2669,7 +2743,7 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   const qualified = old.filter((m) => m.provenance === "reported");
   expect(qualified.map((m) => m.trip).sort()).toEqual(F01_QUALIFIED);
   for (const m of qualified) {
-    const said = m.popup.match(/<span class="popup-sub">(live GPS, as of [^<]+ ago)<\/span>/);
+    const said = m.popup.match(/<div class="k">Position<\/div>\n<div class="v">(live GPS, as of [^<]+ ago)<\/div>/);
     expect(said, `${m.key} popup`).not.toBeNull();
     expect(m.name.endsWith(`, ${said[1]}`), `${m.key}: ${m.name}`).toBe(true);
     expect(m.hollow, `${m.key} is still its own reported position`).toBe(false);
@@ -2699,17 +2773,32 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   expect(byProvenance("estimated").length).toBe(6);
   expect(byProvenance("placed").length).toBe(59);
   expect(71 + 6 + 59).toBe(markers.length);
-  // And the 27 fresh fixes are exactly what they always were: filled, bright, "live GPS".
+  /* And the 27 fresh fixes: filled, bright, SILENT in the popup and "live GPS" in the name.
+     MR5 (ruling Q1) is the difference. This read "exactly what they always were: filled, bright,
+     'live GPS'", and the popup half of that is what the ruling retires: this was the one surface in
+     the app that named a current fix, and it now says nothing at all about position. The NAME still
+     says it, because a marker's accessible name renders `.spoken` and silence on a name would say
+     nothing rather than mean something.
+     ASSERTED AS AN ABSENCE AND A PRESENCE TOGETHER, so this cannot pass on a popup that lost its
+     whole position vocabulary: the aged loop above requires the words on every old fix, and this
+     requires their absence on every fresh one. Neither half holds alone. */
   const fresh = lirr.filter((m) => m.provenance === "reported" && m.age <= 90);
   expect(fresh).toHaveLength(27);
-  expect(fresh.filter((m) => !(bare(m) && !m.hollow && m.name.endsWith(", live GPS")))).toEqual([]);
+  expect(fresh.filter((m) => !(silent(m) && !m.hollow && m.name.endsWith(", live GPS")))).toEqual([]);
+  // AND THE POPUP REALLY IS A POPUP, not an empty string that is trivially silent. This is the
+  // check that separates "says nothing about its position" from "says nothing at all".
+  /* MR5: the same EITHER-OR, by the rows' label cells ("Next stop:" lost its colon to the grid's
+     column). And either really is the claim: a GPS fix names no stop, so 29 of these fresh trains
+     have a Train row and no Next stop row at all. Turning this into an AND while porting it to the
+     new grammar failed on exactly those 29, which is the check doing its job on the check. */
+  expect(fresh.filter((m) => !/>Train</.test(m.popup) && !/>Next stop</.test(m.popup)).map((m) => m.key)).toEqual([]);
 
   // (b) A USABLE PREDICTION, A CLEARLY LABELED ESTIMATE INSTEAD: the design's six, hollow,
   // bright (their predictions are 4 or 5 s old), and saying so in the popup and the name.
   const estimates = lirr.filter((m) => m.provenance === "estimated");
   expect(estimates.map((m) => m.trip).sort()).toEqual(F01_ESTIMATED);
   for (const m of estimates) {
-    expect(m.popup, m.key).toContain('<span class="popup-sub">estimated from a prediction</span>');
+    expect(m.popup, m.key).toContain('<div class="k">Position</div>\n<div class="v">estimated from a prediction</div>');
     expect(m.name.endsWith(", estimated from a prediction"), `${m.key}: ${m.name}`).toBe(true);
     expect(m.hollow, m.key).toBe(true);
     expect(m.opacity, m.key).toBe(1);

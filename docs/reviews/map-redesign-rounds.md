@@ -75,14 +75,32 @@ future stage has to go looking for is a rule it will miss.
 5. **A fix is finished when reverting it fails something**, not when it works. MR2 round 3 had
    three fixes survive their own mutation on the first run, each already verified by hand and
    commented.
+6. **A mutation whose anchor misses is a mutation that did not run**, so the WHOLE table is
+   re-run before every push and an `ANCHOR MISS` is a failure of the run rather than a
+   survivor. Added after MR4's finding **F19**: M35's anchor targeted a line that round 1 had
+   turned into a block, and for a whole round the runner printed `ANCHOR MISS`, exited
+   non-zero and tested nothing, so a guard this repo relies on had no evidence at all while
+   its table still read "killed". Two things follow from it and both are the rule rather than
+   advice. A mutation table is CODE and rots exactly the way an unread field does (round 4's
+   `dim` column is the same lesson in a different file), so it is re-anchored whenever the
+   code it targets is touched. And re-running only the NEW rows is what hides this: the old
+   rows are the ones whose anchors have had time to go stale.
 
 | Stage | Scope | State |
 | --- | --- | --- |
 | **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
 | **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | merged |
-| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | in review |
-| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
-| **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
+| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | merged (PR #119) |
+| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | merged (PR #120) |
+| **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.xlink` vocabulary (and the app's own `.alert-block`, which is deviation 4 in the README's erratum: `.alert` is not renamed), the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | built; the Stage MR5 section below is its record |
+
+**THE STATE COLUMN WAS THREE ROWS STALE, and a reviewer read it against the file it is in.** MR5's
+row said `planned` in the same commit that added its round sections; MR3 said `in review` and MR4
+`planned` with merged round sections below them, which this stage inherited rather than caused. The
+two merges are `db73f05` (PR #119) and `edd6950` (PR #120), which is also this branch's base. The
+rule this record keeps for itself is the one it keeps for a code citation: a table that describes the
+work is re-read whenever the work moves, or it becomes the most confidently wrong sentence in the
+document.
 
 ### The backend branch this phase owed, and paid
 
@@ -732,7 +750,7 @@ regenerated.
 | **N3** | **Row 6 of the 3.1 table cannot be drawn as written.** The table says an age-gated row with no clock is dimmed; dimming is `markerOpacity`'s, `markerOpacity` reads an age, and the whole content of that row is that there is no age. `staleAge(null)` is false. | **The body and head halves are obeyed and the opacity half is not, argued rather than dropped.** Dimming it would tell a rider "this is old" about a train whose age the same tag has just said is unknown. The pessimism the row exists for is carried where it belongs: an outlined body and an outlined dot, which is the strongest "do not trust this" the tag can draw. It is the one place the body goes past `railroadHollow`, and the freshness contract is why: clause (c) is an anomaly in the contract's own words. `railtag.test.js` asserts the deviation as a deviation, so a later stage that decides to dim it has to come here. |
 | **N4** | **axe cannot judge the tag's type.** With the tags on the map its color-contrast rule reported 37 findings at 1280 and 17 at 375, all "background color could not be determined because it is overlapped by another element": a tag is 35 to 45px wide where the square was 16, so at regional zoom the tags overlap each other. `aria-hidden` does not silence it and should not, because a sighted rider still sees the type. | **A named shape with a decider, which is A1w's own protocol.** `a11y.spec.js` **A1z4** reads each tag's printed ink and the fill of the block under it off the DRAWN page, in both themes, requires AA, and asserts that every `svg.rail-tag` belongs to a rail tag marker so the exception cannot widen. `railtag.test.js` measures the same pair in node over all 31 published colour pairs, which is what found N1. ACCESSIBILITY.md carries both statements and `statement.test.js` A4 caught the omission. |
 | **N5** | **`/api/njt-routes` did not serve `route_short_name`**, so the brief's stated source for NJ Transit's branch code ("the feed's `route_short_name`") was not reachable and every NJ Transit tag would have read its route id: "9" for the Northeast Corridor. `njt_static` has parsed the column since 15c and the builder dropped it. | **One additive backend change**, the same shape `claude/railroad-route-colors` used for the colours: `NjtRoute.short_name`, None default, carried by the builder and served by the endpoint. The two exact-dict guards in `test_api.py` are updated rather than relaxed, which is what they exist for. |
-| **N6** | **Two neutrals are on screen for an unknown route.** The tag and the line take the README's stated `#6d6e71`; `njtColor`'s older `#4a4e69` still reaches the NJ Transit popup head, which route 17 (the event-only Meadowlands line, never on `/api/njt-routes`) is the live example of. | **Left, deliberately, and named.** The popups are stage MR5 and P1k pins this one byte for byte, so changing `njtColor` here would break a pin that must hold. MR5 is where the two converge; the pin is what proves the popup did not move in the meantime. |
+| **N6** | **Two neutrals are on screen for an unknown route.** The tag and the line take the README's stated `#6d6e71`; `njtColor`'s older `#4a4e69` still reaches the NJ Transit popup head, which route 17 (the event-only Meadowlands line, never on `/api/njt-routes`) is the live example of. | **Left, deliberately, and named.** The popups are stage MR5 and P1k pins this one byte for byte, so changing `njtColor` here would break a pin that must hold. MR5 is where the two converge; the pin is what proves the popup did not move in the meantime.  **PAID IN MR5, structurally.** The head resolves through `railBranchColor(njtBranch(t).color)` now, which is the same resolver and the same published paint the tag reads, so the two cannot drift again; two constants that happened to agree would have been a coincidence waiting to be broken. Asserted as a SOURCE fact in `railtag.test.js`, and that is the point rather than laziness: no fixture world has an unknown NJ Transit route, so the drawn page cannot tell the two neutrals apart and every browser gate stays green either way.  **AND THAT LAST SENTENCE WAS TRUE OF THE HEAD AND FALSE OF THE ROW's OWN CLAIM, which ruling R1 is the correction of.** "Two neutrals on screen for an unknown route" stayed literally true one surface out: the station board's badge and the panel's chip still resolved `njtRouteColor`, and both HAVE an unknown route in every world (the route-less arrivals row, and Hoboken, which serves route 17). So R1's payment is pinned BY VALUE rather than as a source fact: `boards.test.js` moves the board badge's fill `#4a4e69` to `#6d6e71` and `stations.spec.js` A1t moves the panel chip's `rgb(74, 78, 105)` to `rgb(109, 110, 113)`, which is the same neutral `markers.spec.js` already read off route 17's tag on the map. The route LINE is the one reader left, so a route published with a blank colour would still draw a `#4a4e69` line beside a `#6d6e71` tag: latent (all twelve live routes publish a colour, and route 17 has no polylines at all), recorded here, and held by a count in `railtag.test.js` so a third reader cannot open quietly. |
 
 **Three guards fired during the wiring and all three were right**, which is worth recording
 because each was a place the stage was about to diverge quietly. `markers.test.js` caught a
@@ -1411,4 +1429,1394 @@ executable files is comment text only and no outcome here can differ at the tip.
 
 ## Stage MR5: popups
 
-*Not started.*
+The last stage. The popup chrome, ONE vocabulary every system renders through, and the rule
+the whole stage turns on: **the words are the app's**. The Position row renders
+`positionQualifier`'s output and the `.fresh` footer the per-system freshness the app already
+computes; the README's `Live GPS | Scheduled, no GPS | Placed from arrivals` and
+`LIVE / UPDATED 12S AGO` are not typed anywhere.
+
+### The rulings this stage opened with
+
+Four, taken before any code was written, each because the design of record and the app
+disagreed and the disagreement was measured rather than argued.
+
+| | The question | The ruling |
+| --- | --- | --- |
+| **S1** | **Which form of `positionQualifier` does the Position row render?** The railroads compose their line inline in `systems/railroad.js` and print `position.compact` UNCONDITIONALLY; every other family calls the shared `positionLineHtml`, which prints `position.words` and prints NOTHING when `kind` is falsy. Measured across all fourteen position states, the two forms differ in exactly one family of rows (`placed`) and the presence rule differs for one (`reported`, fresh). | **`.words`, through one helper, and the silence rule is kept: an empty `.words` omits the row.** Two rider-visible strings change, both on the railroads, and both are the freshness contract reaching a surface that predated it: a `placed` row gains a word (`scheduled (no GPS)` to `scheduled position (no GPS)`) and a fresh GPS row stops printing `live GPS`, which is what every other family has always done. Recorded here as the before; the new string pin is taken AFTER the change and the retired markup pin keeps the before. |
+| **S2** | **What does the `.fresh` footer say when a feed is live?** The README wants `LIVE / UPDATED 12S AGO`. The app has no word for live: silence means current on every surface it owns (memo D9, and `D1e` pins that a healthy day's status note is empty). `feedDotState` computes exactly the three states the footer needs; `feedTooltip` carries their words but appends the strip button's own action. | **The footer's square is the feed strip's dot at the popup.** Present in all three states, no text when live, the app's own strings when stale or schedule-only, and its accessible name from the same helper the strip's dot uses, so the state is said one way on both surfaces. Nothing is coined. The state clause is lifted out of `feedTooltip` into a shared helper both call, so the two cannot drift. |
+| **S3** | **How does auto-pan clear the chrome?** The README's recipe is `autoPanPaddingTopLeft = [24, headerBottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then `_adjustPan()`. **Measured on this app, the literal recipe is broken.** See the section below. | **Clamp each padding to what the measured map and popup can satisfy**, keep `panPopupClearOfChrome` as the authority for the real boxes and for post-paint growth, and stand down while `riderOwnsTheView`. The cap and the stand-down are pinned. The README carries an erratum beside its recipe. |
+| **S4** | **How does the Key explain the rail tag's head (finding F17)?** The map draws FOUR heads, not the three a first reading suggests: filled chevron, outlined chevron, outlined dot and a filled dot (a GPS fix that serves no bearing). | **Two rows, framed by AXIS rather than by shape.** One row for filled against outlined (the heading is trusted, or it is not), one for chevron against dot (a heading is served, or it is not). `A1x`, `D2l` and `P1e` move by two, recorded as before. |
+
+### The ferry hull's ink edge, and an exemption that ended by measurement
+
+MR4's ruling Q1 left one paint on this map under the 3:1 a mark owes: the ferry boat's hull at
+**1.31** against the light paper. A boat is filled with the colour NYC Ferry publishes for its
+route, this app does not move a published fill, and the hull's only other paint was the paper
+casing, which cannot raise a fill's ratio against paper because it IS approximately the paper.
+MR4 reported it rather than promising the floor, and said in the assertion itself what would
+end it.
+
+**Two strokes on one path, wider first.** A stroke is centred on its path, so one stroke cannot
+be both the casing and the edge. The paper goes to 2 (one unit out, one in) and the ink follows
+at 0.8 on the same geometry, drawn second, so it lands on the boundary with a full unit of
+paper still outside it. Reading outward a rider gets the route's published fill, the ink edge
+that finds it, the paper casing that separates it from the tile. The drawn mark grows half a
+unit on each side and stays inside its 22x14 box. **Measured after: 14.86 in both themes.**
+
+**The exemption ended because the measurement moved, not because a sentence was edited.**
+`theme.spec.js D5d` asserted `bestOf("light", "ferry boat") < 3`, deliberately the wrong way
+round, with the note that the day a stage gave the hull an ink edge the assertion would fail
+and `ACCESSIBILITY.md` could be strengthened. It did fail, and it is inverted here rather than
+deleted. Two assertions replace it: every family now clears the floor in both themes, and the
+hull's FILL is still the feed's yellow, which is the half of Q1a that says what may not change.
+
+**What moved with it**, named because this is a marker change inside a popup stage:
+
+| | |
+| --- | --- |
+| `markers/ferry` (P1m) | regenerated: the hull is two paths now |
+| `contrast/marks` (P4c) | regenerated: `ferry boat` goes from `path fill` at 1.31/3.74 to `path stroke` at 14.86/14.86 |
+| `theme.spec.js` D5d | the exemption inverted, plus the published-fill assertion |
+| `theme.spec.js` D5c | the hull becomes TWO rows, casing and edge, which is stronger than the one it replaces: it says which path carries which token, so an edit that swapped them fails where "the strokes are paper" could not have seen it |
+| `families.test.js` | asserts the order and the relation (casing wider, drawn first) rather than a literal width |
+| `ACCESSIBILITY.md` | the exemption paragraph strengthened, keeping the history |
+| the MR4 captures | all ten `after-*` frames regenerated in one run, so they stay mutually consistent; the City and Region presets are the ones that actually show a boat |
+
+### The pins invert, and the retired goldens are the before
+
+MR1 through MR4 pinned every popup's HTML byte for byte, and each of those stages said in as
+many words that "the popups are stage MR5, so a popup that moves here is a defect". That claim
+held for four stages and it is what let them restyle the whole map without touching a word a
+rider reads. **MR5 changes this markup on purpose**, so the same pin is now a pin on the thing
+being changed, which is the error the header of `pins.spec.js` exists to warn about.
+
+So the pins invert. What is pinned from here is what a rider READS, extracted as TEXT rather
+than as markup, taken before any restyle and held after: **`popupText/stock`** (all fourteen
+surfaces, one per system and kind) and **`popupText/f01`** (the ladder world, one railroad
+popup per position state, which is where `positionQualifier`'s vocabulary is on screen at
+once). The fourteen `popups/*` entries they replace were these, and this table is their record:
+
+| system | surface | markup pinned |
+| --- | --- | --- |
+| `airtrain` | `airtrain station` | 256 |
+| `buses` | `bus` | 79 |
+| `ferry` | `ferry boat` | 117 |
+| `ferry` | `ferry dock` | 269 |
+| `lirr` | `lirr station` | 381 |
+| `lirr` | `lirr train` | 250 |
+| `mnr` | `mnr station` | 368 |
+| `mnr` | `mnr train` | 98 |
+| `njt` | `njt station` | 410 |
+| `njt` | `njt train` | 230 |
+| `path` | `path station` | 344 |
+| `path` | `path train` | 202 |
+| `subway` | `subway station` | 336 |
+| `subway` | `subway train` | 186 |
+
+**Three views, not one, and none of them is `textContent` or `innerText`.** `textContent`
+inserts nothing at element boundaries, so a dropped `<br>` is invisible and two words fuse
+into a run-on a pin cannot tell from the real thing. `innerText` is computed from rendered
+boxes, so it moves when `display` moves, and changing `display` is this stage's entire job.
+The reader is a tree walk: `seen` (every text node), `spoken` (the same with `aria-hidden`
+subtrees removed, which is what a screen reader gets and what will diverge once the map's own
+marks sit inside `.pt`), and `labels` (text that exists only in an attribute, which today is
+exactly the dock's `title="Wheelchair accessible"` and which a reader of text nodes alone
+would lose silently).
+
+**The seconds are redacted and the redaction is asserted.** An age under 120s renders in
+seconds, and the settle loop advances a paused clock, so a live feed's age is `1s` or `2s`
+depending on how many round trips an arrivals fetch took. `smoke.spec.js` already takes this
+exact escape for the same reason. Digits become `{n}` and no surface may carry a raw seconds
+age into the golden.
+
+**And the inversion is more dangerous than the pins it replaces**, for one structural reason
+worth stating plainly: in MR1 through MR4 these goldens were ASSERT-ONLY, so a broken reader
+FAILED. MR5 regenerates them by design, so every emptiness that used to be loud becomes silent
+the moment it is written into the golden and matches itself forever. Two guards landed with
+the inversion, both outside `pin()`:
+
+- **`MR_PINS_REGENERATE` is now asserted unset in CI.** Nothing anywhere checked it, and the
+  regenerate branch returns before `expect` ever runs, so a shell with it exported saw every
+  pin in the file pass and a CI job that inherited it would have been green forever against an
+  empty golden.
+- **A pin key is asserted to be at most two levels.** `pin` destructures exactly two segments,
+  so a three-level key writes to its second and drops the third silently; two such keys
+  overwrite each other and the failure reads as an unrelated diff.
+
+Per surface: a floor on the length read, a check that the fourteen surfaces do not all read as
+one string, and the dock's attribute-only label asserted present so `labels` is known to be
+doing work. P4b2 is the round this repo paid for that lesson in.
+
+### The coverage test, and what it can and cannot prove
+
+The claim is that every rider-visible string in a popup is pinned, and the hard part is making
+it something other than a list checking itself. **`P5b` builds its inventory from the running
+app, never from the golden.** The roots are read off live objects (each popup's bound content
+function, and `openStation.render` for a station board), the call graph is walked by taking
+each function's own source through `Function.prototype.toString` and resolving its callees on
+`globalThis`, and the literals are extracted from that source. This works here and only here
+because the app is BUILDLESS: the page is plain ordered `<script>` tags, so every popup builder
+is a top-level function and `String(fn)` is the real source of the real function.
+
+Three things the first runs taught, each now written into the test:
+
+1. **Comments have to come out first, with a scanner rather than a regex.** `railroadPopup`'s
+   own comment contains the word "station's", and that apostrophe opened a single-quoted string
+   to a naive scanner which then ran across three template literals and reported four lines of
+   prose as rider text.
+2. **A candidate is prose or a label, never an identifier.** Two letters together, then either
+   a space or a capital. Without that filter the report was 72 lines, 50 of them enum values
+   and field names, and a waiver list that long IS the escape hatch.
+3. **Entities are decoded**, because the builder writes `&middot;` and the rider reads the
+   character.
+
+**What it cannot prove, stated here rather than discovered later**: a lost DATA string, a train
+number, a station name, a headsign, is an interpolation and invisible to it. Only the pins see
+those. It is a supplement to `P5a` and `P5c`, never a substitute.
+
+**The waivers are two maps, not one.** `NOT_RIDER_TEXT` is "a rider never reads this" (three
+entries: two Intl arguments and `positionQualifier`'s spoken form, which reaches a marker's
+accessible name and never a popup). `UNREACHED_STATES` is "a rider does read this and no world
+pinned here renders it" (fourteen entries, each naming the state), which makes it a backlog
+with reasons rather than an excuse, visible in every diff. A waiver the extractor no longer
+finds is itself a failure, so dead ones cannot accumulate behind the live ones.
+
+### The README's auto-pan recipe is measured broken on this app
+
+Recorded here and as an erratum in `docs/design/map-redesign/README.md`, because a recipe that
+is followed literally and then produces a defect is worse than one that says why it cannot be.
+
+**The first break: the padding has no viewport-fit guard and the correction cannot rescue it.**
+`#panel` is capped at `calc(100% - 72px)` (`style.css`), so with the Key open at 375x667 the
+header's bottom edge is 579 and the README's top padding is 592. Leaflet's own arithmetic is
+`i.y+e+o.y>s.y && (a = ...); i.y-a-n.y<0 && (a = ...)`, and **the second assignment overwrites
+the first**, so when the top and bottom paddings cannot both be honoured the top wins
+unconditionally. Measured: `_adjustPan()` then puts the popup at `top 592, bottom 718` on a
+667px map, 51px off the bottom edge. `popupClearingShift` returns **null**, correctly and
+uselessly: it is a collision solver and the popup is not colliding with anything, it is simply
+gone. The same arithmetic at 320x640 gives the same result, and `mobile.spec.js A6l` is the
+spec that proves the header really does reach that cap. Horizontally the paddings are
+unsatisfiable at phone widths too: `24 + 110` leaves 241px at 375 for a popup that is 256px at
+its own CSS floor, and Leaflet silently drops the right padding by the same last-write-wins.
+
+**The second break: Leaflet's padded autopan overrides the rider, and no spec would catch it.**
+The app's stated rule is that it does not tidy a position the rider chose (`riderOwnsTheView`,
+and "animate the journey, never the adjustment"). Leaflet's autopan has no such guard, and
+`popup.update()` runs it on every fifteen-second poll for every open vehicle popup. The
+README's padding grows the band in which that fires from a 5px strip to the whole header.
+Measured: after three rider drags the centre moved to 40.61903 with `riderOwnsTheView` true,
+and the next poll's `update()` put it back to 40.67322. **`layout.spec.js A4j` explicitly
+declines to assert against this** ("if Leaflet autopanned, the centre moved for a reason that
+is not this correction"), so widening the hole would have been invisible to the whole suite.
+
+
+### F17 paid: the Key gains the head's two axes, by axis and not by list
+
+MR4 round 2 recorded F17 rather than fixing it, and said why: "It is a new row with a new
+sentence, which is a ruling this round does not have." The ruling arrived with this stage
+(**option 3, framed by axis**), and the framing is the whole content of it. The tag's head
+answers two independent questions, and a panel that answered them with four pictures would be
+another list of shapes, which is what F16 was about. So it is two rows, one per axis, and each
+row holds the other axis constant:
+
+| row | the axis | left mark | right mark | held constant |
+| --- | --- | --- | --- | --- |
+| "filled when it is trusted, outlined when it is not" | is the heading TRUSTED | chevron, ink fill, 1-unit paper edge | chevron, paper fill, 1.4-unit ink edge | the shape: a chevron twice |
+| "a chevron when one is served, a dot when none is" | is a heading SERVED | chevron, ink fill, 1-unit paper edge | dot, ink fill, 1-unit paper edge | the fill: the filled form twice |
+
+**The oracle is `railTagSvg`'s own output, not a number typed into the test.** `keyglyphs.test.js`
+test 10 asks the map's builder for a chevron-headed tag and a dot-headed one and compares: each
+row's paths must equal `railTagChevronPath(cx)` for the cx the row drew at, the outlined head's
+edge weight must equal the weight the map's outlined head carries, and the dot's radius must
+equal the map's. `RAIL_TAG_DOT_R` and `RAIL_TAG_TRACK_Y` are not exported and exporting them to
+assert against would only have moved the copy; the claim is that this panel's head is the head
+the map draws, so the map is asked for one. That is the same discipline as test 8, whose oracle
+for the tag body is `railTagSvg` rather than a transcription of it, and it fails in the direction
+the defect actually travels: when the MAP changes and the panel does not follow.
+
+**The literals are H3's, again.** Both rows paint in the light theme's resolved `#201e1d` and
+`#f3f2f2` rather than in `var(--ink)` and `var(--paper)`, because `--glyph-plate` is `#f3f2f2` in
+both themes: a glyph in the tokens would be a dark plate on a light one the moment a rider chose
+dark. `PAPER` and `INK` in the test are read out of `style.css`, so a token edited without the
+glyphs following fails here too.
+
+**The three counts move by two, as the ruling said, and are recorded as before.**
+
+| pin | was | is | what it counts |
+| --- | --- | --- | --- |
+| `a11y.spec.js` **A1x** | 17 | **19** | `.legend-row` plus `.legend-note`, at three widths in both themes |
+| `subway.spec.js` **D2l** | 16 | **18** | `.legend-row` alone |
+| `pins.spec.js` **P1e** | ordered equality on 17 | **ordered equality on 19** | the accessible names themselves |
+
+The `legend/names` golden gains exactly two lines, inserted where the rows sit in the document:
+after "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is
+always this" and before "LIRR / Metro-North route line". Nothing else in the file moves, which is
+the point of an ordered equality: had a third row drifted in the same commit, the diff would say
+so.
+
+### The chrome, and three things that only appeared once the popup stopped being white
+
+Section 5's wrapper is the first translucent surface this app has ever painted, and the first
+that is not `#ffffff`. Both facts broke something, and neither was visible by reading.
+
+**The design's own spelling of the surface defeats four contrast readers and axe.** This is
+recorded even though the surface ships opaque, because it is the reason the 94% could not have
+been shipped even if the ruling had gone the other way, and because it says what a future stage
+must not reach for. `color-mix(in srgb, var(--surface) 94%, transparent)` computes, measured in
+the shipped Chromium, to `color(srgb 0.917647 0.913725 0.913725 / 0.94)`. Every contrast reader in
+this repository parses `rgba()` and nothing else: `layout.spec.js` A4g's nearest-opaque-ancestor
+walk, `tests/e2e/contrast.js`'s `parse`, and this stage's own first draft of D6a. Three of them
+read it as absent and one as opaque. Measured: A4g's walk skipped the popup entirely and reported
+the N train's head against `.leaflet-container`'s `--bg` two elements further up, and D6a's
+`alpha()` returned 1 and certified a translucent popup as solid. **The reader that cannot be
+taught is axe-core's**, and an axe that cannot determine a popup's background reports its content
+UNDECIDABLE, which is the exact hole MR1's A4 work climbed out of.
+
+A translucency that reaches the page therefore has to be spelled `rgb(... / 0.94)` to be visible
+to the tests that would report it, and is undecidable to axe either way. `frontend/tokens.test.js`
+asserts both spellings absent from the popup rule for that reason: the `color-mix` form because it
+is unparseable as well as translucent, and any alpha form because of the ruling below.
+
+**Every popup head's ink was computed against white, and a popup is not white.**
+`readableInk(color, background = "#ffffff")` walks a route's published colour toward
+legibility until it clears 4.5:1 against the background it is given, and all six heads took the
+default. That was true while a Leaflet popup was white; in the dark theme it never was, and
+after this commit it is not true in either. A4g caught it on the commit that changed the
+surface, which is the gate doing its job: `rgb(138, 110, 0)`, the N train's `#e6b800` walked
+against white, reads **4.36** against what A4g could see and **4.02** against the popup's own
+`--surface`.
+
+| route | published | walked against white | against the popup's surface |
+| --- | --- | --- | --- |
+| N (subway) | `#e6b800` | `#8a6e00`, 4.87 on white | `#7e6500`, 4.62 |
+| PATH | `#d93a30` | `#d93a30` untouched, 4.57 | `#c3342b`, 4.51 |
+| East River (ferry) | `#00839c` | `#007c94`, 4.87 | `#006f85`, 4.80 |
+| ferry fallback | `#78909c` | `#60737d`, 4.95 | `#5a6c75`, 4.52 |
+| NEC (NJ Transit) | `#DD3439` | `#DD3439` untouched, 4.54 | `#bc2c30`, 4.89 |
+
+`popupSurfaceColor()` resolves the token beside `paperColor()`, `inkColor()` and
+`scheduledColor()`, and `--surface` is the whole answer because the popup SHIPS OPAQUE: there is no
+composite to reason about (the ruling one section up, and `tokens.test.js` holds it). It was the
+right background at the design's 94% too, which is why this paragraph was written in those terms and
+is corrected here rather than deleted: at 94% the popup would have been `--surface` over `--bg`, and
+`--surface` is the DARKER of the two in the light theme and the LIGHTER in the dark one, so it was
+already the end that gives dark ink and light ink respectively the least to work with. Ink that
+clears against it would have cleared the composite as well. (A reviewer found this sentence, and the
+two beside `popupSurfaceColor` in `systems/shared.js`, still saying the popup *is* 94%.)
+
+**And a resolved token is a string, so a theme swap has to rebuild what resolved it.** This is
+MR4's canvas lesson one surface further out: `applyTheme` repaints the canvas families because
+a 2D context takes a colour string, and it now also calls `popup.update()` on every open popup
+because a popup head takes one too. Without it a popup built in the light theme keeps
+light-theme ink on a dark surface until the next fifteen-second poll. `popup.update()` rather than a
+close and reopen, so the rider's focus stays where it is.
+
+**AND IT REACHES THE POPUPS BOUND AS FUNCTIONS, WHICH IS NOT ALL OF THEM.** This paragraph said a
+station popup would keep its light-theme ink "until the rider closes it", and a reviewer read
+Leaflet's `_updateContent` against it: `update()` re-invokes bound content only where that content IS
+a function, so it rebuilds every vehicle popup and the AirTrain station popup, while the five ticking
+station boards are bound with a string and filled by `setPopupContent` and get the identical string
+back. They do not need it: `openStationArrivals` re-renders them on a one-second interval, so a
+station board picks the new theme up within a second by itself. The hook is for the vehicles, `D6h`
+measures a rail train's popup, and the comment in `systems/shared.js` now says which popups it
+reaches.
+
+**The clamped horizontal padding leaves a phone-width popup almost no freedom, and two specs
+were staged on the freedom it used to have.** The measured popup in those specs is
+263px wide at 375 (the content floor itself computes to 256; the note under A4j's finding sorts the
+three widths this document quotes), and ruling S3's clamp then pins it to x 2..265: 112px of slack in the whole
+axis, spent entirely on the design's 110px right padding. Measured consequences, both in
+`layout.spec.js`:
+
+- **A4j** dragged 20px LEFT, which now puts the popup at x -18..245, off the map.
+  `popupClearingShift` refuses any move that leaves the viewport, so no clearing move existed
+  and the spec's own anti-vacuity premise read false. The spec has now been wrong in both
+  directions: its first draft dragged RIGHT and pushed the popup past 375. It drags STRAIGHT
+  DOWN, which cannot reach either edge and is a takeover all the same, because `dragstart` does
+  not care about the direction.
+- **A4l** asserted that a clearing move existed immediately after Leaflet's own autopan. With
+  the padding in place that autopan now lands the popup CLEAR of the header, so there was
+  nothing to clear and the premise read false on a build whose guard was working. The premise
+  moved onto the box the guard is actually tested on, the GROWN one, which is where A4j's
+  equivalent premise already lived: the popup is clear before the growth, the growth puts it
+  back under, and a clearing move exists for that box.
+
+Both are re-staged rather than relaxed, and each new number is a measurement.
+
+**And the app took the pan outright, because the clamp could not be applied to Leaflet's.**
+Leaflet's autopan runs inside the open, BEFORE any `popupopen` handler, and the clamped padding
+cannot be in place for it: the padding is a function of the popup's rendered size and the popup has
+no rendered size until it is in the document. Left on, that is TWO pans per open, Leaflet's with
+its default 5px strip and then the app's with the clamped padding. **`motion.spec.js` A5e caught
+it**: its `distinct` centre count went from 1 to 2 against a claim that the map "must not travel
+through intermediate positions". Both pans are synchronous and unanimated, so no frame is painted
+between them and the assertion is a proxy rather than the thing itself, but a proxy that has to be
+argued with is a proxy worth satisfying.
+
+So `POPUP_OPTIONS` carries `autoPan: false` and `applyPopupAutoPan` flips it on for the length of
+one `_adjustPan()` call. One pan per open, with the right padding, owned by the app. **That also
+closes the second break the README's erratum records, structurally rather than by guard**: the
+erratum's complaint was that `popup.update()` re-ran Leaflet's autopan on every fifteen-second poll
+for every open vehicle popup, with no equivalent of `riderOwnsTheView`. With `autoPan` off at rest
+a poll cannot pan at all, and the only autopan in the app is one it asked for and brackets.
+
+**A4l followed, and it is renamed rather than re-staged.** It was "Leaflet's own autopan is not the
+rider taking over" and it drove `popup.update()` to make Leaflet pan. That path now stages nothing,
+so its premise read false on a working build, which is how this was found rather than reasoned. The
+defect it guards is untouched: the app's autopan fires the same `autopanstart` and the same
+`movestart`, so `leafletAutoPanning`'s lifetime is exactly as decidable and exactly as easy to get
+wrong. Only the caller moved, so the staging calls `applyPopupAutoPan` and the title says "an
+autopan".
+
+**Two smaller things, recorded because each cost a wrong assertion.** Leaflet's own default
+`minWidth` is **50**, so "no bind site names a minWidth" cannot be spelled as null: D6b asserts
+instead that every popup reports the SAME number and that it is the library's, which is what
+catches the 170 the station popups used to carry. And the ink edge is on the wrapper alone: the
+tip is one square rotated 45 degrees, so a `border-left` on it paints a diagonal stripe across
+the arrow rather than a rule down the popup's side. D6a asserts that in both directions, so an
+edit that tidies the rule onto the shared selector fails.
+
+**M47, so far.** The stage was asked whether the popup's translucent surface gives the contrast
+measurement's alpha branch an element to reach. Not yet, and not for the reason the question
+supposed: the translucency is a COLOUR alpha on a background, which R15's repair already
+composited, while M47 reverts the ELEMENT alpha (`opacity`, `fill-opacity`, `stroke-opacity`)
+and `tests/e2e/contrast.js` measures marks on the MAP rather than popup content. The live
+question is the next commit's: the rail tag's solid body carries a `--paper` backing at
+`opacity="0.9"`, and on the map that composites over `--paper` and returns it, which is exactly
+why M47 survived. Inside a popup it would composite over `--surface`, where it does not. The
+determination is recorded there.
+
+### Two measurements, one ruling, and one that ruled itself
+
+**`readableInk` cannot make a brand colour readable on a dark surface, and this is what forces
+the design's colourless title.** The function walks a colour toward legibility by SCALING IT
+DOWN (`for (let scale = 0.95; scale >= 0; scale -= 0.05)`) and its last resort is `#000000`,
+under a comment that says in as many words "black fails nothing on a light surface". On the dark
+theme's `--surface` it fails everything: measured, **eighteen of the app's twenty-seven subway
+route colours come back as `#000000` at 1.49:1**, and so does every colour that cannot clear 4.5
+as published. Nine clear it as published; the rest cannot be rescued in the direction this
+function moves.
+
+That was harmless while a Leaflet popup was white in BOTH themes, which it was until this stage:
+the dark theme shipped in MR4 over a white popup, so no caller had ever handed this function a
+dark background. Section 5's surface is the first, the defect is created here, and axe named it on
+`[b, .popup-sub]` at all three widths the moment it was.
+
+**FIXED IN THE HELPER RATHER THAN AT THE SIX CALL SITES**, because the bug is the helper's: a
+function whose contract is "the ink to print ON this background" was returning an unreadable
+answer for two thirds of its inputs and reporting nothing. It now asks the BACKGROUND which way
+there is room to move, by comparing black and white against it, and tints toward white where
+darkening cannot help. `c + (255 - c) * scale` mirrors the scaling A3 chose for the other
+direction and for A3's reason, that it preserves the hue: measured on the dark surface, eight of
+the eleven distinct subway colours move and three already clear, with `#c0392b` becoming `#d67e75`
+at 4.76, `#1e8449` becoming `#56a377` at 4.63, and `#e6b800` left alone at 7.52.
+
+**THE DARKENING PATH IS THE OLD LOOP, CHARACTER FOR CHARACTER, AND THAT COST A MEASUREMENT.** The
+obvious rewrite folds both directions into one loop, `1 - step` against `c + (255 - c) * step`.
+That is not the same function: 0.05 has no exact binary form, so counting down by subtraction and
+up by addition accumulate different error, and at a rounding boundary they disagree by one unit per
+channel. Thirteen of this app's own colours came back different on the light surfaces (`#e6b800`
+on white went `#8b7005` to `#8b7006`), which would have moved thirteen pins for a reason unrelated
+to the repair. So the two directions are two loops, and `helpers.test.js` compares the new function
+against a transcription of the old body over every colour the app ships and six surfaces: 168
+comparisons, zero differences, and at least eight deliberate disagreements on the dark surface so
+the guard cannot pass by the repair having done nothing.
+
+**Section 5's `.pt` says the same thing in its own vocabulary**, by giving the title a weight, a
+size, a letter-spacing and a route MARK and no colour at all, which is MR2's rule that "the brand
+colour stays on the SHAPES that carry identity". That is the vocabulary commit's to implement; it
+is no longer this measurement's to force, because the helper is correct on either surface now.
+
+**And the translucency does not merely make axe unsure, it hides a real violation.** With the
+popup opaque, axe reports a genuine `color-contrast (serious)` failure on `[b, .popup-sub]` in
+the dark theme at all three widths: the head's ink (above) and `.popup-sub`'s hard-coded `#666`,
+which is a light-theme grey on a dark surface. With the popup at 94%, the SAME two nodes are
+reported as `incomplete` instead, "background color could not be determined because element
+contains an image node", because 6% of a tiled basemap shows through and axe will not composite
+an image. Measured: opaque, three A1w states fail and all three are real violations naming the
+defect; translucent, eight fail and not one of them names it.
+
+| A1w state | opaque | at 94% |
+| --- | --- | --- |
+| popup open with cross-link, light, 1280 / 375 / 320 | pass | 4 undecidables each |
+| popup open with cross-link, dark, 1280 / 375 / 320 | **violation**, `[b, .popup-sub]` | 4 undecidables each |
+| panel detail, 1280 (popup still open) | pass | 4 undecidables |
+
+The `.popup-sub` half and the head's ink are this stage's to fix either way, and fixing them
+does not change the table's right-hand column: a decidable popup is what makes axe's answer mean
+anything, and 6% of tile is what takes it away. `UNDECIDABLE_SHAPES` can hold a popup shape and
+the machinery is built for exactly this ("a new shape to add WITH a decider spec"), but that
+list's own standing rule is that **the inventory shrinks by conversion and never grows by
+exclusion**, so four new entries would have been a policy act rather than an implementation
+detail.
+
+**RULED: the popup ships at full `--surface` opacity, the way MR1 overruled the header's 90%, and
+the undecidable inventory does not grow.** The ink edge is kept; the blur is not (below).
+`tokens.test.js`
+holds the rule against both spellings of a return; `helpers.test.js`'s A3 sweep, whose popup half
+had measured three greys against a literal `#ffffff` since MR1 with the note "until MR5 restyles
+them", now resolves the popup's inks per theme beside the chrome's and asserts the popup surface
+is a token exactly as it already asserted the header's. An erratum sits beside section 5 in
+`docs/design/map-redesign/README.md`.
+
+**And the blur went with the alpha, on a second ruling and by the same precedent.** At full opacity
+`backdrop-filter: blur(14px)` paints nothing: a backdrop filter filters what is behind the element
+and the element's own background then paints over it, so with alpha 1 and no radius none of the
+filtered backdrop is ever visible. MR1's F1 took the filter off the header along with the header's
+90%, and this is that pair one surface out.
+
+**The first draft kept it, with a comment and a test explaining that it was inert, and that was the
+wrong shape.** `tokens.test.js` asserted the declaration PRESENT and asserted that the sentence above
+it still read "PAINTS NOTHING", which is a guard on an explanation rather than on the page. The
+operator's ruling names the principle: **a rule measured to paint nothing is not kept with a test
+saying so.** The declaration is gone and the test is inverted, in the same words the A3 sweep already
+used for `#panel`, so the popup and the header are now asserted alike in all three ways: the surface
+is a token, there is no backdrop filter, and there is no alpha. The day a decider spec makes a
+translucent popup measurable again, the blur comes back with the alpha it belongs to.
+
+### The mutations, and the one that survived long enough to find three things
+
+Ten mutations against the chrome commit, each in a worktree detached at it with the sha echoed and
+compared before anything ran. The table is a script,
+`docs/reviews/map-redesign/mr5/mutations.sh`, rather than prose: MR4's F19 was a mutation that had
+been printing `ANCHOR MISS` and testing nothing for a whole round, and standing rule 6 came out of
+it. A table in a markdown file cannot be re-run, so this one is not in one.
+
+Nine ran against the commit as first written; **M66** survived it, and its re-run is against the
+same commit with D6i added, which is what the survivor bought. Rule 6's whole-table re-run at the
+branch tip happens before the push and is recorded there, so this section is the round's finding
+rather than the push's evidence.
+
+| # | the defect introduced | verdict |
+| --- | --- | --- |
+| **M60** | the autopan's top padding taken from a literal instead of the rendered header's edge | **DIED**, D6d: "and the derived one is cut to what is left" |
+| **M61** | the clamp removed, so each padding is the README's recipe verbatim | **DIED**, two S3 node tests |
+| **M62** | the stand-down skips rather than disarms the padding | **DIED**, D6f: "the padding is DISARMED, not merely skipped" |
+| **M63** | `readableInk` only darkens again, as it did before this stage | **DIED**, both new node tests |
+| **M64** | the popup surface goes back to the design's 94% | **DIED**, A3's sweep and two `tokens.test.js` tests |
+| **M65** | `.popup-sub` back to A3's `#666` | **DIED**, A3's sweep |
+| **M66** | the ferry popup head loses the resolved surface, so it inks against the light fallback | **SURVIVED first, then DIED**; see below |
+| **M67** | the theme swap stops rebuilding open popups | **DIED**, D6h: "the head was re-inked against the dark surface" |
+| **M68** | `autoPan` left on, so Leaflet pans and then the app pans again | **DIED**, A5e: "the map must not travel through intermediate positions" |
+| **M69** | one bind site loses `POPUP_OPTIONS` | **DIED**, D6b, naming the bind site |
+
+**M66 SURVIVED, AND THE REASON WAS COVERAGE RATHER THAN A SLEEPING ASSERTION.** Removing
+`popupSurfaceColor()` from the ferry boat popup's arguments makes its head ink against helpers.js's
+light-theme fallback and then print it on the dark surface, measured at **2.42:1**. Nothing failed.
+`a11y.spec.js` A1w's popup states open a SUBWAY train popup and `layout.spec.js` A4g opens the
+subway and NJ Transit ones, so the bus, railroad, PATH and ferry heads and every dock board's
+route-coloured bucket heading were **never measured anywhere**. Five of the six route-coloured heads
+could have been inked against the wrong surface with every gate green, which is the same shape as
+the defect the head's ink was in the first place.
+
+**D6i closes it**: all fourteen surfaces, both themes, every INLINE colour a popup prints, measured
+against what it is actually printed on. Inline specifically, because a colour that came through the
+cascade is a token and follows the theme for free; the ones that cannot are exactly the ones a
+builder resolved to a string. M66 now dies on it, naming `East River, rgb(0, 111, 133) on
+rgb(45, 43, 43), 2.42, need 4.5, ferry boat @ dark`.
+
+**And writing D6i cost two findings of its own, both worth the record.**
+
+1. **Its first draft passed while measuring nothing, in the spec written to close exactly that
+   trap.** The in-page block is a template literal handed to `new Function`, so every escape is read
+   twice: `/[\s,/]+/` in the file arrives as `/[s,/]+/` in the page. That split colour strings on
+   the letter "s", so `Number("(45")` was `NaN`, every ratio was `NaN`, and **`NaN < 4.5` is false**,
+   so there were no failures. It was spotted because the debug dump showed every label with its
+   letter "s" missing ("Ea t River", "Hud on"). The block now parses with `indexOf` and a literal
+   comma and contains no backslash escapes at all, and the spec asserts **every ratio is a finite
+   number** before comparing any of them, because a NaN is indistinguishable from a pass at the
+   point of comparison and the only place to catch it is before.
+2. **Ink on a fill is not ink on the surface.** The first working reader measured `.arr-badge`
+   against the popup surface and reported twelve badges as failures at 1.21. A badge's white or
+   black text is `readableTextOn`'s answer against the badge's own route-coloured fill and is
+   theme-independent; A4g already draws that line between its "ink" and "fill" samples. D6i now
+   measures against an element's own background where it has one, and asserts both kinds are in the
+   sample so a reader that silently classified everything one way cannot certify the other half.
+
+### Ruling Q1: the railroad popup joins the contract, and what its two strings were
+
+The railroad popup was the app's one surface that rendered a position's words itself. It printed
+`position.compact`, from a line written in `systems/railroad.js`, UNCONDITIONALLY, while every other
+popup went through `positionLineHtml`. The ruling unifies on `.words` and keeps the silence rule, and
+because that popup predated the contract, two strings a rider reads change. **The before, as the
+retired pins held it:**
+
+| surface | before | after |
+| --- | --- | --- |
+| `popupText/stock` · lirr train | `... Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica` | `... scheduled position (no GPS) ...` |
+| `popupText/stock` · mnr train | `MNR · Hudson Train 1797 live GPS` | `MNR · Hudson Train 1797` |
+| `popupText/f01` · placed | `... Outbound scheduled (no GPS), as of 29m ago` | `... scheduled position (no GPS), as of 29m ago` |
+| `popupText/f01` · unqualified | `LIRR · Babylon Branch Train 7566 live GPS` | `LIRR · Babylon Branch Train 7566` |
+
+**Two changes, not four.** The first is the contract's own word: `.words` says "scheduled position (no
+GPS)" where `.compact` says "scheduled (no GPS)", which is the single family those two forms differ
+in. The second is the silence rule reaching this popup: a FRESH GPS fix now says nothing, because
+"silence means current" (memo D9) and this was the only place in the app that broke it. An AGED fix
+still speaks, which is the contract working rather than a compromise: `popupText/f01` · aged still
+reads "live GPS, as of 5m ago" and did not move.
+
+**`.compact` is not dead and has not been unified away.** `positionQualifier`'s contract owns both
+forms and `positions.test.js` still holds the difference between them. What is gone is a SURFACE
+choosing between them.
+
+**The pins moved by exactly those four strings and nothing else**, which is what an ordered equality
+is for: no station popup, no other system and no other field in the golden changed. The new pins were
+taken after the change, as the ruling asked, and the diff is the record that nothing else came with
+them.
+
+**And a node test now holds the call site**, in `positions.test.js`, because nothing did: the change
+is rider-visible and the whole node tier stayed green through it. It scrapes `railroadPopup` for
+`positionLineHtml(position)` and for the absence of `position.compact`, asserts the same absence
+across the other five system files, and asserts the two strings from `positionQualifier` directly so
+it says what the change IS rather than only which call moved. **It had to strip comments first**: the
+comment this stage wrote at the changed line necessarily names `position.compact`, and scraping the
+raw source failed a correct build. `pins.spec.js` P5b paid for the same thing in its literal
+extractor.
+
+**Q1 leaves `.compact` with no reader, and P5b is what found it.** The coverage test reported
+`"scheduled (no GPS)"` as a rider-visible literal in the popup call graph that no pin covered, on the
+very commit that unified the call site. It was right: the railroad popup was that form's only reader,
+so after the ruling nothing in the app renders it. **The field stays.** `.compact` is one of the three
+forms section 3.2 of the freshness contract defines, `positions.test.js` still pins its difference
+from `.words`, and deleting a form the contract defines is an amendment to that contract rather than a
+stage's tidying. It is waived in `NOT_RIDER_TEXT` rather than `UNREACHED_STATES`, because that second
+map is for text a rider WOULD read in a state no world reaches and there is no such state left for
+this one. The waiver names the reason so the next stage finds it stated rather than guesses, and the
+comment at `positionLineHtml` was corrected: its first draft said `.compact` "is not dead", which a
+reader could take as "has callers".
+
+**Three specs outside the pins asserted the old strings, and each needed a different repair.**
+
+- **`smoke.spec.js` C2j**, F01's own acceptance test, read "the 27 fresh fixes are exactly what they
+  always were: filled, bright, 'live GPS'". Its `bare()` predicate looked for that string in the
+  popup; the tell for "this reads as live" is now the ABSENCE of a position line, so it is `silent()`.
+  A check was added that separates "says nothing about its position" from "says nothing at all", so
+  it cannot pass on a popup that lost its whole vocabulary. The marker's accessible NAME still says
+  "live GPS", because a name renders `.spoken` and silence on a name would say nothing rather than
+  mean something.
+- **`crosslink.spec.js` A3c** used `toContainText("live GPS")` as its witness that the right popup
+  was open. The ruling takes that fact away, so the witness is the train's own number, read out of the
+  record rather than typed, which identifies THIS train rather than a class of them. The premise
+  nothing had asserted was added with it: that the popup names no next stop, which is WHY there is no
+  link to make.
+- **`a11y.spec.js`** quotes a past capture containing "live GPS" inside a comment. That is history
+  and stays, with a clause naming the ruling so a reader does not take it for a claim about the
+  current build.
+
+### Ruling Q2: the state's words, said one way on two surfaces
+
+`feedTooltip` has carried a feed's state since MR1 with the button's action on the end ("Live · 12s ·
+hide Subway"). The footer's square is "the feed strip's dot at the popup" with "its accessible name
+from the same helper the strip's dot uses", and `feedTooltip` cannot be that helper: a popup has no
+button to press, so its words must not end in what pressing one would do. Re-deriving the clause in
+the footer would have been a second answer to one question, which is finding N6 one stage earlier.
+
+So `feedStateWords({state, age})` came out and `feedTooltip` is now that plus the action. Nothing is
+coined: the four strings are the ones the tooltip already said. The refactor is proven over the whole
+matrix rather than on the design's three examples, because "they agree on the examples" is what a
+copy looks like from outside.
+
+**The footer is `vehicleStaleLine` restyled, not a second voice.** This is the one thing a footer
+added naively gets wrong. Every vehicle popup already ends in `vehicleStaleLine`, which prints "as of
+5m ago" when the vehicle's SYSTEM has gone stale; a footer that also said "As of 6m ago" would put
+one fact on screen twice in two capitalisations. So the footer takes that line's job and its rule:
+where the vehicle's own position has already stated an age at least as old as the feed's, the footer
+shows the SQUARE and withholds the WORDS. `vehicleStaleLine`'s own comment is where the reason is
+written and it has not changed, that an observation's age and a feed's differ by the provider's lag.
+What the footer ADDS is the two states that line never had, live and schedule-only.
+
+**The square is never withheld**, because a rider cannot tell "this feed is live" from "this popup
+forgot to say" unless the mark is always there. **And there is no word for live**: the words are said
+through A1's `visually-hidden`, so a screen reader gets the state exactly where an eye gets the
+square, WHERE NOTHING HAS SAID IT YET. Ruling R2 is the third channel: a footer whose Position row has
+already stated an age at least as old as the feed's says the words in neither channel, because the
+sentence above ("withholds the WORDS") was implemented as withholding them from an EYE and a screen
+reader heard two ages about one train. This document has stated the total-suppression rule since round
+1 and the code stated the visual-only rule, and both test tiers pinned the code: a record and its
+code disagreeing, with the tests holding the code, which is the fifth defect shape one level up. The README's "LIVE · UPDATED 12S AGO" is the sentence memo D9 forbids and it is typed
+nowhere. **Corrected after the adversarial round**: an earlier sentence here said "AirTrain gets a footer
+reading Scheduled, which is the same answer the strip gives it". It does not. The footer is a
+VEHICLE popup's line and AirTrain has no vehicles, so **no popup in this app renders the
+schedule-only state at all**; the strip's tooltip is its only surface, `chrome.spec.js` D1a holds it
+there, and `pins.spec.js` waives it in `UNREACHED_STATES` with that reason. Three readers of this
+stage found the same sentence, which is what a record that contradicts its own waiver looks like
+from outside.
+
+**The helpers land inert one commit before their wiring**, which is this repo's own idiom: 6.3's
+position helpers "landed inert one commit before the gate, and are wired in the gate's own commit",
+for the same reason, that the wiring touches every popup and the arithmetic should be settled and
+tested before it does.
+
+### The flakes, in one list at last, and the branch they get
+
+Five stages have each recorded their own flakes in their own section, which is how a flake that
+appears in three stages reads as three unrelated observations. **The operator's instruction is
+that they become one list, and that the list gets a branch of its own once this phase closes.**
+Collected here rather than fixed here, because a timing fix is a change to a spec this stage is
+not otherwise touching, and a freeze is the wrong moment to start editing one (the A4 freeze made
+the same call about `C2c2`).
+
+| What flakes | Where it was seen | The shape |
+| --- | --- | --- |
+| `crosslink.spec.js`'s `open()` | MR3, round 4 after the push | A PREMISE assertion racing the app's first poll. `open()` asserted a marker count that six vehicles satisfied and one did not, so the local suite won the race every time until it did not. **Already fixed**, by making the premise a wait on `railroads.size > 0 && trains.size > 0`: a premise that can fail on a race was never testing anything, it was reporting one. On the list as the precedent for the shape, not as an open flake. |
+| `smoke.spec.js` 21 (a ferry boat moves between polls without churn) | MR4, once in a three-file parallel run; MR5, once in a full run at `40967b5`'s gates | **`runFor`'s poll racing the assertion.** `page.clock.runFor(15_000)` returns when the clock has advanced, not when the poll it triggers has fetched, parsed and moved the marker. The two locator assertions that follow RETRY, so they pass; `expect(after).toEqual([40.708, -73.985])` reads a value out of `page.evaluate` and cannot retry, so under worker contention it reads the boat's previous position once and fails. It opens no popup, so nothing MR5 changed executes in it, and it passed twice in isolation at the same sha. |
+| `pins.spec.js` P1k (the NJ Transit marks) | MR4, once inside the M33 mutation run; and again in the same stage's three-file run | Local server contention, not the mutation: M33 reaches nothing NJ Transit draws, and an isolated re-run at the same sha passed. The same shape as MR2's P1m under M6, which also failed beside a subway mutation it could not see. |
+| `smoke.spec.js` C2c2 (a healthy group covering no routes still counts as coverage) | the A4 freeze, roughly one run in ten under two-worker contention, 6/6 in isolation | Measured and filed as a follow-up on PR 89 rather than edited during a freeze. Listed here so the follow-up and this branch are the same piece of work. |
+| `pins.spec.js` P5d (direction A of the coverage claim) | MR5 round 2, twice in four full runs (at `9edca7e` and at `aab3e57`) | **DIAGNOSED AND FIXED, not carried to the de-flake branch, because it is this stage's own spec.** The residue came back EMPTY from the injected-string proof: the app rebuilds an open popup on its fifteen-second poll (`popup.update()`, and a re-skinned bus marker is re-bound outright), that poll is triggered by a clock the settle loops above advance, but the mocked fetch answering it resolves in REAL time, so under worker contention it lands between the injection and the read and takes the injected node with it. Reproduced deterministically by forcing `getPopup().update()` between the two calls: same assertion, same empty array, same message. Fixed by injecting and running BOTH readers in one `page.evaluate`, so nothing can intervene; the readers are the same two sources, wrapped in an IIFE each, because a third copy of a reader is the fifth defect shape. Proved still sharp by forcing the rebuild INSIDE the evaluate, where it fails. **The first occurrence also cost the evidence**, which is the entry's other half: the isolated re-run overwrote `test-results/` and the full run's output had been read with `tail`, so the message was gone. A failing suite run's output goes to a file before anything else is run. |
+| `mobile.spec.js` A6e (a popup never exceeds the phone's viewport) and `smoke.spec.js` 33 (NJ Transit lines, squares and two ADDED trips) | named by the operator for this list | **Recorded as named, with what the record here does and does not hold.** Neither has a failure written down in MR1 through MR5 or in the A4 rounds, and A6e passed in every run of this stage. So the de-flake branch MEASURES both (repeated runs under contention, which is how C2c2's one-in-ten was established) instead of taking either a memory or this table as evidence. A6e is worth measuring on its own grounds regardless: MR5 changed the geometry it asserts, and it is the one popup spec whose subject this stage moved. |
+
+**The rule until that branch exists is the one this phase has used throughout.** `retries: 0` in
+`playwright.config.js`, with the comment saying why ("no retry masking"); a flake is recorded with
+the run it appeared in and the sha; it is re-run in isolation and the isolated result is reported
+as the isolated result; and it is never retried, quarantined or skipped into green. A mutation run
+that flakes is re-run rather than counted, because a table that launders a flake is worse than one
+with a gap in it.
+
+### The fifth defect shape: two implementations of one reader, of which only one learns
+
+This phase has been naming the shapes its own defects take, and pointing each round's reviewers at
+them: a markup read where the drawn page is what matters, the model believed over the page, a test
+that cannot fail, and a count over a class a later stage widened. **MR5 adds a fifth, and it is
+this stage's own: two implementations of one reader, of which only one learns.**
+
+`pins.spec.js` reads a popup two ways, because two specs find their subject differently: P5a looks
+a surface up by its `MARKERS` name, P5c looks a railroad up by its registry key, since the F01
+capture's ids are not stable across position states. The reader walked text nodes and normalised
+them, and P5c carried its own inlined copy of that walk, the normaliser and the clones.
+
+Then ruling Q2 taught the reader something new. The freshness footer says nothing visible in the
+live state and says "Live, 12s" through A1's `visually-hidden` class, so the eye's view and the
+screen reader's view stop being the same string for the first time in this app: `seen` drops
+`.visually-hidden`, `spoken` drops `[aria-hidden="true"]`. **Only `popupStrings` learned it.** P5c
+regenerated four goldens whose `seen` contained "Live · {n}s", which is a string no rider sees and
+the one sentence memo D9 forbids, recorded in a golden as though it had shipped. Nothing was red.
+The pin matched itself, and the golden was the evidence.
+
+**Why it belongs beside the other four rather than inside "a test that cannot fail".** That shape
+is one test with no teeth. This one is two teeth of different lengths: each reader is correct on
+its own terms, both are exercised, and the defect lives in the gap between them, which only
+appears when one of them is taught something. It is also the second time this phase has paid for
+it one level down: finding N6 was two answers to one question in the app, and this is two answers
+to one question in the tests. **The repair is the same repair.** One `POPUP_READER` string with
+two locators in front of it, `content` as the contract between them, and the reason written above
+it so the next stage that needs a third way to find a popup adds a locator rather than a reader.
+
+### The vocabulary: five classes, twelve popups, and one mark per family
+
+Section 5 gives every popup one grammar and this is the stage that builds it. `.pk` the kicker,
+`.pt` the title with its family's mark, `.kv` the label/value grid a vehicle's facts sit in, `.dir`
+an arrivals bucket's heading and `.arr` its rows, with `.fresh` already landed under ruling Q2 and
+`.alert` and `.xlink` where their own callers are. **Five builders in `helpers.js`, one CSS block,
+and all twelve popups rebuilt in them: six vehicles and six stations.**
+
+**Every builder is a pure string function, which is the seam this file already keeps.** Nothing in
+the vocabulary touches Leaflet, so `frontend/popupvocab.test.js` asks each one under `node --test`
+and `tests/e2e/popups.spec.js` measures what the rules draw. The escaping is in the builders, once:
+every text parameter goes through `esc()` there, so no caller composes markup out of feed text, and
+the three parameters that DO take markup say so in their names. That change caught its own first
+bug: `njtRowLabel` used to return pre-escaped text with a leading space, and passing it into a
+builder that escapes would have printed `&amp;amp;` for a headsign with an ampersand in it. It
+returns plain text now and helpers.test.js asserts the single escaping.
+
+**A popup's mark is the map's mark, taken off the marker rather than rebuilt.** `markerMarkHtml`
+(systems/shared.js) reads the icon the marker is wearing and `popupMarkHtml` re-wraps that string at
+the popup's size: the opening `<svg>` tag keeps its viewBox, class and style, its width and height
+are replaced, and every byte after it is copied. So a rail train's popup shows the tag with the
+branch code that train resolved to, the body its provenance earned and the chevron at the bearing it
+is drawn at, without reassembling any of it. Rebuilding would have meant re-deriving each family's
+arguments (`railroadIcon` alone takes a train, its previous row and a clock) and the two would have
+disagreed on exactly the trains whose state is worth looking at, which is finding N6 one surface out.
+
+**One clamp, stated as arithmetic**: a title mark is drawn at the larger of 24 (section 5's
+`.bul.lg`) and the mark's own box, so every family is enlarged except the rail tag, whose 30-unit box
+holds a 13-unit tag with a stem and a head below it. Scaling that box to 24 would draw the tag's two
+blocks at 10.4 units with 7px type, **smaller and thinner than the map draws them**, which is the one
+direction a popup mark must not go. A kicker's or a row's mark asks for 17 (`.bul.sm`) and gets it.
+
+**The subway's plate became a builder, which is the last mark in this app to do so.** It had lived
+inline in `trainIcon` since phase 1; it is `subwayPlateSvg` in helpers.js now, byte for byte (P1f
+pins the drawn markup and did not move), with the one-to-three-character label validation that used
+to sit beside it. The popup could not have drawn its own without being a second answer to "what does
+a subway train look like".
+
+**And the three canvas families get no title mark, which is the rule rather than an omission.** A
+subway station, a PATH station and a ferry dock are `circleMarker`s drawn on a shared canvas: they
+have no element, no icon and no string to borrow, so `markerMarkHtml` returns nothing and their
+titles carry words alone. The rail families' station squares are `L.marker`s and do get one.
+
+**The subway station's kicker carries the routes calling there**, which is what section 5 asks for
+in that slot ("right: route bullets"), drawn by the map's own plate builder at the small size and
+taken from the registry's own `station.routes`, the same list the dot-or-ring is drawn from. **And
+after ruling R3 all five station boards do**, through one helper with one overflow rule; the section
+below this round's own is where that lands, and this sentence is left as the record of the stage in
+which one board had it and four showed a rider nothing.
+
+**Measured at the worst station rather than the fixture's, and THE FIRST MEASUREMENT WAS WRONG.**
+Times Sq in the hermetic world serves three routes; the real one serves a dozen. This paragraph said
+that twelve plates make the right-hand span 158px wide and WRAP it to two rows, "so they wrap rather
+than pushing the row wider". Re-measured in the real app with the payload overridden to serve twelve:
+the popup's inline width is **267px**, the span is **204px**, `.pk` is **one row 20px tall**, and
+`scrollWidth` equals `clientWidth`. Twelve plates PUSH THE POPUP WIDER; they do not wrap. The
+mechanism is Leaflet's own `_updateLayout`, which sets `white-space: nowrap`, reads the content's
+offsetWidth and clamps it to [minWidth 50, maxWidth 320] before writing an inline width, so the popup
+is sized to the kicker's max-content and wraps only once that cap (or the `calc(100vw - 60px)` cap at
+phone widths) binds. The 220 in the old sentence is the CSS floor, which is reached only when nothing
+in the popup needs more. **Ruling R3 is what re-measured it**, because a cap cannot be sized from a
+wrap that does not happen; the ruling's round entry has the counts at which each family really does
+wrap.
+
+| Surface | kicker | title | rows |
+| --- | --- | --- | --- |
+| subway train | `Subway` | plate + `1 train` | Next stop, Direction, Position, Trip |
+| bus | `Buses` | arrow or dot + `M15` | Bus, Heading, Position |
+| LIRR / MNR train | the served system | tag + branch, or `route 5` | Train, Next stop, Direction, Position |
+| NJ Transit train | `NJ Transit` | tag + route name | Train, To, Next stop, Delay, Position |
+| PATH train | `PATH` | diamond + route name | Next stop, Direction, Position |
+| ferry boat | `NYC Ferry` | hull + route name | Boat, Status, Speed, Position |
+| subway station | `Subway` + its route plates | station name | `.dir` per direction, `.arr` rows |
+| LIRR / MNR station | the served system + its branch tags | square + station name | as above |
+| NJ Transit station | `NJ Transit` + its line tags | square + station name | one flat `.arr` |
+| PATH station | `PATH` + its route diamonds | station name | `.dir` per direction |
+| ferry dock | `NYC Ferry` + its route hulls and its access glyph | dock name | `.dir` per route |
+| AirTrain station | `AirTrain JFK` | square + station name | `.kv`: a branch and its headway |
+
+**No word is coined.** The six system words are `POPUP_SYSTEM_WORDS`, and popupvocab.test.js asserts
+each against the surface it came from: `Subway`, `Buses`, `NJ Transit` and `PATH` are the feed
+strip's own names, `NYC Ferry` is what `ferryBoatName` and the ferry popups already said, and
+`AirTrain JFK` is `airtrainStationName`'s. The railroad's kicker is the train's served `system`
+field, unchanged, which is finding MR5-F20 below. The labels the grid needed beyond the design's
+five rows (Direction, Status, Speed, To, Heading, Bus, Boat) each name a field the popup already
+printed bare, and the five the design names (Train, Next stop, Delay, Position, Trip) are section
+5's own.
+
+**The silence rule generalises from one row to the grid.** `positionLineHtml` became
+`positionWords`, which returns the words a position gets to say and nothing for a fresh reported fix
+(memo D9, ruling Q1), and `popupRowsHtml` drops a row whose value is empty. So the two rules compose
+rather than being written twice: one says when a fact has nothing to say, the other says what a row
+with nothing to say looks like. A ferry with no status, a train running to schedule and a fresh GPS
+fix are all silences now, and each is silent for a reason stated where the reason lives.
+
+**Three helpers ended with no caller and were disposed of the way this stage has disposed of the
+others.** `formatRailroadHead` (the popup's joined head: the kicker and the title want the parts, so
+`railroadHeadParts` returns them and its three cases are pinned against the three strings the
+formatter used to return), `njtDelayLine` (a `<br>` and an escape around `njtDelayText`, both of
+which the grid does) and the `.arr-dir` CSS class (section 5 names `.dir` and draws it differently).
+Each leaves a comment where it was, and the measurement `.arr-dir`'s comment carried, about a
+near-white hairline being invisible on one surface and shouting on the other, moved with it.
+
+**A newline between every cell, which is not formatting.** Adjacent grid cells with no whitespace
+between them concatenate in `textContent`: measured, `crosslink.spec.js` A3c read the Metro-North
+popup as `MNRMHUDHudsonTrain1797`. CSS ignores a whitespace-only text node in a grid or a flex
+container, so a `\n` between cells costs nothing on screen, the pins' reader normalises it away, and
+every assertion that reads a popup as words reads it as words again.
+
+### What the coverage test found once its reader could read the code
+
+P5b's job is "every rider-visible literal in the popup call graph is pinned or has a reason", and
+**its extractor could not read the code this stage wrote.** It was a comment stripper plus a regex
+over the stripped source, and two constructs in the vocabulary broke it, both measured on the first
+run after the builders landed:
+
+- **A template literal nested inside another template's `${...}`.** `popupTitleHtml` returns
+  `` `<div class="pt">${markHtml}${text ? `<span…` : ""}</div>` ``, and the outer match ended at the
+  INNER opening backtick, so the fragment `"${text ?"` was reported as rider prose.
+- **A regex literal carrying a quote.** `popupMarkHtml` strips dimensions with
+  `/\s(?:width|height)="[^"]*"/g`, and the quote inside it opened a string that ran to the next
+  quote in the file, reporting `"); return <span class="` as prose.
+
+Both are the shape that comment stripper was written for in the first place (the apostrophe in
+`railroadPopup`'s own comment, "station's"), which is the argument against a third special case:
+**a regex over a stripped string will always be one construct behind the code.** So the extraction
+is one scanner that tracks its mode, emits one entry per string or template literal with `\u0001`
+where an interpolation was, and scans an interpolation's contents as CODE. It carries the standard
+regex-or-division heuristic and says so; this call graph has no division in it at all.
+
+**And scanning interpolations is what found something real.** The old extractor stopped at every
+`${`, so a literal inside one was invisible, and the first thing the new one reported was
+`"Unknown route"` (from `busPopup`): the title a bus gets when the feed serves no `route_id`. **It is
+rider-visible, it has been in the app since phase 2, and no pin in six stages has ever covered it**,
+because every bus in every fixture carries a route. It is in `UNREACHED_STATES` now with that reason,
+beside the observation that `busName`'s bare "Bus" has the same gap.
+
+**One filter was added and one waiver taken.** A piece containing `="` is an attribute fragment and
+never rider prose: the tag split cannot remove a tag whose own opening arrives as an interpolation,
+which is exactly what `popupMarkHtml` writes, so `" height="` survived with a space in it and read as
+two words. And `"n now"`, the countdown cell's class when a row reads "now", is waived as what it is:
+a class attribute. The alternative was spelling the class as `` `n${… " now" : ""}` ``, which the
+prose filter would drop for having no space, and **hiding a string from the inventory by formatting
+it differently is not the same as declaring it.**
+
+### A4j re-staged, and the geometry that re-staged it
+
+`layout.spec.js` A4j asserts that a popup the rider has dragged is left alone, and its premise is
+that a clearing move EXISTED and was declined. **The premise failed, and the measurement is worth
+keeping**: at 375 after the spec's first growth the popup is 293 wide at x 0..293 and 350 tall at
+y 17..367; the header's bottom edge is 57 and the bottom-right control stack occupies y 453..575 at
+x 289..363. The popup's own right edge overlaps the stack's left edge by four pixels, so a downward
+move is refused the moment the popup's bottom reaches 453. The spec's second growth of 40px put the
+popup at y -23..367, needing an 88px move that lands its bottom at 455: two pixels into the stack,
+with no sideways escape at a width where the popup is 293 of 375. `popupClearingShift` returned null,
+the app declined a move that does not exist, and the spec's own premise assertion said so.
+
+**Re-staged rather than relaxed**, which is what this phase does with a broken premise: the second
+growth is 4px (the popup is already under the chrome after the first, so the second one's whole job is
+to BE a resize the app must decline), the move exists again at 52px, and the two premises are still
+what would catch the next chrome that outgrows this. The number is not written down: it is an overlap
+passed to the same measured helper.
+
+**And it is a finding about the app, recorded rather than fixed**: this spec's popup is 293 wide at
+375, and a popup that tall near the map's left edge has no position that clears both the header and
+the control stack.
+
+> **Three widths, one quantity, and a reviewer sorted them out.** This document quotes 256, 263 and
+> 293 as a popup's width at 375, two of them attributed to the same 220px content floor. They are
+> three different popups and only one of them is the floor. **256 IS the floor**: `.leaflet-popup-content`
+> is `min-width 220px` plus `margin 14px 16px`, the wrapper carries a 2px left edge and Leaflet adds
+> 1px of its own, so 220 + 32 + 2 + 2 = 256, and that is the number the horizontal-padding arithmetic
+> at ruling S3 uses. **263 is a measured popup** (the one the clamp pins to x 2..265), wider than the
+> floor because its content is. **293 is this spec's popup after its own first growth**, which the
+> paragraph above says in as many words; the sentence that follows used to attribute it to the floor,
+> and the floor does not compute to 293 in any theme or at any width. A later stage deciding whether
+> the clamped padding fits at 375 wants 256. A twelve-row arrivals board reaches that height without
+any help from a spec. The app's answer today is the clamped autopan of ruling S3, which pans the map
+rather than moving the popup; whether the control stack should be an obstacle the correction is
+allowed to overlap is a question for the operator, not for this stage.
+
+### Two findings for the operator, both about one word per system
+
+Neither is fixed here, because both change a string a rider reads and this stage's own rule is that
+the words are the app's. Both are measured.
+
+| # | Finding | What MR5 did |
+| --- | --- | --- |
+| **F20** | **A popup says the feed's code for an agency where every other surface says the agency's name.** A Metro-North train's popup head has printed the served `system` field since phase 9: "MNR". `railroadSystemLabel` maps that to "Metro-North", and it is what the marker's accessible name says (`railroadTrainName`), what the station panel's row says (`systemLabel` in the registry), and what the feed strip's button says (`FEEDS`). So the same agency is "MNR" in a popup and "Metro-North" in the three places beside it, and MR5's kicker inherits the popup's word because moving a word is not rewording it. **The ferry is the same shape from the other side**: its popups say "NYC Ferry" where the strip and the panel say "Ferry". | **Recorded, not changed.** The fix is one line in each of two builders (`railroadHeadParts` taking `railroadSystemLabel`, and `POPUP_SYSTEM_WORDS.ferry` taking FEEDS' name), and it moves two rider-visible strings, so it wants a ruling: one word per system everywhere, or the popup keeps the agency's own branding while the chrome keeps the short form. |
+| **F21** | **A subway train's popup now says its route twice**, once as the plate the map draws and once in the title's words ("1 train"). The mark is `aria-hidden`, so a screen reader hears it once; an eye reads it twice. | **Recorded, not changed**, because every alternative changes something this stage was told not to: dropping the mark leaves the one family whose popup does not show what the rider clicked, and dropping the word leaves a title that is a bare route id. The rail families do not have this (their tag carries an agency glyph and a branch code, and their title carries the branch NAME), and the bus does not (its mark is an arrow). |
+
+### The mark a popup wears, and the two things measuring it cost
+
+**`markerMarkHtml` reads the marker's icon rather than rebuilding it, and that is the whole of it**:
+four lines in systems/shared.js, one helper for six families, because every vehicle in this app is an
+`L.divIcon` whose html is a string from helpers.js. That is the seam MR3 and MR4 built and this is
+the first stage to read it back.
+
+**`popupMarkHtml` is a re-wrap and not a parse.** It takes the opening `<svg>` tag up to its first
+`>`, strips any width and height (the rail families carry them, the other three take their size from
+the divIcon's box), writes the popup's, and copies every byte after that tag. Width follows the
+viewBox so a mark that is not square keeps its ratio: the ferry's 22x14 hull is 37.71 wide at a
+title's 24. `popupvocab.test.js` asserts the body byte-for-byte across all six builders, that every
+other attribute survives (the bus arrow's `transform: rotate`, the classes the specs read), and that
+neither dimension is written twice.
+
+**The wrapper carries `aria-hidden`, and the subway's plate is why.** Five of the six builders hide
+themselves already; the plate does not, and it carries its route letter as SVG TEXT. Without the
+attribute a screen reader would read "1" before the title says "1 train". Measured in the pins: the
+plate's letter is in every subway surface's `seen` and in none of their `spoken`.
+
+**Two measurements it cost.** The first is the newline separator above. The second is that a popup's
+`textContent` and a rider's reading of it are not the same string, and the pins' reader was already
+right about that: it walks text nodes and joins them with a space, which is why the goldens read as
+sentences while `toContainText` read "MNRMHUDHudsonTrain1797". The specs that read popups as words now
+read them as words because the markup separates its blocks, not because each spec normalises.
+
+### Direction A of the coverage claim, which the vocabulary is what made possible
+
+The stage brief asks the coverage test for two directions, because either alone is circular. P5b is
+direction B (every literal in the popup call graph is pinned or declared). **P5d is direction A: every
+word a rider reads in a popup belongs to a NAMED SLOT.**
+
+`seen` is the universe, a tree walk that knows no class and no list. The slots are a partition read
+through named selectors: the kicker's two sides, the title, a label, a value, a bucket heading, a row
+cell, the footer, an alerts block, a cross-link, a board line, a muted note, an empty-board notice.
+**The assertion is that the partition is total**, so a string rendered into a popup that no slot
+claims comes back as residue. It cannot be satisfied by regenerating a golden, because nothing here is
+pinned.
+
+**Before this stage the test could not have been written.** A popup was a run of `<br>`-joined
+sentences with three classes among them, so "which slot is this word in" had no answer for most of the
+text. It has one for all of it now, and a thirteenth kind of text is something this test reports
+rather than something a reader has to notice.
+
+**Three things it is measured against, because fourteen empty residues read exactly like fourteen
+readers that missed.** The comparator is asserted on its own (an injected word must come back, and a
+word read twice needs two claims); each surface must fill at least two slots; and one unclaimed string
+is INJECTED into a rendered popup through the DOM, with the residue required to name it.
+
+**And writing it found two defects in itself, both of shapes this phase has already paid for.**
+`\s` in a reader interpolated through `inPage` arrives in the page as a bare `s`, so the first draft
+read "Next stop" as "Next  top" and "Position" as "Po ition": the same defect as popups.spec.js D6i's
+first draft, which split colours on "s" and compared NaN to 4.5. And a slot's `textContent` glues
+adjacent text nodes, so the rail tag's agency glyph and branch code read as "LBAB" where the universe
+reads "L" and "BAB": the slots walk text nodes now, the same way the universe does, and differ only in
+which nodes they take. The residue report is what surfaced both.
+
+### The last two classes, and M47's determination
+
+**`.xlink` is a rename and nothing else.** The cross-link button has been `popup-crosslink` since A2;
+the chrome commit had already tokenised its rules into section 5's (600 11px, a `--divider` border, a
+transparent ground), so the class was the only thing left to adopt, and it is written once, in
+`CROSSLINK_CLASS`. **The design's arrow was measured and then not drawn.** Section 5 draws the button as
+"Also here: Jamaica →". Added as an `aria-hidden` span, so that a screen reader would not read "right
+arrow" after the station's name, **axe reported a new undecidable finding on it at every width and in
+both themes**: `color-contrast`, "Element content contains only non-text characters", on
+`button.xlink span`. The ruling on this stage's surface is that the undecidable inventory does not
+grow, and a decorative glyph is the weakest reason there is to grow it: the button already says where
+it goes and its border already says it is pressable. Recorded as a deviation beside the README's list,
+with the measurement, rather than kept behind a waiver.
+
+**`.alert` is not renamed, and this is the deviation.** The app draws a popup's alerts as one
+`.alert-block` region with an `.alert-row` per alert, and MR5's chrome commit had already given that
+region section 5's exact rules: the accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill. The
+design's `.alert + .alert { margin-top: -6px }` implies one box PER ALERT, which would draw an accent
+edge per alert rather than one for the region, and a station popup with three alerts would read as
+three warnings rather than one block of them. **So the rules are the design's and the granularity is
+the app's**, which is the same call ruling Q2 made for the footer's square (`.fresh i` became
+`.fresh-dot`). Recorded here and beside the README's list rather than quietly kept.
+
+**M47's determination: it dies now, and the reason it survived is the reason it took a new pin.**
+MR4's R15 fixed the contrast measurement's alpha compositing and recorded the fix as UNGUARDED,
+because the only two element alphas on this map are a `--paper` backing behind something else (the
+subway plate's at 0.95, the rail tag's at 0.9), `bestPerFamily` reports a family's STRONGEST paint,
+and a paper backing over paper reads the same either way. **Section 5 moves those two marks onto a
+new surface**: a popup's title draws the map's own mark, and inside a popup the backing composites
+over `--surface`, which in the dark theme is a different grey from `--paper`. So the arithmetic stops
+being a no-op, and `pins.spec.js` P4d records every non-opaque paint on the page, composited and as
+if it were opaque, on both surfaces, from all three places it is drawn.
+
+| where | mark | paint | alpha | composited on surface | opaque on surface |
+| --- | --- | --- | --- | --- | --- |
+| map | subway train | rect fill | 0.95 | 1.080 light, 1.171 dark | 1.084 light, 1.180 dark |
+| map | rail tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
+| popup | rail-tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
+| chrome | key-rail-tag | rect fill | 0.9 | 1.076 light, 10.495 dark | 1.084 light, 12.596 dark |
+| chrome | svg | rect fill | 0.95 | 1.080 light, 11.516 dark | 1.084 light, 12.596 dark |
+| chrome | svg | path stroke | 0.9 | 1.076 light, 10.495 dark | 1.084 light, 12.596 dark |
+
+**ALL SIX ROWS, AND THE CHROME ROW'S DARK FIGURES WERE THE WRONG COLUMN.** A reviewer ran the pin
+against this table: it held four rows where `contrast/alpha` holds six per theme, under a sentence
+claiming "every non-opaque paint on the page ... from all three places it is drawn", and the chrome
+row's dark numbers (12.227 and 14.858) are that row's `compositedOnPaper` and `opaqueOnPaper` under
+headers that say "on surface". The two missing rows are the Key panel's other alphas, and they are
+the least interesting rows in the table, which is exactly why a table assembled by hand lost them.
+The numbers above are now transcribed from the pin.
+
+**WHY THE CHROME'S DARK NUMBERS ARE LARGE WHILE THE MAP'S ARE NOT**, since the contrast between the
+two halves of this table is the thing a later reader will stumble on: the Key panel keeps ONE surface
+in both themes (MR1's decision), so its glyphs carry the LIGHT paper in the dark theme, and a light
+paper measured against the dark `--surface` is a real 12.6 rather than the 1.18 a paper backing reads
+against its own paper. Nothing is wrong with either; the rows are measured against `--surface` for
+every place, which is the column's definition, and `compositedOnPaper` is in the pin beside it.
+
+**Three decimals, because two rounds the difference away.** A 0.95 backing composited over the light
+surface moves the ratio by about five thousandths, and the whole point of the table is that the
+compositing changes something: the premise asserts at least one row where it does, so a table of
+duplicates fails rather than reading as a clean sheet.
+
+**And the chrome's rows are labelled as chrome, which the first draft got wrong.** It called
+everything that was not in a popup a map mark, and the Key panel's glyphs came back carrying the
+LIGHT paper in the dark theme. They are not map marks and that is not a defect: the Key draws its
+tags in H3's literals because the panel keeps one surface in both themes. A number ledger that called
+them map marks would be telling a reader something false.
+
+### The whole table, re-run at the tip, with every anchor verified
+
+Standing rule 6 asks for the whole table before every push, and an ANCHOR MISS as a failure of the
+run rather than a survivor. **The first re-run, at `dcc07f9`, reported two**, and both are MR4's
+finding F19 one stage later:
+
+- **M64** anchored on `backdrop-filter: blur(14px)` under the popup's background. The footer commit
+  DROPPED that declaration, on the operator's ruling that a rule measured to paint nothing is not
+  kept with a test saying so. The anchor matched zero times and the row tested nothing.
+- **M66** anchored on the four-line argument list of `ferryBoatPopupHtml`'s call site. The
+  vocabulary commit added the mark argument to it, so the anchor matched zero times.
+
+Both re-anchored against the source as it now stands, and the table re-run whole at `c1cfbc3`:
+**seventeen died, one survived, none failed to run.**
+
+| # | Mutation | Result |
+| --- | --- | --- |
+| M60 to M69 | the chrome's ten, re-run unchanged (the autopan's derivation and clamp, the stand-down, `readableInk`'s two directions, the 94% surface, `.popup-sub`'s `#666`, the ferry head's surface, the theme rebuild, `autoPan`, a bind site's options) | **all died**, on the gates recorded when they were written |
+| **M70** | the popup's mark rebuilt instead of copied | **died**, node: the byte-for-byte body assertion across all six builders |
+| **M71** | the title mark's clamp removed, so the rail tag draws smaller than the map draws it | **died**, node |
+| **M72** | the grid prints a row with nothing to say | **died**, node and the pins |
+| **M73** | the cell separator dropped, so a popup's `textContent` glues its words | **died**, node |
+| **M74** | a kicker word coined rather than taken from the app | **died**, node: the six words are asserted against the surfaces they came from |
+| **M75** | the bus's route note loses its class, so its words are in no named slot | **SURVIVED**, and the reason is written down below |
+| **M76** | M47 again: the element's alpha not composited | **died**, P4d. Which is the determination: the same revert survived MR4 and has a guard now |
+| **M77** | the AirTrain sub-line loses its class, which is M75's defect where a fixture renders it | **died**, P5d |
+
+**M75's survival is honest and it names a real limit.** The bus's route note renders only while
+`busRouteNotes` holds an entry inside `NOTE_TTL_MS`, and no pinned world has one, so the mutated
+`<div>` is never drawn. It is an equivalent mutant in every world this suite boots, and it is outside
+BOTH directions of the coverage test: direction A (P5d) cannot see a string that is not rendered, and
+direction B (P5b) reads literals rather than classes, so a class removed from a literal nobody
+disputes is invisible to it. **M77 is the same defect where the stock world does render it**, and it
+dies on P5d, which is what makes the guard real rather than the survivor excusable.
+
+### Round 2: five reviewers, and the half of their findings that was about the guards
+
+Round 1 fixed the three defects the drawn page had and the string did not. **Round 2 is the other
+half of the same five reports**, and it has one shape running through it: a guard that passed over
+the thing it was written for, and a sentence that described a tree that no longer exists. Nothing a
+rider sees changed in this round. Every repair below is a test that can now fail, or a comment that
+can now be believed.
+
+**The reviewers ran in worktrees detached at `790b9a2`**, five of them, pointed at the four shapes
+this phase keeps producing plus this stage's own ("a word that came from a literal instead of the
+app") and, from round 1 on, the fifth ("two implementations of one reader, of which only one
+learns"). Each echoed its sha before reporting. Their findings are below by what they were about
+rather than by reviewer, because four of the five found the same shape in different tiers.
+
+#### The guards that could not fail
+
+| What was asserted | What could happen anyway | The repair, and the mutation that now kills it |
+| --- | --- | --- |
+| `withoutMarks` normalises a mark "and its geometry stays where marks live" | The token kept only the `<text>` label. Drawing the subway station kicker's plates at the TITLE's size, and then in flat black, left all 392 node tests green (the reviewer ran both). Nothing pinned `subwayArrivalsHtml`'s arguments: `markPin` writes `markers/<system>` for the TRAIN's mark, and `popupvocab.test.js` passes its own literals in. | The token carries the route, the drawn size and the declared fills: `[mark 1 17x17 #c0392b,#ffffff]`. Three pins moved (two in `boards.test.js`, one in `smoke.spec.js` C2i) and each now reads the kicker's own paints, which are the same pair the row badges below carry. **M78.** |
+| `withoutMarks` is "imported rather than copied" | It was two byte-identical copies, and the comment defending the duplication said this file "is not importable from a node unit test". It is: `tests/e2e/popup.js` requires nothing. This is the fifth defect shape re-created inside the commit that named it. | One copy, in `popup.js`, required by `boards.test.js`. **The finding held and this cell's evidence did not: popup.js requires `@playwright/test`, and CI is the only place that shows. See round 3 below; the one copy lives in `tests/e2e/marktoken.js` now.** |
+| `tokens.test.js`: "the design's translucency cannot come back by either spelling" | It read ONE rule body. The reviewer appended a second `.leaflet-popup-content-wrapper` rule with `color-mix` and a blur: equal specificity, later in the file, so it wins, and all 386 node tests passed. `style.css`'s own comment records that exact trap costing a debugging round. | The scan is by SELECTOR over every rule that paints a popup (eight of them today, and a ninth the day it is written), with the count asserted only so a regex that stopped matching fails loudly. The background count is over the same set. **M79.** |
+| P5b: "attributed to the function it came from, so a phrase pinned in one system does not silently cover another's" | The attribution was in the failure message only. Coverage was `haystack.includes(lit)` over every world's text joined into one string, so a literal only one system can reach was covered by a coincidental occurrence in another's pinned text. | A per-system haystack, used when every function a literal came from is the same system's; shared builders still check against the whole golden, because their prose is legitimately pinned wherever it renders. A premise asserts the seven systems the surface keys resolve to, so a renamed world fails loudly instead of checking against an empty string. **M80.** |
+| P5b's scanner "reads all four constructs correctly" | A `/` after a KEYWORD was read as division, so `return /["]/.test(x) ? "ok now" : "not ok"` lost BOTH literals and reported a code fragment as prose. The reviewer extracted the function and ran it. Latent today (this app's two `return /.../` sites carry no quotes and no prose), and a silent loss in the direction that claims totality. | It reads the previous WORD as well as the previous character. And five constructs it has been wrong about once are now run through it as self-tests, in the page, compared here: the nested template, the regex with a quote after `(`, the two keyword cases, and an ordinary division. **M81.** |
+| `a11y.spec.js` A1z4: "every `svg.rail-tag` on the page is a rail train's tag, so a second surface adopting the class fails there" | MR5 IS that second surface, and A1z4 never opened a popup. Worse, the axe exception that names A1z4 as its decider is suppressing `svg.rail-tag text` inside the popup the axe gate's own "popup open with cross-link" state opens, at three widths in both themes. The excuse and the measurement were about two different documents. | A1z4 opens a rail train popup, both tag bodies, one at a time, and counts the class per place (marker, popup, loose) with the popup's two glyphs measured rather than only counted. The exception's decider text says so now. **M82.** |
+| P4a's census, which exists for "a count over a class a later stage widened" | It recorded none of the six classes MR5 widened, so `census/stock` was correctly but vacuously unmoved by the stage that moved them. | The census counts each mark class in both places it can be drawn, and P4a takes it over two popups as well as the map: a rail train's, whose mark carries a class, and a subway train's, whose plate carries none by design. Leaflet removes a closed popup on a 200ms fade timer, which is why each read waits for the previous popup to leave the document. **M83.** |
+| `style.css`: "`helpers.test.js`'s A3 sweep measures `.arr .now` with the rest of the popup's inks" | It did not. Every other popup ink in that sweep is read by selector; this one was not among them, and the pairing actually measured was the bare `--accent-ink` token. The regression the comment argues against would not have failed anywhere. | `declared(".arr .now")` is in the sweep. **M84**, which fails at exactly the 3.47 the comment names. |
+| `layout.spec.js` A4g's sharp premise: "an N heading must be in the sample" | `.pt span` matches `.pmark` too, and `sample()` reads `textContent`, which for a plate is the route letter painted in `--ink`. So the premise added to prevent vacuity could be satisfied by an aria-hidden decoration. Measured: the old selector put a bare `"N"` and an empty span into the ink sample. | `.pt > span:not(.pmark)`. |
+| P4d: "at least one row's composited value must DIFFER from its opaque one" | Every row carries `...OnSurface` numbers whether or not it is on that surface, and `--paper` is never `--surface`, so a map-drawn plate with no popup open satisfies it. The premise did not witness the claim the prose makes. | Asserted per place. The row that actually kills M47's revert is the three-place premise (with `alphaOf` returning 1 the alpha array is empty), and that is recorded where the determination is, so a premise that is not doing the work is not read as if it were. |
+
+#### The prose, held to the same rule
+
+A comment measured to be false is not kept, which is this stage's own ruling about the popup's blur
+one section up. Eight corrections, each named by a reviewer:
+
+- **`.alert-stale`'s `color: #666` is gone**, and with it the two premises that defended keeping it:
+  the banner's surface has not been the amber `#fde8b0` since MR1 took the amber away (the banner is
+  a row of `#panel`, which is `var(--surface)`, and the hex appears nowhere in the file as a value),
+  and the banner's hedge has not been `#666` since MR1 round 2 scoped it to `--accent-ink`. Both
+  elements that carry the class are claimed by a scoped rule, so the grey painted nothing. The size
+  and the slant stay, and a third surface now inherits its own ink.
+- **`.fresh-dot`'s base `background` is gone**, which is sharper than it looks: the block's comment
+  argued that the data-attribute design means "a fourth state would have to be added here rather
+  than defaulting to whichever rule came last", and that declaration WAS the default it disclaimed.
+- **The tip does not keep a blur** it never had; the sentence survived the draft the same block says
+  was discarded.
+- **`rebuildOpenPopupsForTheme` says which popups it reaches.** `popup.update()` re-invokes bound
+  content only where that content is a function, so the five ticking station boards (bound with a
+  string, filled by `setPopupContent`) get the identical string back. They do not need it:
+  `openStationArrivals` re-renders them every second. The old comment was wrong in both directions.
+- **`.station-alerts` no longer promises to look like `.alert-block`**, which MR5 changed out from
+  under it while deliberately leaving the panel alone.
+- **`popupSurfaceColor`'s two comments and this document's own** stopped saying the popup IS 94% of
+  `--surface`, and the one number quoted against a composite says which composite it would have been.
+- **`helpers.js` stopped claiming a closure over words its callers own.** Five of the twelve grid
+  labels are section 5's prose (Position, Direction, Delay, Status, Speed), four of them disclosed in
+  the README's erratum. The rule this file can keep is that no BUILDER here coins a word.
+- **`freshness-contract.md` section 3.2's table is re-anchored line by line**, and two rows were
+  false as well as misaddressed: `live GPS` named a file ruling Q1 emptied of those words, and the
+  `placed` string was attributed to "NJT and PATH popups" when `positionQualifier` produces it
+  centrally and every vehicle popup renders it. Every other frontend citation in that file is
+  re-anchored too, because this stage is what moved them.
+
+And four in the documents of record: the README's erratum counts five deviations rather than four
+items carrying five, splits `.alert` from `.xlink`, adds the `Heading` label the ledger had and it
+did not, stops certifying a Position row whose three strings memo D9 forbids, and measures its
+auto-pan break at the 375x667 its own arithmetic closes at rather than an impossible 375x640; this
+document's alpha table holds all six rows the pin holds, with the chrome row's dark figures taken
+from the column its header names; the three popup widths it quotes at 375 are sorted into the floor
+(256), a measured popup (263) and a spec's grown popup (293); the stage table no longer calls MR5
+`planned` in the file that documents what MR5 shipped, and MR3 and MR4 read `merged` with their PR
+numbers. `IMPLEMENTATION.md` gets its first erratum: the two popup builders it prescribes and the two
+wordings it says to route into `.fresh` are five names that do not exist.
+
+#### What the reviewers checked and found sound, recorded as a negative result
+
+The two python audit records run and their printouts support their dispositions. Every contrast ratio
+quoted in this stage's comments recomputes exactly (26 of them, one reviewer's count). The four other
+rows of the N-train colour table are exact. M47's determination is sound, and one reviewer went
+further than the ledger did by identifying which premise kills the revert.
+
+#### The table, re-run whole at the tip, with this round's rows added
+
+Round 2 changed no popup, so the eighteen rows above are unchanged; seven more are the defects the
+repaired guards could not see, each measured by hand when its repair landed and now in
+`mutations.sh` so they can be re-run. **Re-run whole at `8fb99b5`: twenty-four died, one survived,
+none failed to run, and every anchor matched exactly once.** Re-run whole at `21343a4` (the commit
+that recorded this round) and again at `99f56cd` (P5d's fix, which touches a file two rows anchor in),
+with the same result each time: 25 worktrees, each echoing the sha. Every commit after `99f56cd` is
+documentation and no row anchors in a documentation file, which is how this record stays true without
+a new sha for every re-run; a commit that touches a mutated file re-runs the table. The survivor is M75, whose
+reason is recorded above and whose defect dies at M77.
+
+Gates at the same tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; the contract-tier lint; 392 node
+tests; 317 playwright; 15 audit records. One flake is in the list above with a gap in it.
+
+### The three rulings round 2 produced, and what paying them cost
+
+Round 2 brought three findings to the operator rather than fixing them, because each was a decision
+rather than a repair. All three came back as rulings, and this is what they moved. **Nothing a rider
+sees changed in round 2; all three of these do.**
+
+#### R1: N6 paid on every surface a rider can see
+
+**The finding.** MR5 round 1 paid finding N6 ("two answers for one judgment: what colour is this
+route") on the NJ Transit popup head and declared it structurally closed. Three more readers went on
+answering from somewhere else: the NJ Transit station board's badge and the panel registry's chip both
+resolved `njtRouteColor`, whose fallback is `#4a4e69`, beside a map tag resolving `railBranchColor`'s
+`#6d6e71`; and the railroad's board badge, popup title ink and panel chip resolved `railroadColor`, a
+HASH of the route id that never saw the system, so LIRR 1 (the Babylon Branch) and MNR 1 (the Hudson
+Line) drew one brown for two published greens.
+
+**The ruling.** Pay it now. Both NJ Transit board resolvers move to the published paint; the railroad
+popup's title ink becomes `readableInk` over the branch's published colour as the tag already does;
+`railroadColor()` loses its popup readers and is deleted if none remain. New pins, before recorded.
+
+**What shipped, and the one interpretation this round made.** `njtBranch` is re-keyed from a train to a
+ROUTE ID, so the two boards reach the published pair through the lookup the tag uses instead of opening
+a third reader inside the fix. The railroad's board badge takes `railBranchPaint`'s PAIR through a new
+`railroadBranchPaint`, the title takes `railBranchColor` through `readableInk`, and the PANEL joins the
+`colorFor` branch the way its own comment said NJ Transit had. That panel move is the interpretation:
+the ruling named the popup readers, and `stationChipStyle`'s own first sentence claims its chips come
+"from the SAME color authorities the map markers and popups use", so a chip still hashing a route id
+once the map and both popups resolved the published colour would have broken the function's stated
+contract and re-opened N6 between the panel and the popup. With the panel moved, nothing read
+`railroadColor` and it is deleted with its palette, its export and its unit test.
+
+**Its note is carried, not deleted with it.** Two comments cited that function as the authority for "a
+fill that has to move rather than an ink that has to be chosen" (v2's `#607d8b`: white 4.37, dark 3.98,
+nothing clears). The measurement now lives at `railBranchPaint`, which implements the remedy.
+
+**The badge takes a PAIR and not a colour, and that is where the money is.** `EE0034`, Metro-North's
+New Haven red, takes white at 4.48 and dark at 3.88: neither ink clears, so the fill has to move, and
+it is FOUR of that railroad's six routes. A badge resolving the published colour through
+`readableTextOn` would have shipped an AA failure on the common case at Grand Central with every gate
+green, because the hermetic feeds publish `00985F` and `009B3A` and both clear either way. Held now in
+three places: `helpers.test.js` asks the board to render the moved pair, the A3 sweep includes `EE0034`,
+and `railtag.test.js` asserts as a source fact that the resolver is `railBranchPaint`'s.
+
+**Before and after, by value**, which is what "new pins, before recorded" asks for:
+
+| Surface | before | after |
+| --- | --- | --- |
+| LIRR Jamaica board badge | `#5d4037` on `#ffffff` | `#00985F` on `#1a1a1a` (the agency's own pair) |
+| MNR Grand Central board badge | `#5d4037` on `#ffffff` | `#009B3A` on `#1a1a1a` |
+| LIRR train popup title ink | `#5d4037` light, `#a69691` dark | `#007247` (4.95) light, `#26a777` (4.61) dark |
+| MNR train popup title ink | the same two, because the hash ignored the system | `#00742b` (4.91) light, `#26aa58` (4.67) dark |
+| NJ Transit route-less board badge | `#4a4e69` | `#6d6e71`, the rail families' own neutral |
+| Hoboken's route-17 panel chip | `rgb(74, 78, 105)` | `rgb(109, 110, 113)`, which is what the tag beside it draws |
+
+**The one reader left anywhere** is the NJ Transit route LINE, so a route published with a blank colour
+would still draw a `#4a4e69` line beside a `#6d6e71` tag. Latent (all twelve live routes publish a
+colour, and route 17 has no polylines at all), and held by a COUNT in `railtag.test.js` so a third
+reader cannot open quietly.
+
+**And the audit driver was edited with the signature it copies.** F12 reproduces the railroad station
+descriptor verbatim and CI runs it. With a paint resolver added in slot 4 and that copy left alone, its
+`nameFor` lambda lands in the paint slot, every badge renders `background:undefined`, and arm 3's only
+board measurement is a count of `arr-badge` substrings, so the record would have kept printing PASS
+over corrupted markup. Its narrow-copy note now says that in as many words, and R3 proved the point
+again two rulings later.
+
+#### R2: the footer speaks the state, not the repeat
+
+**The finding.** `popupFreshHtml` put the SUPPRESSED words in the same `.visually-hidden` span the live
+state uses, so a screen reader heard the Position row's age and then the footer's: two ages about one
+train, which is exactly what the rule in that function's own comment forbids. This document had stated
+the total-suppression rule since round 1; the code stated the visual-only rule; and both test tiers
+pinned the code. A record and its code disagreeing with the tests holding the code is the fifth defect
+shape one level up.
+
+**The ruling.** `live` speaks the state; `said` speaks nothing. Invert the pin, and the spoken golden
+moves for suppressed rows only.
+
+**What shipped.** One line: `said` is tested first and yields nothing, so a suppressed footer is the
+square alone in both channels. `said` beating `live` is not a free choice: the loop in
+`positions.test.js` includes a LIVE feed under an older stated fix, so only that order satisfies it, and
+only that order moves a golden. Both assertions deny BOTH channels rather than the hidden span alone,
+because a footer that printed the suppressed words visibly would satisfy a bare absence and nothing
+else in the repo would notice. Two spoken goldens lose " Live · {n}s" and no `seen` value moves.
+`smoke.spec.js` C2e moved with it: PATH's position states the same 3m as its feed, so that footer is
+the square alone, and the spec now asserts the age is stated once, by the row, and that the footer's
+capitalised form is NOT beside it. (`toContainText` reads visually-hidden text, which is why it passed
+while the words were merely hidden from an eye.)
+
+**One widening accepted rather than hidden.** `said` is true when the FEED's age is null, which is the
+feed that has never decoded and whose words are "Not reporting", a claim about the feed rather than an
+age. Suppressing it is what the rule as written does; no rider reaches it today and the comment says so.
+The narrower rule would be `position.age != null && age != null && position.age >= age`, which moves no
+golden either way.
+
+**The ruling's line number was off by one**, recorded because a record's citations are its evidence:
+`positions.test.js:504` is the assertion that the SQUARE survives suppression, which ruling Q2 forbids
+inverting; the pin on the spoken words is `:503`.
+
+#### R3: all five station boards carry the routes calling there
+
+**The finding.** Only the subway station's kicker carried route marks. The other four boards showed a
+rider nothing about which routes call where, documented by omission from a table rather than by a
+reason, while PATH stations register their routes and both rail families have a mark builder that needs
+no marker.
+
+**The ruling.** All five boards, through one helper, with the map's own marks at popup scale (rail tag
+body only) and one shared overflow rule: first N marks then a `+n` count, the full list in the
+accessible name; add the rule to the subway kicker if it has none. New pins for the four boards.
+
+**The rail families' mark is a new builder and not a copy.** `railRouteTagSvg` is the tag with nothing
+but its body, in a 13-unit box: the 30-unit box's stem and its chevron-or-dot state where one TRAIN is
+and whether its heading is trusted, and a route calling at a station has neither. The body itself is
+EXTRACTED from `railTagSvg` rather than written again, because the Key panel already hand-writes two
+bodies and a third would be a third answer to "what is a rail tag body", which is N6 inside the stage
+that just paid it. Its class is `rail-route-tag` and not `rail-tag`: A1z4 asserts where every
+`svg.rail-tag` on the page is, and the axe gate's exception for that class's 8px type rests on A1z4
+measuring every place it appears, so a kicker full of them would be a third place excused by a decider
+that never looks at it. That is the reviewer finding round 2 recorded, and `key-rail-tag` is the Key
+panel's own precedent for avoiding it. The solid body's paper backing is dropped for this form: a
+popup's surface is opaque, and that rect is one of only two non-opaque paints on the map.
+
+**THE CAP IS THREE, AND THE LEDGER'S OWN EARLIER MEASUREMENT IS WHY IT HAD TO BE RE-MEASURED.** This
+document said twelve plates wrap the kicker to two rows inside the popup's 220px floor. They do not:
+Leaflet sizes a popup to its own nowrap content up to maxWidth 320, so twelve plates make the popup
+267px WIDE on one row. A cap cannot be sized from a wrap that does not happen. Re-measured in the app
+at 1280, 375 and 320, the count at which each family's kicker first wraps is 16 for the subway, 13 for
+the LIRR and PATH, and FOUR for NJ Transit at both phone widths, whose tags run to 66.69 units where a
+subway plate is 17. Three is the largest shared count that never wraps anywhere. The ruling asked for a
+count, so a count is what ships; a shared WIDTH budget would let the subway show nine and would be a
+second rule.
+
+**The full list is spoken, and Leaflet gives a popup no accessible NAME to put it in.** No role, no
+aria-label; the only aria-label in a popup is the close button's. What a screen reader can be given is
+the words in document order, through A1's `.visually-hidden` class, which is what the station panel
+already does for its own route chips and its access glyph. Every mark is aria-hidden, so without that
+span a rider who cannot see the marks would learn nothing about the routes at all; the `+n` count is
+aria-hidden for the reason ruling Q2 gave the freshness square, since the words beside it already say
+what it means.
+
+**Two fixtures were behind the endpoints they stand in for**, which is the half of this ruling that was
+not about code. `railroadStops()` and `pathStops()` carried no `routes` field at all, though
+`backend/models.py` declares it on both and both routers fill it, so three of the four new pins would
+have been pins of an empty span: trap T4 in `pins.spec.js`'s own words. The fixture now serves what the
+endpoint serves, and P5a asserts a mark count PER BOARD outside `pin()` so an empty kicker cannot be
+written into a golden and matched forever.
+
+**And that fixture fixed a rider-facing sentence nobody had noticed.** Selecting Jamaica used to make
+the panel say "New service alert for this station." on arrival, because the station's static route list
+was empty on the first render, so the route-level alert only matched once the arrivals came back, which
+is a transition rather than a seed. With the routes served, both alerts are there on the first paint and
+seed silently, which is what that announcement's own comment says it is for. P3c's pin records it.
+
+**P5e is the world the rule needed.** No hermetic station serves more than three routes, so the cap, the
+count and the withheld list were unreachable from every pinned world, and a rule no world runs is a rule
+that ships broken and green. P5e overrides Times Sq's payload with the dozen the real station serves and
+measures, at 1280 and 375: three marks drawn, nine counted, twelve spoken, the marks on ONE row, and the
+popup inside its cap.
+
+#### Four defects these three rulings turned up on their own
+
+**The coverage test was partial over the families it claims to be total over.** R1 put `njtBranch` into
+a station root, its literal appeared, and P5b reported it uncovered in a change that touched no string.
+The crawler deduplicated a walked function by NAME AND SOURCE LENGTH, and every root is named
+`<root>`: `() => njtTrainPopup(newRecord)` and `() => railroadPopup(newRecord)` are both 30 characters,
+`() => pathTrainPopup(record)` and `() => ferryBoatPopup(record)` are both 28, so of the app's seven
+vehicle popups two were never walked at all. The key is the whole source now. Nine literals the test had
+been silent about since it was written are declared, each naming the spec that DOES draw it, and the
+dead-waiver check is what fails if the length key ever comes back.
+
+**A `const` in a vm context is not a property of that context.** `boards.test.js` read
+`S.FERRY_FALLBACK_COLOR` off the loaded sandbox, where only function declarations land, so the value
+was `undefined` and R3's ferry kicker drew `fill="undefined"` for the one route the fixture's route
+table does not carry. Constants come from the required module now and functions from the sandbox, with
+the difference stated where it is made. Latent since the file was written; it took a new fallback
+reaching a pin to show it.
+
+**`withoutMarks` could not see a branch code or a style fill.** Its `<text>` capture was `exec`, so a
+rail tag read as its agency glyph alone and the code, the one thing a route mark exists to say, was
+unpinnable; and its fill capture read only the `fill` attribute, so the PATH diamond and the ferry hull,
+which declare theirs in `style`, carried no colour in their tokens at all. A board drawing every diamond
+in the fallback slate would have pinned identically to one drawing the published reds. Both widened,
+which adds each plate's own backing to the existing tokens.
+
+**D6j compared the wrong mark.** It read the FIRST `.pmark` in a popup, and a kicker's marks precede the
+title, so its "the popup's mark is the marker's own markup" claim broke for three station boards the
+moment they had kickers. Scoped to `.pt .pmark svg`, which is how its own WITHOUT branch has always been
+scoped: that asymmetry is what showed the subway station had been exempt from the claim for a whole
+stage.
+
+#### The table, re-run whole with the rulings' own rows
+
+**Thirty-three rows at `65b7af3`: thirty-two died, one survived, none failed to run, every anchor
+matched exactly once**, and again at `47e80e2`, the commit that recorded this round; every commit after
+that one is documentation and no row anchors in a documentation file. M85 to M92 are the rulings': the footer's precedence reverted; the NJ Transit
+board resolver and the panel chip back to a colour of their own; the railroad's paint resolver back to
+the published fill unmoved; the route tag's viewBox origin shifted, which is the silent way to empty
+every kicker; the cap removed; the routes no longer spoken; and the mark token back to its first
+`<text>`.
+
+**And the run found three things that were not results about the code**, which is the whole reason
+standing rule 6 exists. M78 anchored on the fill capture R3 widened and matched zero times. M92's anchor
+carried a literal middle dot where the source has the escape that writes one; both anchors are taken
+from the file now rather than retyped. And M87 SURVIVED because the mutation was a no-op: it re-resolved
+a fill the resolver had already moved, so no output could change. It is re-aimed at
+`railroadBranchPaint`, where the choice actually lives, and the source assertion it needed is in
+`railtag.test.js`.
+
+Gates at that tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; both contract-tier jobs (38 pytest and
+5 contract specs against the real backend and the simulator); 394 node tests; 318 playwright; 15 audit
+records.
+
+### Round 3: the gate only CI could run, and a premise measured in the wrong place
+
+Round 2's ruling on the mark normaliser was right and its evidence was not. The finding was the fifth
+defect shape, two implementations of one reader: `withoutMarks` existed twice, byte-identical, and the
+copy in `frontend/boards.test.js` sat under a comment claiming this repo's browser-tier helpers are not
+importable from a node unit test. The reviewer measured that claim and it was false, so the copy went
+and the node tier imported `tests/e2e/popup.js` instead. The sentence written down to justify the
+direction was **"`tests/e2e/popup.js` requires nothing"**, and that is the part nobody measured. It
+requires `@playwright/test`, on its twenty-second line, for `expect`.
+
+**Every gate here was green and the claim was still false**, because every gate here runs in a checkout
+that has `@playwright/test` installed. The job that does not is `frontend-tests`, which checks out the
+repo and runs `node --test` against the runner's own node with no `npm ci` at all. That is deliberate
+and it is written in the workflow: the app is buildless and the unit tier needs no packages. So the
+require threw while loading `boards.test.js`, and node's reporting is what made it quiet: **a file that
+dies at load counts as one failing test**, so the job said `# tests 382 / # fail 1` where the truth was
+that thirteen tests had stopped existing. 394 locally, 382 on CI, and the twelve-test gap was the only
+visible trace.
+
+| The claim | What was measured | Now |
+| --- | --- | --- |
+| "popup.js requires nothing itself" | It requires `@playwright/test` for `expect`. The local run resolved it from `node_modules` and passed; the one job that installs nothing is the only place the difference exists. | The reader moved to `tests/e2e/marktoken.js`, which requires nothing, is re-exported by popup.js so no spec's import moves, and is required directly by the node tier. One copy still. |
+| A green `node --test` here means a green `frontend-tests` there | It does not, and cannot, while the two runs resolve packages differently. With `node_modules` moved aside the same command reports 397 pass. | `tests/nodetier.test.js`. |
+
+#### The guard asks node, not a regex
+
+The obvious version of the new test greps the tier for `require("...")`, and the obvious version is the
+one that would have gone blind. This closure is deliberately full of prose naming `@playwright/test`
+(marktoken.js's header, boards.test.js's import comment, this ledger's own rows), and full of regex
+literals carrying double quotes, `/fill="([^"]+)"/` among them. A scraper has to lex to tell those
+apart, and a mis-lexed quote does not fail loudly: it swallows the rest of the file and reports a clean
+tier. So the test spawns a child node, hooks `Module._load`, stubs `node:test` to a no-op so nothing
+RUNS, and requires each seed file for real. What comes back is the list of specifiers node was actually
+asked for while loading the tier, which is the question CI asks.
+
+Three further choices, each because the alternative can pass over air:
+
+- **The seeds are read from `.github/workflows/ci.yml`**, not listed in the test. A literal would be a
+  second statement of which files the tier runs, and the one to go stale would be the test's. A glob
+  shape the expander does not understand throws rather than matching nothing.
+- **A recorded package is answered with a stub, not resolved.** One run then names every offender
+  instead of stopping at the first, and the check does not itself need the package installed, so it
+  asks its question the same way on a bare checkout.
+- **The hook is tested rather than trusted**, on the exact shape that got past round 2: a seed that
+  requires only a local file, with the package one hop away. Something that read only its seeds would
+  call that clean.
+
+Verified by putting the defect back: with `boards.test.js` pointed at popup.js again the new test fails
+and names the file and the specifier, `tests/e2e/popup.js requires @playwright/test`. And with
+`node_modules` moved aside, which is what the job has, the tier reports **397 pass, 0 fail** where
+before it could not load at all.
+
+Gates at the round-3 tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; both contract-tier jobs (the lint
+and format check, 38 pytest, and 5 contract specs against the real backend and the simulator); **397**
+node tests, and 397 again with `node_modules` moved aside, which is the condition `frontend-tests`
+actually runs in and the reason this round exists; 318 playwright; 15 audit records.
+
+**Thirty-three rows at `665186b`: thirty-two died, M75 survived as recorded, none failed to run, every
+anchor matched exactly once**, and every row printed that sha. M78 and M92 moved with the normaliser and
+both mutated `tests/e2e/marktoken.js` and died there; a row still naming popup.js would have matched
+nothing, which is standing rule 6's whole subject and the third time this stage has had to pay it.

@@ -134,14 +134,68 @@ function panelLines(node, depth = 0, out = []) {
 // Each board's popup is called with the arguments its loader's popup lambda passes, and
 // each panel entry carries the fields its loader's registerStation call gives it. The
 // route lookups are built from the fixtures' route tables with the loaders' own keys.
+/* `S` IS THE SANDBOX AND `H` IS THE MODULE, AND THE DIFFERENCE IS NOT COSMETIC. A `const` declared at
+   the top level of a script run in a vm context does NOT become a property of that context, so
+   `H.FERRY_FALLBACK_COLOR` is `undefined` while `S.pathColor` (a function declaration) is the real
+   thing. Measured, after ruling R3's kicker put the ferry's fallback on the page for the first time:
+   the SV route has no row in the routes fixture, so its hull was drawn `fill="undefined"`. Every
+   CONSTANT here comes from `H`, the same file required as a module, and every FUNCTION from `S`, the
+   loaded page. */
 function boards(S) {
   const railroadNames = new Map(fx.railroadRoutes().map((r) => [`${r.system}|${r.route}`, r.name]));
   const railroadName = (system) => (r) => railroadNames.get(`${system}|${r}`) || null;
+  /* R1: THE BADGE'S PAINT, KEYED THE WAY THE LOADER KEYS IT. systems/railroad.js closes
+     railroadBranchPaint over the (system|route_id) colour table; this is the fixture's own copy of
+     that closure, built from the same served rows, because this file's contract is that each board
+     is called with the arguments its loader passes. Defaulting it instead would render the rail
+     neutral and the two pins below would fail for the wrong reason. */
+  const railroadPaints = new Map(fx.railroadRoutes().map((r) => [`${r.system}|${r.route}`, r]));
+  const railroadPaint = (system) => (r) => {
+    const row = railroadPaints.get(`${system}|${r}`);
+    return S.railBranchPaint(row?.color ?? null, row?.text_color ?? null);
+  };
+  /* R3: THE KICKER'S ROUTE MARKS, one resolver per family, each the fixture's copy of what its
+     loader closes over. The boards below pass them, because this file's contract is that a board is
+     called with the arguments its loader passes: defaulting them would leave four kickers empty and
+     the four new pins would pin nothing, which is the trap the fixture's own `routes` comment
+     names. */
+  const railroadMark = (system) => (r) => {
+    const row = railroadPaints.get(`${system}|${r}`);
+    return {
+      svg: S.railRouteTagSvg({
+        system,
+        code: S.railBranchCode(system, r, row?.name ?? null),
+        color: row?.color ?? null,
+        textColor: row?.text_color ?? null,
+      }),
+      name: row?.name ?? r,
+    };
+  };
+  const njtMark = (r) => {
+    const paint = njt.paints.get(r);
+    return {
+      svg: S.railRouteTagSvg({
+        system: "NJT",
+        code: S.railBranchCode("NJT", r, njt.names.get(r) ?? null, njt.shortNames.get(r) ?? null),
+        color: paint?.color ?? null,
+        textColor: paint?.textColor ?? null,
+      }),
+      name: njt.names.get(r) || r,
+    };
+  };
+  const pathMark = (r) => ({
+    svg: S.pathDiamondSvg(pathColors.get(r) ?? H.PATH_FALLBACK_COLOR),
+    name: pathNames.get(r) || r,
+  });
+  const ferryMark = (r) => ({
+    svg: S.ferryHullSvg(ferryColors.get(r) ?? H.FERRY_FALLBACK_COLOR),
+    name: ferryNames.get(r) || r,
+  });
   const pathColors = new Map(fx.pathRoutes().map((r) => [r.id, S.pathColor(r.color)]));
   const pathNames = new Map(fx.pathRoutes().map((r) => [r.id, r.name]));
   const njt = S.njtRouteTables(fx.njtRoutes());
   const ferryColors = new Map(
-    fx.ferryRoutes().map((r) => [r.id, S.pathColor(r.color, S.FERRY_FALLBACK_COLOR)]),
+    fx.ferryRoutes().map((r) => [r.id, S.pathColor(r.color, H.FERRY_FALLBACK_COLOR)]),
   );
   const ferryNames = new Map(fx.ferryRoutes().map((r) => [r.id, r.name]));
   const [lirr, mnr] = fx.railroadStops();
@@ -162,22 +216,32 @@ function boards(S) {
     },
     lirr: {
       body: fx.railroadArrivalsLirr(),
-      popup: (b) => S.railroadArrivalsHtml(lirr, b, now, railroadName(lirr.system)),
+      popup: (b) =>
+        S.railroadArrivalsHtml(lirr, b, now, railroadPaint(lirr.system), railroadName(lirr.system), "", railroadMark(lirr.system)),
       entry: {
         key: `${lirr.system}|${lirr.id}`, kind: "railroad", systemLabel: "LIRR", noun: "train",
-        id: lirr.id, system: lirr.system, name: lirr.name, routes: [], wheelchair: false,
+        id: lirr.id, system: lirr.system, name: lirr.name, routes: lirr.routes ?? [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${lirr.system}/${lirr.id}`,
         nameFor: railroadName(lirr.system),
+        // R1: the panel's chip resolver, which registerStation carries now. R3 gave the stops
+        // fixture the `routes` the endpoint has always served, so this draws a chip in the panel
+        // rather than nothing: the comment here used to say it rendered nothing in any world.
+        colorFor: (r) => railroadPaint(lirr.system)(r).fill,
       },
     },
     mnr: {
       body: fx.railroadArrivals(),
-      popup: (b) => S.railroadArrivalsHtml(mnr, b, now, railroadName(mnr.system)),
+      popup: (b) =>
+        S.railroadArrivalsHtml(mnr, b, now, railroadPaint(mnr.system), railroadName(mnr.system), "", railroadMark(mnr.system)),
       entry: {
         key: `${mnr.system}|${mnr.id}`, kind: "railroad", systemLabel: "Metro-North", noun: "train",
-        id: mnr.id, system: mnr.system, name: mnr.name, routes: [], wheelchair: false,
+        id: mnr.id, system: mnr.system, name: mnr.name, routes: mnr.routes ?? [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${mnr.system}/${mnr.id}`,
         nameFor: railroadName(mnr.system),
+        // R1: the panel's chip resolver, which registerStation carries now. R3 gave the stops
+        // fixture the `routes` the endpoint has always served, so this draws a chip in the panel
+        // rather than nothing: the comment here used to say it rendered nothing in any world.
+        colorFor: (r) => railroadPaint(mnr.system)(r).fill,
       },
     },
     path: {
@@ -187,8 +251,10 @@ function boards(S) {
           path,
           b,
           now,
-          (r) => pathColors.get(r) ?? S.PATH_FALLBACK_COLOR,
+          (r) => pathColors.get(r) ?? H.PATH_FALLBACK_COLOR,
           (r) => pathNames.get(r) || null,
+          "",
+          pathMark,
         ),
       entry: {
         key: `PATH|${path.id}`, kind: "path", systemLabel: "PATH", noun: "train",
@@ -203,8 +269,11 @@ function boards(S) {
           penn,
           b,
           now,
-          (r) => S.njtRouteColor(r, njt.colors),
+          // R1: the published colour the tag draws with, mirroring systems/njt.js's board resolver.
+          (r) => S.railBranchColor(njt.paints.get(r)?.color ?? null),
           (r) => S.njtRouteName(r, njt.names),
+          "",
+          njtMark,
         ),
       entry: {
         key: `NJT|${penn.id}`, kind: "njt", systemLabel: "NJ Transit", noun: "train",
@@ -215,7 +284,15 @@ function boards(S) {
     ferry: {
       body: fx.ferryArrivals(),
       popup: (b) =>
-        S.ferryArrivalsHtml(dock, b, now, (r) => ferryColors.get(r) ?? S.FERRY_FALLBACK_COLOR),
+        S.ferryArrivalsHtml(
+          dock,
+          b,
+          now,
+          (r) => ferryColors.get(r) ?? H.FERRY_FALLBACK_COLOR,
+          undefined,
+          "",
+          ferryMark,
+        ),
       entry: {
         key: `ferry|${dock.id}`, kind: "ferry", systemLabel: "Ferry", noun: "boat",
         id: dock.id, name: dock.name, routes: dock.routes ?? [], wheelchair: dock.wheelchair === true,
@@ -238,26 +315,121 @@ function render(name) {
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
   return {
-    popup,
+    popup: withoutMarks(popup),
     panel: panelLines(h.byId("stations-detail")),
     spoken: h.byId("stations-announce").textContent,
   };
 }
 
+/* MR5: A MARK IS ONE TOKEN IN THESE PINS, and the reason is length rather than laziness. Section 5
+   gives a subway station's kicker the route marks of every line calling there, drawn by the MAP's
+   own builder, so Times Sq's board would arrive here with four hundred characters of SVG per route
+   and the pin would become unreadable. What these pins are for is the WORDS and the ORDER of a
+   board; the token carries the mark's label, its drawn size and its declared fills, which is what a
+   board decides about a mark, and its geometry stays where marks live.
+
+   IMPORTED RATHER THAN COPIED, and the first version of this file copied it. One now, and the
+   browser tier's markup pins and these read a mark the same way.
+
+   FROM marktoken.js, NOT popup.js, which is where round 2 pointed it and where CI found the hole.
+   popup.js was picked on the claim that it "requires nothing itself"; it requires @playwright/test,
+   and the frontend-tests job runs `node --test` with no `npm ci`, so this line threw at load and
+   took all thirteen tests in this file with it while a local run stayed green. The reader now sits
+   in a file that requires nothing, and tests/nodetier.test.js holds that of the whole closure so
+   the next import cannot make the same hole quietly. */
+const { withoutMarks } = require("../tests/e2e/marktoken.js");
+
 // The subway badge colors, spelled once so the popup literals stay readable.
 const RED = 'style="background:#c0392b;color:#ffffff"';
-const BROWN = 'style="background:#5d4037;color:#ffffff"';
+
+/* AND THE TWO RAILROADS' OWN, WHICH IS ONE CONSTANT SPLIT INTO TWO AND IS RULING R1 STATED AS A
+   DIFF. Both boards' badges used to read `background:#5d4037;color:#ffffff`, one brown from one
+   shared constant, because the resolver behind them hashed the ROUTE ID and never saw the system:
+   LIRR route 1 is the Babylon Branch and MNR route 1 is the Hudson Line, two agencies publishing
+   two different greens, and the app drew them the same. The two literals below cannot be folded
+   back into one without re-creating that defect, and their inks are the published ones (both
+   agencies serve route_text_color, and railBranchPaint prefers it where it is legible). */
+const BABYLON = 'style="background:#00985F;color:#1a1a1a"';
+const HUDSON = 'style="background:#009B3A;color:#1a1a1a"';
+
+/* ONE OF Times Sq's KICKER PLATES, as withoutMarks prints it: the route the plate carries, the size
+   the popup drew it at, and the fills the plate declares, in the order the SVG lists them (the paper
+   backing, the rounded square, then the numeral). 17 is POPUP_MARK_ROW, the design's small mark, and
+   it is a literal here on purpose: the constant's own value is pinned in frontend/popupvocab.test.js,
+   so if a later stage draws a kicker's plates larger these pins say so rather than following along.
+
+   THE LAST TWO FILLS ARE THE PAIR RED SPELLS ABOVE, which is the reason they are in the token at all:
+   the kicker's plates and the arrival badges below both ask lineColor for the 1 train and both ink
+   against it, so a plate whose paint stopped agreeing with its badge is a defect the reader of a
+   popup can see, and a token that said only [mark 1] could not fail on it. The first is the backing
+   the plate draws under itself, which entered the token when ruling R3 taught withoutMarks to read a
+   fill declared in a `style` attribute: without that the PATH diamond and the ferry hull, which
+   declare theirs only that way, carried no colour in their tokens at all. */
+const plate = (route) => `[mark ${route} 17x17 var(--paper),#c0392b,#ffffff]`;
+/* AND THE WORDS UNDER THE MARKS (ruling R3), which every kicker with routes in it now carries: the
+   marks are aria-hidden, so without this span a rider who cannot see them learns nothing about which
+   routes call at the station. It is the station panel's own pattern for its route chips and its access
+   glyph, and A1's `.visually-hidden` is the class. The list is every route, not the shown ones: the
+   count beside the marks is what an eye reads for the rest. */
+const spokenRoutes = (...names) => `<span class="visually-hidden">${names.join(", ")}</span>`;
+const TIMES_SQ_PLATES = [1, 2, 3].map(plate).join("") + spokenRoutes(1, 2, 3);
+
+/* THE OTHER FOUR FAMILIES' KICKER MARKS, as withoutMarks prints them, one literal per served route
+   in the fixtures. Each is that family's own map mark at the same 17: a BODY-ONLY rail tag (its
+   agency glyph and its branch code, the two <text> nodes joined with a middle dot, and the four
+   paints its two blocks and two letters declare), a PATH diamond, a ferry hull.
+
+   THE WIDTHS ARE THE TAG'S OWN ARITHMETIC and they differ per code length, which is the measurement
+   that set the shared cap at three: 45.77 for a three-letter railroad code, 52.31 and 66.69 for NJ
+   Transit's NEC and MNBTN. A hull is 26.71 and a diamond, like a plate, is 17. */
+const railTag = (glyph, code, width, fill, ink) =>
+  `[mark ${glyph}·${code} ${width}x17 var(--ink),${fill},var(--paper),${ink}]`;
+const BABYLON_TAG = railTag("L", "BAB", 45.77, "#00985F", "#1a1a1a");
+const HUDSON_TAG = railTag("M", "HUD", 45.77, "#009B3A", "#1a1a1a");
+const NEC_TAG = railTag("NJ", "NEC", 52.31, "#DD3439", "#ffffff");
+const MNBTN_TAG = railTag("NJ", "MNBTN", 66.69, "#E66859", "#1a1a1a");
+const diamond = (fill) => `[mark 17x17 ${fill}]`;
+// The hull's second declared paint is its `none` stroke, which is part of what the mark declares.
+const hull = (fill) => `[mark 26.71x17 ${fill},none]`;
+
+/* MR5: SECTION 5's GRAMMAR, AS FOUR TEMPLATES, so six board pins stay readable after the popup
+   became a kicker, a title and a three-cell grid. These are literal templates written HERE, in the
+   same spirit as RED and the two rail greens above: a production builder that stopped emitting `class="n"`, or
+   that put its cells in another order, still fails every pin below, because the expected string is
+   assembled from these literals and compared whole.
+
+   AND THE FIRST PIN USES NONE OF THEM. The subway board is spelled out character by character so
+   the grammar itself is pinned in one place with no shared template in the way: if these four ever
+   drifted alongside the builders they describe, that pin is what would still say so. */
+const kicker = (left, right = "") => `<div class="pk"><span>${left}</span>\n<span>${right}</span></div>\n`;
+const title = (text) => `<div class="pt"><span>${text}</span></div>\n`;
+const dir = (text) => `<div class="dir">${text}</div>\n`;
+const arr = (...rows) => `<div class="arr">${rows.join("\n")}</div>\n`;
+// One row: the badge, the middle cell (a route name, a train number, a qualifier, or nothing at
+// all) and the countdown in its own nowrap cell.
+const row = (mark, middle, n) => `<span>${mark}</span>\n<span>${middle}</span>\n<span class="n">${n}</span>`;
 
 test("PIN subway: Times Sq, one contributing group, every row dated by its header", () => {
   const out = render("subway");
+  /* SPELLED OUT IN FULL, which is this file's one unaided pin of MR5's grammar: the kicker with the
+     station's own route marks on the right (three plates, each normalised by withoutMarks to its
+     route, its drawn size and its fills, because a plate is four hundred characters of SVG), the
+     title, a heading per direction and a
+     three-cell row per arrival. Every other pin in this file assembles the same shapes from the
+     four templates above; this one is what would catch those templates drifting. */
   assert.equal(
     out.popup,
-    "<b>Times Sq-42 St</b>" +
-      '<div class="arr-dir">Northbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 2 min<br>` +
-      `<span class="arr-badge" ${RED}>2</span> 5 min` +
-      '<div class="arr-dir">Southbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 3 min`,
+    `<div class="pk"><span>Subway</span>\n<span>${TIMES_SQ_PLATES}</span></div>\n` +
+      '<div class="pt"><span>Times Sq-42 St</span></div>\n' +
+      '<div class="dir">Northbound</div>\n' +
+      '<div class="arr">' +
+      `<span><span class="arr-badge" ${RED}>1</span></span>\n<span></span>\n<span class="n">2 min</span>\n` +
+      `<span><span class="arr-badge" ${RED}>2</span></span>\n<span></span>\n<span class="n">5 min</span>` +
+      "</div>\n" +
+      '<div class="dir">Southbound</div>\n' +
+      '<div class="arr">' +
+      `<span><span class="arr-badge" ${RED}>1</span></span>\n<span></span>\n<span class="n">3 min</span>` +
+      "</div>\n",
   );
   assert.deepEqual(out.panel, [
     "h3 Times Sq-42 St (Subway)",
@@ -280,11 +452,12 @@ test("PIN LIRR: Jamaica, each prediction dated by its own trip", () => {
   const out = render("lirr");
   assert.equal(
     out.popup,
-    '<b>Jamaica</b> <span class="popup-sub">LIRR</span>' +
-      '<div class="arr-dir">Inbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Babylon Branch <span class="popup-sub">#8412</span> 4 min` +
-      '<div class="arr-dir">Outbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Babylon Branch <span class="popup-sub">#8413</span> 7 min`,
+    kicker("LIRR", BABYLON_TAG + spokenRoutes("Babylon Branch")) +
+      title("Jamaica") +
+      dir("Inbound") +
+      arr(row(`<span class="arr-badge" ${BABYLON}>1</span>`, 'Babylon Branch <span class="popup-sub">#8412</span>', "4 min")) +
+      dir("Outbound") +
+      arr(row(`<span class="arr-badge" ${BABYLON}>1</span>`, 'Babylon Branch <span class="popup-sub">#8413</span>', "7 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Jamaica (LIRR)",
@@ -310,11 +483,15 @@ test("PIN Metro-North: Grand Central, whose predictions carry no clock at all", 
   const out = render("mnr");
   assert.equal(
     out.popup,
-    '<b>Grand Central</b> <span class="popup-sub">MNR</span>' +
-      '<div class="arr-dir">Inbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Hudson <span class="popup-sub">#795</span> 4 min` +
-      '<div class="arr-dir">Outbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Hudson <span class="popup-sub">#812</span> 6 min`,
+    // MR5: THE KICKER IS THE SERVED CODE, "MNR", where this station's own panel row two assertions
+    // down says "Metro-North". The popup's head has printed the code since phase 9; the divergence
+    // is recorded as an MR5 finding and is not reworded here.
+    kicker("MNR", HUDSON_TAG + spokenRoutes("Hudson")) +
+      title("Grand Central") +
+      dir("Inbound") +
+      arr(row(`<span class="arr-badge" ${HUDSON}>1</span>`, 'Hudson <span class="popup-sub">#795</span>', "4 min")) +
+      dir("Outbound") +
+      arr(row(`<span class="arr-badge" ${HUDSON}>1</span>`, 'Hudson <span class="popup-sub">#812</span>', "6 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Grand Central (Metro-North)",
@@ -336,11 +513,15 @@ test("PIN PATH: World Trade Center, two trips with two different clocks", () => 
   const out = render("path");
   assert.equal(
     out.popup,
-    '<b>World Trade Center</b> <span class="popup-sub">PATH</span>' +
-      '<div class="arr-dir">To New York</div>' +
-      '<span class="arr-badge" style="background:#4d92fb;color:#1a1a1a">859</span> Hoboken - 33rd 2 min' +
-      '<div class="arr-dir">To New Jersey</div>' +
-      '<span class="arr-badge" style="background:#d93a30;color:#ffffff">862</span> Newark - World Trade Center 5 min',
+    kicker(
+      "PATH",
+      diamond("#d93a30") + diamond("#4d92fb") + spokenRoutes("Newark - World Trade Center", "Hoboken - 33rd"),
+    ) +
+      title("World Trade Center") +
+      dir("To New York") +
+      arr(row('<span class="arr-badge" style="background:#4d92fb;color:#1a1a1a">859</span>', "Hoboken - 33rd", "2 min")) +
+      dir("To New Jersey") +
+      arr(row('<span class="arr-badge" style="background:#d93a30;color:#ffffff">862</span>', "Newark - World Trade Center", "5 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 World Trade Center (PATH)",
@@ -362,10 +543,18 @@ test("PIN NJ Transit: New York Penn, a flat board dated by the TripUpdates heade
   const out = render("njt");
   assert.equal(
     out.popup,
-    '<b>New York Penn Station</b> <span class="popup-sub">NJ Transit</span>' +
-      '<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span> Trenton <span class="popup-sub">3800</span> 2 min<br>' +
-      '<span class="arr-badge" style="background:#E66859;color:#1a1a1a">2</span> Dover <span class="popup-sub">6634</span> 5 min<br>' +
-      '<span class="arr-badge" style="background:#4a4e69;color:#ffffff">?</span> Bay Head 8 min',
+    // A FLAT BOARD IS ONE .arr WITH THREE ROWS, where every other board opens one per bucket.
+    kicker("NJ Transit", NEC_TAG + MNBTN_TAG + spokenRoutes("Northeast Corridor", "Montclair-Boonton Line")) +
+      title("New York Penn Station") +
+      arr(
+        row('<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span>', 'Trenton <span class="popup-sub">3800</span>', "2 min"),
+        row('<span class="arr-badge" style="background:#E66859;color:#1a1a1a">2</span>', 'Dover <span class="popup-sub">6634</span>', "5 min"),
+        // THE ROUTE-LESS ROW, WHICH IS WHERE R1's SECOND NEUTRAL LEAVES BY VALUE. This arrival
+        // carries no route_id, so its badge draws the fallback: #4a4e69 (njtColor's, phase 15c's)
+        // until ruling R1, and the rail families' own #6d6e71 now, which is what the tag beside it
+        // on the map has always drawn for a route the routes endpoint does not carry.
+        row('<span class="arr-badge" style="background:#6d6e71;color:#ffffff">?</span>', "Bay Head", "8 min"),
+      ),
   );
   assert.deepEqual(out.panel, [
     "h3 New York Penn Station (NJ Transit)",
@@ -388,10 +577,29 @@ test("PIN ferry: Wall St/Pier 11, a dock dated by TripUpdates and a boat dwellin
   const out = render("ferry");
   assert.equal(
     out.popup,
-    '<b>Wall St/Pier 11</b> <span class="popup-sub">NYC Ferry</span>' +
-      ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>' +
-      '<div class="arr-dir" style="color:#007c94">East River</div>2 min' +
-      '<div class="arr-dir" style="color:#8c7300">South Brooklyn</div>departs 2 min',
+    /* MR5: the dock's accessibility glyph is the kicker's right-hand slot, which is where section 5
+       puts it, and it keeps the title attribute that is the only place its words exist.
+       The bucket headings' ink is walked against the popup's OWN surface now that section 5 makes
+       it --surface (before this stage: #007c94 and #8c7300, both walked against #ffffff). The
+       words, the order and the countdowns are unchanged; only the two ink values moved, and each
+       still clears 4.5 on the surface it is printed on.
+       A FERRY ROW HAS NO BADGE AND NOTHING TO NAME: its bucket is the route, so the first two
+       cells are empty and the countdown carries its own "departs". */
+    /* THE ONE KICKER WHOSE RIGHT SLOT WAS ALREADY OCCUPIED: the routes' hulls, then the words, then
+       the access glyph, which stays rightmost where it has always been. SV is the third route this
+       dock serves and the routes fixture does not carry it, so its hull is the ferry's published
+       fallback and its spoken name is its id: the one board here that renders a family's fallback. */
+    kicker(
+      "NYC Ferry",
+      hull("#00839c") + hull("#ffd100") + hull("#78909c") +
+        spokenRoutes("East River", "South Brooklyn", "SV") +
+        '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>',
+    ) +
+      title("Wall St/Pier 11") +
+      '<div class="dir" style="color:#006f85">East River</div>\n' +
+      arr(row("", "", "2 min")) +
+      '<div class="dir" style="color:#735e00">South Brooklyn</div>\n' +
+      arr(row("", "", "departs 2 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Wall St/Pier 11 (Ferry)",
@@ -478,7 +686,11 @@ function renderBody(name, body) {
     "panelStation = __entry; panelBody = __body; panelError = null;" +
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
-  return { popup, panel: panelLines(h.byId("stations-detail")), spoken: h.byId("stations-announce").textContent };
+  return {
+    popup: withoutMarks(popup),
+    panel: panelLines(h.byId("stations-detail")),
+    spoken: h.byId("stations-announce").textContent,
+  };
 }
 
 test("6.2 the subway board, ten minutes behind: every row says so, in the popup and in the panel", () => {
@@ -487,12 +699,15 @@ test("6.2 the subway board, ten minutes behind: every row says so, in the popup 
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
   assert.equal(
     out.popup,
-    "<b>Times Sq-42 St</b>" +
-      '<div class="arr-dir">Northbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 2 min${q}<br>` +
-      `<span class="arr-badge" ${RED}>2</span> 5 min${q}` +
-      '<div class="arr-dir">Southbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 3 min${q}`,
+    kicker("Subway", TIMES_SQ_PLATES) +
+      title("Times Sq-42 St") +
+      dir("Northbound") +
+      arr(
+        row(`<span class="arr-badge" ${RED}>1</span>`, q, "2 min"),
+        row(`<span class="arr-badge" ${RED}>2</span>`, q, "5 min"),
+      ) +
+      dir("Southbound") +
+      arr(row(`<span class="arr-badge" ${RED}>1</span>`, q, "3 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Times Sq-42 St (Subway)",
@@ -557,7 +772,14 @@ test("6.2 per ROW, on both surfaces: a board with a lagging contributor and a cu
   };
   const out = renderBody("subway", body);
   assert.deepEqual(popupQualifiers(out.popup), ["as of 10m ago"]);
-  assert.match(out.popup, /5 min <span class="arr-qualifier">as of 10m ago<\/span>/);
+  /* MR5: THE QUALIFIER RIDES THE ROW'S MIDDLE CELL AND THE COUNTDOWN ITS OWN, so "5 min" and
+     "as of 10m ago" are no longer adjacent in the markup. The claim is that they are in the SAME
+     ROW, which the grid says by the three cells being consecutive: the lagging row is the one
+     whose qualifier sits between its badge and its 5 min. */
+  assert.match(
+    out.popup,
+    /<span> <span class="arr-qualifier">as of 10m ago<\/span><\/span>\n<span class="n">5 min<\/span>/,
+  );
   assert.deepEqual(panelQualifiers(out.panel), ["", "as of 10m ago", ""]);
   // And no board-wide line on either surface, though this envelope's content clock IS ten
   // minutes old: the rows carry the age, so a line would say it twice, and say it of the
@@ -600,7 +822,15 @@ test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, t
   // The rider's word for the system, never the feed code: the panel SPEAKS this line,
   // and "MNR" would be read letter by letter.
   const line = "as of 7m ago; Metro-North prediction age unavailable";
-  assert.match(out.popup, new RegExp(`^<b>Grand Central</b> <span class="popup-sub">MNR</span><div class="popup-stale">${line}</div>`));
+  // MR5: the board line sits under the title, where the head used to be followed by it directly.
+  assert.ok(
+    out.popup.startsWith(
+      kicker("MNR", HUDSON_TAG + spokenRoutes("Hudson")) +
+        title("Grand Central") +
+        `<div class="popup-stale">${line}</div>\n`,
+    ),
+    out.popup,
+  );
   assert.deepEqual(popupQualifiers(out.popup), []);
   assert.deepEqual(out.panel.slice(0, 2), ["h3 Grand Central (Metro-North)", `p.station-detail-stale ${line}`]);
   assert.deepEqual(panelQualifiers(out.panel), ["", ""]);

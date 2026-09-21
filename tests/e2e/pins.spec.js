@@ -35,7 +35,10 @@ const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
-const { measureMarkContrast, bestPerFamily } = require("./contrast");
+const { measureMarkContrast, bestPerFamily, alphaPaints } = require("./contrast");
+// MR5: the marker table, the popup-closing sweep and the fourteen stock surfaces moved into
+// popup.js when popups.spec.js needed the same three; their comments moved with them.
+const { inPage, closeAllPopups, STOCK_SURFACES } = require("./popup");
 
 const GOLDEN = path.join(__dirname, "fixtures", "mr_pins.json");
 const REGENERATE = !!process.env.MR_PINS_REGENERATE;
@@ -47,7 +50,21 @@ const readGolden = () => (fs.existsSync(GOLDEN) ? JSON.parse(fs.readFileSync(GOL
 // a truncated file after a parallel regeneration is repaired by running it again, which
 // is cheap and visible (the assert run that follows says which key is missing).
 function pin(key, measured) {
+  /* REGENERATION IS A DEVELOPER'S ACT AND NEVER CI'S. Measured while writing MR5's pins:
+     nothing anywhere asserted this variable was unset, and the regenerate branch returns
+     before `expect` ever runs. A shell with MR_PINS_REGENERATE exported therefore saw every
+     pin in this file "pass", including MR5's premises and its coverage test, and a CI job
+     that ever inherited it would have been green forever with an empty golden. */
+  expect(
+    !(process.env.CI && REGENERATE),
+    "MR_PINS_REGENERATE is set in CI: every pin in this file would pass without asserting",
+  ).toBe(true);
   const [head, tail] = key.split("/");
+  /* AND THE KEY IS TWO LEVELS. `split("/")` destructures exactly two, so a three-level key
+     writes to its second segment and the third is silently dropped: two such keys overwrite
+     each other and the failure reads as an unrelated diff. Depth goes inside the value. */
+  expect(key.split("/").length, `${key}: a pin key is at most two levels; nest depth in the value`)
+    .toBeLessThanOrEqual(2);
   if (REGENERATE) {
     const all = readGolden();
     if (tail) (all[head] ??= {})[tail] = measured;
@@ -344,52 +361,7 @@ const captureMarks = (page, spec) =>
 // What a rider sees, read out of .leaflet-popup-content after opening the mark, rather
 // than what a builder returns: three of the eight systems compose their popup inline in
 // their own file with no pure helper to call, so the DOM is the only place the whole
-// string exists.
-// The marker table, sent into the page by name. page.evaluate runs a function's SOURCE in
-// the page's global scope, so the app's top-level consts are in scope the way they are in
-// the console; nothing here closes over this file.
-const MARKER_TABLE = `{
-  "subway train": () => trains.get("sub-1").marker,
-  "subway station": () => stationRegistry.find((e) => e.key === "subway|127").marker,
-  "bus": () => buses.get("MTA NYCT_101").marker,
-  "lirr train": () => railroads.get("LIRR|lirr-placed-1").marker,
-  "lirr station": () => stationRegistry.find((e) => e.key === "LIRR|12").marker,
-  "mnr train": () => railroads.get("MNR|mnr-gps-1").marker,
-  "mnr station": () => stationRegistry.find((e) => e.key === "MNR|1").marker,
-  "njt train": () => njtTrainRecords.get("NJ_3800").marker,
-  "njt station": () => stationRegistry.find((e) => e.key === "NJT|109").marker,
-  "path train": () => pathTrainRecords.get("p-1").marker,
-  "path station": () => stationRegistry.find((e) => e.key === "PATH|26734").marker,
-  "ferry boat": () => ferryBoatRecords.get("H1").marker,
-  "ferry dock": () => stationRegistry.find((e) => e.key === "ferry|18").marker,
-  "airtrain station": () => stationRegistry.find((e) => e.key === "airtrain|A").marker,
-}`;
-
-const inPage = (body) => new Function("which", `const MARKERS = ${MARKER_TABLE}; ${body}`);
-
-/* ONE POPUP AT A TIME, AND READ THROUGH THE MARKER, not through the document. This app
-   can hold a vehicle popup and a station popup open together (state.js carries a "two
-   popups open" witness for exactly that), so `.leaflet-popup-content` is not a unique
-   selector and the previous pin's popup would still be on screen. Asking the marker for
-   its own popup element cannot pick up a neighbour's, and map.closePopup() alone cannot
-   close the second one because only one of them is the map's "current" popup.
-
-   THE SETTLE LOOP RUNS FROM HERE, NOT IN THE PAGE, and that is not a style choice: the
-   boot pauses the clock (page.clock.pauseAt), so a setTimeout inside the page never fires
-   and an in-page wait deadlocks until the test times out. Measured, that is exactly what
-   happened: every station pin sat for the full timeout. Each round trip below is real
-   time on the driver's side, which is what lets a station's arrivals fetch resolve, and
-   the clock is advanced between reads so the app's own timers get their turn too. */
-const closeAllPopups = (page) =>
-  page.evaluate(() => {
-    map.closePopup();
-    for (const record of [...trains.values(), ...railroads.values(), ...buses.values(),
-      ...pathTrainRecords.values(), ...ferryBoatRecords.values(), ...njtTrainRecords.values()]) {
-      record.marker.closePopup();
-    }
-    for (const entry of stationRegistry) if (entry.marker) entry.marker.closePopup();
-  });
-
+// string exists. The marker table and the closing sweep this reads through are in popup.js.
 async function popupHtml(page, name) {
   await closeAllPopups(page);
   await page.evaluate(inPage("MARKERS[which]().openPopup();"), name);
@@ -433,10 +405,13 @@ async function popupHtml(page, name) {
 const markPin = (name, spec) => async ({ page }) => {
   await boot(page);
   pin(`markers/${name}`, await captureMarks(page, spec));
-  if (!spec.popups.length) return;
-  const popups = {};
-  for (const which of spec.popups) popups[which] = await popupHtml(page, which);
-  pin(`popups/${name}`, popups);
+  /* THE POPUP HALF IS RETIRED HERE, and the `spec.popups` lists are kept because they are
+     still the roster of surfaces P5 opens. MR1 through MR4 pinned each popup's HTML byte for
+     byte and said three times that "a popup that moves here is a defect"; that held for four
+     stages and is what let them restyle the map without touching the words. MR5 changes this
+     markup on purpose, so the same pin would now be a pin on the thing being changed. What
+     replaces it is P5: the same surfaces, read as TEXT. The retired goldens are in the ledger
+     as this round's before. */
 };
 
 test(
@@ -636,12 +611,19 @@ const railRegistryEntry = (page, key) =>
   page.evaluate((k) => {
     const entry = stationRegistry.find((row) => row.key === k);
     if (!entry) return null;
-    const { marker, layer, nameFor, ...rest } = entry;
+    const { marker, layer, nameFor, colorFor, ...rest } = entry;
+    const firstRoute = (entry.routes ?? [])[0] ?? "1";
     return {
       ...rest,
       // nameFor is a closure over the route-name index; what is pinned is the answer it
       // gives, because the panel's sentences are built from that and not from the function.
-      nameForFirstRoute: typeof nameFor === "function" ? (nameFor((entry.routes ?? [])[0] ?? "1") ?? null) : null,
+      nameForFirstRoute: typeof nameFor === "function" ? (nameFor(firstRoute) ?? null) : null,
+      /* AND colorFor's ANSWER, for the same reason and because ruling R1 is what put it here: the
+         railroad's panel chip used to hash its route id while the map and the popups read the
+         agency's published colour, and this is the only place on the live page where that resolver's
+         answer is measured. A function spread into a pin serialises as nothing, so the golden would
+         have grown a key that says nothing; the value is the point. */
+      colorForFirstRoute: typeof colorFor === "function" ? (colorFor(firstRoute) ?? null) : null,
       hasPopup: !!marker.getPopup(),
       markerInItsLayer: !!layer && layer.hasLayer(marker),
       drawnOnPane: marker.options.renderer?.options?.pane ?? marker.options.pane ?? "overlayPane",
@@ -800,6 +782,962 @@ test("P3d. the F01 world's ladder: how many trains are in each state, and what e
   });
 });
 
+/* ---------------- P5: the popup pins, INVERTED ----------------
+
+   MR1 through MR4 pinned every popup's HTML byte for byte, and said so three times over:
+   "the popups are stage MR5, so a popup that moves here is a defect". That claim has held
+   through four stages and it is what let those stages restyle the map without touching the
+   words. MR5 is the stage that changes the markup ON PURPOSE, so a markup pin is now a pin
+   on the thing being changed, which is the error the header of this file exists to warn
+   about.
+
+   SO THE PINS INVERT. What is pinned from here is what a rider READS: every string, per
+   system, per state, extracted as TEXT rather than as markup, taken before any restyle and
+   held after. The retired `popups/*` goldens are kept in the ledger as this round's before,
+   and the diff that removes them is the record that they were removed deliberately.
+
+   AND THE INVERSION IS MORE DANGEROUS THAN THE PINS IT REPLACES, for one structural reason
+   worth stating at the top: in MR1 through MR4 these goldens were ASSERT-ONLY, so a broken
+   reader FAILED. MR5 regenerates them by design, so every emptiness that used to be loud
+   becomes silent the moment it is written into the golden and matches itself forever. Every
+   premise assertion below exists for that, and each one is outside `pin()` on purpose. */
+
+/* THE READER. Three views of one subtree, and not one of them is `textContent` or
+   `innerText`.
+
+   NOT `textContent`: it inserts nothing at element boundaries. The subway train popup is a
+   flat chain of `<br>`-separated fragments, so its textContent is
+   "1 trainNext stop: Times Sq-42 StNorthbound...": a dropped `<br>` is invisible and two
+   words fuse into a run-on that a pin cannot tell from the real thing.
+
+   NOT `innerText`: it is computed from rendered boxes, so it moves when `display` moves.
+   MR5's whole job is changing `display` (the .kv grid, the .arr grid, the .pk flex row), so
+   a pin on innerText would be a pin on the thing being changed, again.
+
+   SO: a walk we control. Every text node in document order, normalised per node, joined by
+   exactly one space. Re-wrapping, re-nesting and re-ordering ELEMENTS that keeps the word
+   order gives an identical string; a lost, added or altered WORD does not.
+
+   THREE VIEWS, because a popup says things in three ways:
+     seen    every text node an EYE reads: the walk with `.visually-hidden` subtrees removed,
+             including a mark's decorative letter, which an eye does read.
+     spoken  every text node a SCREEN READER reads: the walk with aria-hidden subtrees removed
+             instead. MR5 puts the map's own marks inside `.pt`, and railTagSvg carries
+             aria-hidden, so the two diverge in this stage and the divergence is the content.
+     labels  text that exists ONLY in an attribute. Today that is exactly one string, the
+             dock's title="Wheelchair accessible": the glyph is in `seen`, the WORDS are in
+             neither view, and a reader of text nodes alone would lose them silently.
+
+   THE SECONDS ARE REDACTED, and this is the one normalisation past whitespace. An age under
+   120s renders in SECONDS (humanizeAge), and the settle loop advances a paused clock, so a
+   live feed's age is "1s" or "2s" depending on how many round trips an arrivals fetch took.
+   A raw pin on it is flaky from the first run. `smoke.spec.js` already takes this exact
+   escape for the same reason (a regex on ", as of \d+s ago" rather than a literal), so the
+   digits become {n} here and the SHAPE is asserted separately below. Minutes are left alone:
+   they are stable under the frozen clock and they are most of the vocabulary. */
+/* THE READER ITSELF, AS ONE STRING WITH TWO LOCATORS IN FRONT OF IT.
+
+   IT WAS TWO IMPLEMENTATIONS AND THAT COST A WRONG GOLDEN. P5a reads a surface by its MARKERS name
+   and P5c reads a railroad by its registry key, so P5c had its own inlined copy of the walk, the
+   normaliser and the clones. When MR5 taught the reader to tell an eye's view from a screen reader's,
+   only one copy learned: P5c regenerated four goldens whose `seen` contained "Live · {n}s", a string
+   no rider sees, and it looked exactly like a real capture. One reader, two ways of finding its
+   `content`, and neither can drift from the other now.
+
+   `content` IS THE CONTRACT between the locator and the body: the locator declares it and returns
+   null if there is no popup, the body below reads it. */
+const POPUP_READER = `
+  const norm = (s) =>
+    String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim()
+      .replace(/\\b\\d+s\\b/g, "{n}s");
+  const walk = (root) => {
+    const out = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = norm(n.nodeValue);
+      if (t) out.push(t);
+    }
+    return out.join(" ");
+  };
+  /* TWO CLONES, ONE PER READER, and MR5 is the stage that made the difference real. The seen view
+     used to be the raw walk, which was harmless while nothing in a popup was visually hidden. Ruling
+     Q2's freshness footer changes that on purpose: in the LIVE state it has no visible words and says
+     "Live, 12s" through A1's visually-hidden class, because this app has no word for live on any
+     surface (memo D9) and a screen reader still needs the state. A raw walk put that string in the
+     seen view, and the golden read as though a rider saw it, which is the one sentence memo D9
+     forbids recorded as though it shipped.
+     So each view removes what ITS reader cannot get: seen drops visually-hidden, spoken drops
+     aria-hidden, and the footer is the first thing in this app that lands in exactly one of them.
+     NO BACKTICKS IN HERE: this block is inside one, and a pair of them closed it early and broke the
+     file's parse while this very comment was being written. */
+  const visible = content.cloneNode(true);
+  for (const h of visible.querySelectorAll(".visually-hidden")) h.remove();
+  const quiet = content.cloneNode(true);
+  for (const h of quiet.querySelectorAll('[aria-hidden="true"]')) h.remove();
+  const labels = [...content.querySelectorAll("[title],[aria-label]")]
+    .map((e) => norm(e.getAttribute("title") ?? e.getAttribute("aria-label")))
+    .filter(Boolean);
+  return { seen: walk(visible), spoken: walk(quiet), labels };
+`;
+
+const CONTENT_OF_MARKER = `
+  const popup = MARKERS[which]().getPopup(), el = popup && popup.getElement();
+  const content = el && el.querySelector(".leaflet-popup-content");
+  if (!content) return null;
+`;
+
+const CONTENT_OF_RAILROAD = `
+  const popup = railroads.get(which).marker.getPopup(), el = popup && popup.getElement();
+  const content = el && el.querySelector(".leaflet-popup-content");
+  if (!content) return null;
+`;
+
+const popupStrings = (page, name) => page.evaluate(inPage(CONTENT_OF_MARKER + POPUP_READER), name);
+
+// The same reader, for a railroad read by its registry key: P5c's ladder world names its surfaces
+// by position KIND and looks each one up in `railroads`, because the F01 capture's ids are not
+// stable across states and MARKERS cannot hold them.
+const railroadStrings = (page, key) => page.evaluate(new Function("which", CONTENT_OF_RAILROAD + POPUP_READER), key);
+
+/* THE ROOTS OF THE POPUP CALL GRAPH, READ OFF LIVE OBJECTS rather than off a list.
+
+   A vehicle popup's content is the function `bindPopup(() => ...)` stored on the popup; a
+   station popup's renderer is the descriptor `openStation.render`, built on popupopen. Both
+   are harvested from the objects the app actually built, during the very run that captures
+   the text, so a renderer that arrives in a later stage is discovered rather than declared.
+   A LIST here would be the circularity the coverage test exists to avoid. */
+const popupRoots = (page, name) =>
+  page.evaluate(
+    inPage(`
+      const out = [];
+      const popup = MARKERS[which]().getPopup();
+      const bound = popup && popup._content;
+      if (typeof bound === "function") out.push(String(bound));
+      if (typeof openStation?.render === "function") out.push(String(openStation.render));
+      return out;
+    `),
+    name,
+  );
+
+/* One surface: open it, let it settle, read the three views AND the roots, close it.
+
+   THE SETTLE LOOP EXCLUDES THE LOADING LINE EXPLICITLY. `popupHtml` above settles on two
+   equal non-empty reads and survives only because the loading HTML differs from the settled
+   HTML on the next read. Extracted TEXT is shorter and more stable than HTML, so a loading
+   state is more likely to read equal twice; "Loading arrivals" would then become the pin. */
+/* MR5: AND `close` IS AN OPTION, because P5d reads a SECOND view of the same open popup. The
+   residue assertion compares a tree walk against a selector read, and the two have to be of one
+   render: closing in between leaves a detached container whose content is no longer the one the
+   walk saw. Everything else still closes, because a world with two popups open is a world where
+   `.leaflet-popup-content` is not unique (the note at the top of tests/e2e/popup.js). */
+async function popupTextOf(page, name, { close = true } = {}) {
+  await closeAllPopups(page);
+  await page.evaluate(inPage("MARKERS[which]().openPopup();"), name);
+  let previous = null;
+  let settled = null;
+  for (let i = 0; i < 80; i++) {
+    const now = await popupStrings(page, name);
+    const key = now && JSON.stringify(now);
+    if (key && key === previous && !/Loading arrivals/.test(now.seen)) {
+      settled = now;
+      break;
+    }
+    previous = key;
+    await page.clock.runFor(100);
+  }
+  expect(settled, `${name}: the popup never settled (last seen: ${previous})`).not.toBeNull();
+  const roots = await popupRoots(page, name);
+  if (close) await closeAllPopups(page);
+  return { ...settled, roots };
+}
+
+/* Every surface of a world, with the premise assertions that keep an empty read from
+   becoming the golden. T4 in the round's trap list: `expect({}).toEqual({})` passes and
+   `expect("").toEqual("")` passes, so a reader whose selectors all miss regenerates nothing
+   and then matches nothing forever. MR5 renames every selector in this panel at the same
+   moment it regenerates these, which is exactly when that happens. */
+async function captureWorld(page, surfaces) {
+  const out = {};
+  const roots = new Set();
+  for (const which of surfaces) {
+    const m = await popupTextOf(page, which);
+    expect(m.seen.length, `${which}: nothing was read from the popup`).toBeGreaterThan(12);
+    expect(m.spoken.length, `${which}: nothing was read with aria-hidden removed`).toBeGreaterThan(8);
+    for (const r of m.roots) roots.add(r);
+    // `?? null` on every field: a missing key and an `undefined` one are EQUAL to
+    // toEqual (measured), and JSON.stringify drops undefined, so a slot that silently
+    // failed to read would regenerate as absent and then match forever. null does fail.
+    out[which] = { seen: m.seen ?? null, spoken: m.spoken ?? null, labels: m.labels ?? [] };
+  }
+  return { surfaces: out, roots: [...roots] };
+}
+
+test("P5a. every string a rider reads in the stock world, per system", async ({ page }) => {
+  await boot(page);
+  const world = await captureWorld(page, STOCK_SURFACES);
+  pin("popupText/stock", world.surfaces);
+
+  /* AND THE PREMISES THE PIN CANNOT CARRY, outside pin() so regeneration cannot swallow
+     them. The first is the one that matters: a matrix whose states are all identical is a
+     matrix that enumerated nothing, and P4b2 is the round where this repo paid for exactly
+     that (a pin whose two halves came back byte-identical because the page overwrote the
+     mutation). Fourteen surfaces that read the same string would be a broken reader. */
+  const seen = STOCK_SURFACES.map((s) => world.surfaces[s].seen);
+  expect(new Set(seen).size, "fourteen surfaces must not read as one string").toBe(STOCK_SURFACES.length);
+  // The dock's wheelchair note lives only in a title attribute; a reader of text nodes
+  // alone loses it, so its presence is the witness that `labels` is doing work at all.
+  expect(world.surfaces["ferry dock"].labels).toContain("Wheelchair accessible");
+  // And the seconds redaction is a claim about the reader, so it is asserted rather than
+  // trusted: no surface may carry a raw seconds age into the golden.
+  for (const s of STOCK_SURFACES) {
+    expect(world.surfaces[s].seen, `${s}: a raw seconds age reached the golden`).not.toMatch(/\b\d+s\b/);
+  }
+
+  /* AND EVERY STATION BOARD'S KICKER DRAWS THE ROUTES CALLING THERE (ruling R3), asserted here
+     because a pin cannot carry it: an empty right-hand slot regenerates as an empty string and then
+     matches forever, which is trap T4 in this file's own words. Three of these five boards had no
+     routes in the fixtures to draw when the ruling landed (the railroad's and PATH's stops payloads
+     carried no `routes` field, though both endpoints serve one), so without this assertion the new
+     pins would have been pins of nothing at all.
+
+     A COUNT PER BOARD AND NOT A TOTAL, so a board that stops drawing them cannot be hidden by
+     another that draws three. The AirTrain station is deliberately absent: it has branches rather
+     than routes, and the ruling names five boards. */
+  const kickerMarks = async (which) => {
+    // THROUGH THE SETTLING READER, not a bare openPopup: a station popup opens on "Loading
+    // arrivals" and its board arrives a fetch later, and the loading state has no kicker at all.
+    // Measured, as this assertion failing with 0 on a board whose golden carries the tag.
+    await popupTextOf(page, which, { close: false });
+    const count = await page.locator(".leaflet-popup-content .pk .pmark").count();
+    await closeAllPopups(page);
+    return count;
+  };
+  for (const which of ["subway station", "lirr station", "mnr station", "njt station", "path station", "ferry dock"]) {
+    expect(await kickerMarks(which), `${which}: its kicker draws no route marks`).toBeGreaterThan(0);
+  }
+  await closeAllPopups(page);
+});
+
+/* THE SECOND WORLD, AND THE ONE THE BRIEF'S "per state" ACTUALLY ASKS FOR. The stock world
+   has one position state per system, because it has one train per system. F01 is the ladder
+   world: 136 railroad trains across every step of the backend's position ladder, which is
+   where `positionQualifier`'s whole vocabulary is on screen at once. P3d already pins the
+   ladder's COUNTS and the words as a model; this pins what the POPUPS of those states read,
+   which is a different claim: a restyle can keep the model and stop rendering it.
+
+   ONE TRAIN PER KIND, CHOSEN BY THE APP rather than by key. The fixture's ids are not stable
+   across states, so the surface roster is built in the page by asking each record what kind
+   its position is and taking the first of each. A kind that stops appearing changes the
+   roster and fails the pin by absence, which is the right failure. */
+const f01Surfaces = (page) =>
+  page.evaluate(() => {
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    const first = {};
+    for (const [key, record] of railroads) {
+      const kind = railroadPosition(record.latest, now).kind || "unqualified";
+      if (!first[kind]) first[kind] = key;
+    }
+    /* AND ONE MORE SURFACE, BY SYSTEM RATHER THAN BY KIND, which MR5 needed and P5b found. This
+       world already backdates Metro-North's fetched_at by six minutes, so MNR's FEED is stale in it
+       while LIRR's is live, and the roster above is LIRR-only by accident of iteration order: it
+       takes the first train of each position kind and LIRR's come first. Ruling Q2's footer prints
+       the feed's state, so without an MNR surface here no pinned world rendered a STALE footer at
+       all, and P5b reported "As of" as a rider-visible literal that no pin covered. Pinning a world
+       that renders it is the option that map's own instructions prefer over a waiver.
+       KEYED SEPARATELY, not folded into `first`, because it is a different axis: the four above
+       vary the POSITION's provenance on one live feed, and this one varies the FEED under an
+       otherwise ordinary train. Naming it for the axis keeps the golden readable. */
+    for (const [key, record] of railroads) {
+      if (record.latest.system === "MNR") {
+        first["mnr, stale feed"] = key;
+        break;
+      }
+    }
+    return Object.fromEntries(Object.keys(first).sort().map((k) => [k, first[k]]));
+  });
+
+test("P5c. the F01 ladder's popups, one per position state", async ({ page }) => {
+  await boot(page, (c) => {
+    c.overrides.railroads = (route) => {
+      const body = JSON.parse(JSON.stringify(require("./fixtures/f01_railroads.json")));
+      body.systems.MNR.fetched_at = fx.FROZEN_S - 360;
+      return json(route, body);
+    };
+  }, { railroadCount: 136 });
+
+  const roster = await f01Surfaces(page);
+  expect(Object.keys(roster).length, "the ladder world must show more than one position state")
+    .toBeGreaterThanOrEqual(5);
+  // AND THE SECOND AXIS IS REALLY IN IT, because a roster that silently lost the stale-feed surface
+  // would take "As of" out of the golden and P5b would report it uncovered again, one stage later.
+  expect(Object.keys(roster), "the stale-feed surface is what pins a stale footer").toContain("mnr, stale feed");
+
+  const out = {};
+  const roots = new Set();
+  for (const [kind, key] of Object.entries(roster)) {
+    await closeAllPopups(page);
+    await page.evaluate((k) => railroads.get(k).marker.openPopup(), key);
+    let previous = null;
+    let settled = null;
+    for (let i = 0; i < 40; i++) {
+      // THE SHARED READER, not a second copy of it. This loop used to inline its own walk and its
+      // own normaliser, and when the reader learned to tell an eye's view from a screen reader's,
+      // only the other copy learned: four goldens here regenerated with a string no rider sees.
+      const now = await railroadStrings(page, key);
+      const stamp = now && JSON.stringify(now);
+      if (stamp && stamp === previous) { settled = now; break; }
+      previous = stamp;
+      await page.clock.runFor(100);
+    }
+    expect(settled, `${kind}: the ladder popup never settled`).not.toBeNull();
+    expect(settled.seen.length, `${kind}: nothing was read`).toBeGreaterThan(12);
+    const bound = await page.evaluate((k) => {
+      const c = railroads.get(k).marker.getPopup()?._content;
+      return typeof c === "function" ? String(c) : null;
+    }, key);
+    if (bound) roots.add(bound);
+    out[kind] = { seen: settled.seen ?? null, spoken: settled.spoken ?? null };
+  }
+  await closeAllPopups(page);
+
+  // The states must READ differently, or the roster enumerated one thing five times.
+  const distinct = new Set(Object.values(out).map((v) => v.seen));
+  expect(distinct.size, "every ladder state read the same string").toBe(Object.keys(out).length);
+  pin("popupText/f01", out);
+});
+
+/* THE COVERAGE TEST, and it is the hardest claim in the stage: that every rider-visible
+   string in a popup is pinned.
+
+   IT IS NOT A LIST CHECKING ITSELF. The inventory is built by walking the popup call graph
+   from roots read off LIVE OBJECTS (popupRoots above), taking each function's own source
+   through Function.prototype.toString, and extracting the literals from it. That works here
+   and only here because this app is BUILDLESS: package.json says so in its own first line,
+   the page is plain ordered <script> tags, and every popup builder is therefore a top-level
+   function on globalThis. `String(fn)` is the real source of the real function.
+
+   WHAT IT PROVES: no literal in the popup call graph is absent from every pin without a
+   written reason. WHAT IT CANNOT PROVE, stated here rather than discovered later: a lost
+   DATA string (a train number, a station name, a headsign) is `${...}` and invisible to it.
+   Only the pins themselves see those. This is a supplement to P5a, never a substitute. */
+/* TWO MAPS, NOT ONE, BECAUSE THEY MEAN DIFFERENT THINGS and a single list would hide the
+   difference. The first is "this is not text a rider reads". The second is "this IS text a
+   rider reads, and no world pinned here renders it" - a backlog with reasons, visible in
+   every diff, and the honest answer to a coverage claim that cannot yet be total. A literal
+   in neither map and in no pin fails the test. */
+const NOT_RIDER_TEXT = {
+  "America/New_York": "an Intl.DateTimeFormat timeZone argument",
+  "en-US": "an Intl.DateTimeFormat locale argument",
+  "scheduled position, no GPS":
+    "positionQualifier's SPOKEN form, which reaches a marker's accessible name (positionClause) " +
+    "and never a popup. a11y's name specs are its witness, not a popup pin",
+  /* MR5, ruling Q1. positionQualifier's COMPACT form, which after Q1 has no reader at all: the
+     railroad popup was its only one, and it now renders `.words` through positionWords like
+     every other popup. So no rider reads this string on any surface, which is why it is here rather
+     than in UNREACHED_STATES: that map is for text a rider WOULD read in a state no world reaches,
+     and there is no such state left for this one.
+     THE FIELD IS NOT REMOVED AND THAT IS DELIBERATE. `.compact` is one of the three forms section
+     3.2 of the freshness contract defines, positions.test.js holds the difference between it and
+     `.words`, and deleting a contract form is an amendment to that contract rather than a stage's
+     tidying. Recorded here so the next stage finds it named rather than guesses. */
+  "scheduled (no GPS)":
+    "positionQualifier's COMPACT form. After MR5's ruling Q1 it has no reader: the railroad popup " +
+    "was the only surface that rendered it and now takes .words through positionWords. The " +
+    "contract still defines the form and positions.test.js still pins it; no popup prints it",
+  /* MR5: A CLASS NAME THAT READS AS PROSE, which is the one shape the candidate filter cannot tell
+     from rider text. popupArrRowsHtml writes `class="n now"` on the countdown cell of a row that
+     reads "now", and two words with a space in them is exactly what the filter looks for.
+     NOT SPELLED AROUND IN THE BUILDER. The alternative was `class="n${...}"` with " now" as the
+     literal, which the filter would drop for having no space and no capital: that is hiding a
+     string from the inventory by formatting, and the next class name with a space in it would be
+     back. A waiver with a reason is the honest form, and it is cheap: the rider's word "now" is
+     formatCountdown's and IS pinned, on every board world that has a row under 30 seconds. */
+  "n now": "the countdown cell's class attribute when a row reads now, not a string anyone reads",
+  /* RULING R1's SIDE EFFECT, and the honest way to read this block of five: they were always in the
+     popup call graph and the crawler could not see them, because it deduplicated a walked function
+     by its NAME AND SOURCE LENGTH while every root is named "<root>" (the note at the crawler has
+     the measurement). Two of the app's seven vehicle popups were therefore never walked. Nothing
+     below is new code; they are strings this test has been silent about since it was written. */
+  STOPPED_AT: "a GTFS current_status value the ferry code switches on. The rider reads ferryStatusText's answer",
+  IN_TRANSIT_TO: "the same enum, read by ferryStatusText and ferrySpeedKnots",
+  INCOMING_AT: "the same enum",
+  NJT: "railBranchCode's system key. The tag prints the branch CODE and the kicker prints POPUP_SYSTEM_WORDS' \"NJ Transit\"",
+  "NJT|": "the station registry's key prefix, which the cross-link resolves a station by",
+};
+
+const UNREACHED_STATES = {
+  "No trains": "an empty board. Every fixture station serves at least one arrival",
+  "No boats": "an empty ferry board, same reason",
+  "No AirTrain branch serves this station.": "an AirTrain station the branch table does not name",
+  "schedule unavailable": "an AirTrain headway band the clock never lands in",
+  "Metro-North": "railroadSystemLabel's fallback for a system with no label; the fixtures name both",
+  Railroad: "railroadSystemLabel's last-resort label, same reason",
+  "PATH route": "formatPathHead's fallback for a PATH route with no name; the fixture names all of them",
+  "age unknown": "a prediction or position with no clock on a gated system",
+  "live GPS, age unknown": "a reported fix with no clock on a gated system",
+  ", age unknown": "the same clause, composed",
+  "showing last known": "a retained row with neither its own clock nor a poll age",
+  "showing last known, as of": "a retained row, which the F01 ladder world does not currently draw",
+  "alerts may be out of date": "the stale-alerts hedge; P3c pins the alerts join, not this hedge",
+  "prediction age unavailable": "boardSystemLine's second clause, on an undated contributor",
+  /* MR5 (ruling Q2): the two footer states no pinned world reaches, and each for its own reason.
+     The other two ARE pinned: "Live" by every stock surface, and "As of {age} ago" by the ladder
+     world's "mnr, stale feed" surface, which exists because P5b reported that string uncovered. */
+  "Not reporting":
+    "the footer's state for a feed with no age at all, which is a feed that has never decoded. " +
+    "Every fixture feed decodes on its first poll, so no world here reaches it",
+  /* AND FOUR MORE FROM THE SAME REPAIR (see the five in NOT_RIDER_TEXT above): the ferry boat and
+     the NJ Transit train popups were the two roots the crawler's length-keyed dedup dropped, so
+     every state THEY have that no pinned surface renders was invisible here. Each names the spec
+     that does draw it, because "no world here reaches it" is only honest when something else does. */
+  "At dock":
+    "a STOPPED_AT boat. The pinned ferry surface is H1, under way; smoke.spec.js 20 opens H2 and " +
+    "asserts this string, and the contract tier's C6e5 measures the docked compound",
+  "Arriving at dock": "an INCOMING_AT boat. No fixture boat carries that status at all",
+  Unassigned:
+    "a boat whose route_id joins nothing. The pinned boat has a route; smoke.spec.js 20 renders " +
+    "this one and asserts the word",
+  "NJ Transit route":
+    "formatNjtHead's fallback for a route the route table cannot name. The pinned NJ Transit train " +
+    "is route 9, which has a name; markers.spec.js reads \"NJ Transit route 17\" off route 17's " +
+    "marker label, which is the same fallback on the surface that does render it",
+  /* MR5: FOUND BY THE NEW SCANNER, not by a reviewer. The old extractor read a template's
+     literal pieces and stopped at its interpolations, so a string inside one was invisible;
+     this one scans an interpolation as code, and the first thing it found was a rider-visible
+     fallback that has never been pinned in six stages. */
+  "Unknown route":
+    "busPopup's title for a bus the feed served with no route_id. Every bus in every fixture " +
+    "carries one, so no world here reaches it; the marker's own name has the same gap " +
+    "(busName's bare \"Bus\") and takes the same waiver by being the same state",
+  Scheduled:
+    "the footer's schedule-only state. The footer is a VEHICLE popup's line (it is " +
+    "vehicleStaleLine restyled) and the only schedule-only feed is AirTrain, which has no " +
+    "vehicles. A rider reads this word on the feed strip's tooltip, where chrome.spec.js D1a " +
+    "holds it; no popup can render it",
+};
+
+/* ---------------- P5d: direction A of the coverage claim, the residue assertion ----------------
+
+   THE CLAIM: every word a rider reads in a popup belongs to a NAMED SLOT of section 5's vocabulary.
+   P5b is direction B (every literal in the call graph is pinned or declared); this is direction A,
+   and the brief asks for both because either alone is circular.
+
+   WHY IT IS NOT CIRCULAR. `seen` is the UNIVERSE: every text node in the popup's subtree, harvested
+   by a tree walk that knows no class and no list. The slots are a PARTITION, read through named
+   selectors. The assertion is that the partition is total, so a string rendered into a popup that no
+   slot claims shows up as residue and fails. It cannot be satisfied by regenerating a golden,
+   because it is not a golden comparison at all: nothing here is pinned.
+
+   AND IT IS THE TEST THE VOCABULARY MADE POSSIBLE. Before MR5 a popup was a run of `<br>`-joined
+   sentences with three classes between them, so "which slot is this word in" had no answer for most
+   of the text. Now every word is in a kicker, a title, a label, a value, a bucket heading, a row
+   cell, the footer, an alerts block, a cross-link, a board line, a muted note or an empty-board
+   notice, and a thirteenth kind of text is a thing this test reports rather than a thing a reader
+   has to notice.
+
+   THE HIDDEN WORDS ARE OUT OF BOTH SIDES. `seen` drops `.visually-hidden` (ruling Q2's live footer
+   says "Live · 12s" to a screen reader and nothing to an eye, unless ruling R2's suppression has
+   taken the words out of the tree as well, which is what happens where the Position row already
+   stated an age that old), so the slots drop it too: this is about what a rider READS. */
+const SLOT_READER = `
+  const norm = (s) =>
+    String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim().replace(/\\b\\d+s\\b/g, "{n}s");
+  /* EVERY BACKSLASH HERE IS DOUBLED, and that is not decoration. This block is a TEMPLATE LITERAL
+     interpolated into another one by inPage, so a single backslash-s arrives in the page as a bare
+     "s" (and NO BACKTICKS IN HERE either, for the reason the reader above says: a pair of them
+     closed this literal early while this very comment was being written, twice in one stage):
+     measured, the first draft of this reader read "Next stop" as "Next  top" and "Position" as
+     "Po ition", because /s+/g replaced every letter s with a space. The same defect is recorded in
+     the MR5 ledger against popups.spec.js D6i, whose first draft split colours on "s" and compared
+     NaN to 4.5 forever. The residue report is what caught it here, which is the coverage test
+     working on itself.
+     THE NAMED SLOTS, which are section 5's classes plus the four the app has always had (a board's
+     freshness line, a muted note, an empty-board notice, a cross-link). NO BACKTICKS IN HERE: this
+     block is inside one. */
+  const SLOTS = {
+    kicker: ".pk > span",
+    title: ".pt",
+    label: ".kv .k",
+    value: ".kv .v",
+    bucket: ".dir",
+    cell: ".arr > span",
+    footer: ".fresh",
+    alert: ".alert-block",
+    crosslink: ".xlink",
+    board: ".popup-stale",
+    note: ".popup-sub",
+    empty: ".arr-none",
+  };
+  /* THE SLOT'S TEXT IS ITS TEXT NODES, WALKED, not its textContent, and the rail tag is why: its
+     agency glyph and its branch code are two adjacent <text> elements, so textContent reads "LBAB"
+     where the universe's walk reads "L" and "BAB". Both sides harvest the same way and differ only
+     in WHICH nodes they take, which is what makes this a partition of the universe rather than a
+     second reading of it. */
+  const walk = (root) => {
+    const out = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = norm(n.nodeValue);
+      if (t) out.push(t);
+    }
+    return out.join(" ");
+  };
+  const visible = content.cloneNode(true);
+  for (const h of visible.querySelectorAll(".visually-hidden")) h.remove();
+  const out = {};
+  for (const name of Object.keys(SLOTS)) {
+    out[name] = [...visible.querySelectorAll(SLOTS[name])].map(walk).filter(Boolean);
+  }
+  return out;
+`;
+
+const popupSlots = (page, name) => page.evaluate(inPage(CONTENT_OF_MARKER + SLOT_READER), name);
+
+/* The residue, as a WORD MULTISET rather than a string comparison, because the slots are read in
+   selector order and a popup's text nodes in document order, and the two differ wherever a slot
+   nests (a train number inside a row's middle cell, a badge inside its first). What the claim needs
+   is that no word is left over, which is a counting question. */
+function wordResidue(seen, claimed) {
+  const pool = new Map();
+  for (const w of claimed.split(" ").filter(Boolean)) pool.set(w, (pool.get(w) ?? 0) + 1);
+  const left = [];
+  for (const w of seen.split(" ").filter(Boolean)) {
+    const n = pool.get(w) ?? 0;
+    if (n > 0) pool.set(w, n - 1);
+    else left.push(w);
+  }
+  return left;
+}
+
+test("P5d. every word a rider reads in a popup belongs to a named slot (direction A)", async ({ page }) => {
+  await boot(page);
+  // THE COMPARATOR FIRST, because a residue function that always returns [] would make every
+  // assertion below vacuous, and "a test that cannot fail" is one of the four shapes this phase
+  // keeps producing. One word injected into the universe must come back as residue, and a word
+  // claimed twice but read once must not.
+  expect(wordResidue("a b c", "a b c")).toEqual([]);
+  expect(wordResidue("a zzz b", "a b")).toEqual(["zzz"]);
+  expect(wordResidue("a a", "a")).toEqual(["a"], "counting, not membership: two reads need two claims");
+  expect(wordResidue("a", "a a")).toEqual([]);
+
+  for (const which of STOCK_SURFACES) {
+    // BOTH VIEWS OF ONE RENDER, which is why the popup is left open across the two reads.
+    const read = await popupTextOf(page, which, { close: false });
+    const slots = await popupSlots(page, which);
+    await closeAllPopups(page);
+    expect(slots, `${which}: the slot reader found no popup`).not.toBeNull();
+    const claimed = Object.values(slots).flat().join(" ");
+    // A PREMISE PER SURFACE: at least two slots read something. A reader whose selectors all
+    // missed would claim nothing, and then every word would be residue, which fails loudly; a
+    // reader that claimed everything through one catch-all slot would pass and prove nothing.
+    const filled = Object.entries(slots).filter(([, v]) => v.length);
+    expect(filled.length, `${which}: only ${filled.length} slots read anything`).toBeGreaterThanOrEqual(2);
+    expect(
+      wordResidue(read.seen, claimed),
+      `${which}: text in the popup that no named slot claims. Either it belongs in one of section ` +
+        "5's classes, or the vocabulary needs a slot for it and this test needs to know its name.",
+    ).toEqual([]);
+  }
+
+  /* AND THE WHOLE THING PROVED AGAINST A REAL POPUP, not only against the comparator. Fourteen
+     empty residues read exactly like fourteen readers that missed, which is the shape this phase
+     keeps finding, so one unclaimed string is INJECTED into a rendered popup and the machinery has
+     to report it. The injection goes in through the DOM rather than through a builder, so nothing
+     in the app has to be broken to prove the test works.
+
+     INJECTED AND READ IN ONE EVALUATE, WHICH IS A FLAKE FIXED RATHER THAN RECORDED. As three
+     separate calls this failed twice in four full parallel runs, with the residue coming back EMPTY:
+     the app rebuilds an open popup on its fifteen-second poll (`popup.update()`, and a re-skinned bus
+     marker is re-bound outright), the poll is triggered by a clock this suite advances in the settle
+     loops above, but the mocked fetch that answers it resolves in REAL time, so under worker
+     contention it lands between the injection and the read and takes the injected node with it.
+     Reproduced deterministically by forcing `getPopup().update()` between the two calls: the same
+     assertion, the same empty array, the same message CI printed. Nothing can intervene inside one
+     evaluate, so the race is gone rather than retried.
+
+     AND BOTH READERS ARE THE SAME TWO SOURCES, wrapped in an IIFE each so their `norm` and `walk`
+     do not collide. A third copy of either reader is the fifth defect shape this phase named, and it
+     does not get created to fix a timing bug. The node is removed before the evaluate returns, so no
+     later read in this file can see it. */
+  const injected = await page.evaluate(
+    inPage(`
+    MARKERS[which]().openPopup();
+    const el = MARKERS[which]().getPopup().getElement();
+    const content = el.querySelector(".leaflet-popup-content");
+    const planted = Object.assign(document.createElement("div"), { textContent: "zzq unclaimed" });
+    content.appendChild(planted);
+    const seen = (() => { ${POPUP_READER} })().seen;
+    const slots = (() => { ${SLOT_READER} })();
+    planted.remove();
+    return { seen, slots };
+  `),
+    "bus",
+  );
+  expect(
+    wordResidue(injected.seen, Object.values(injected.slots).flat().join(" ")),
+    "a string in a popup that no slot claims must be reported, or this test proves nothing",
+  ).toEqual(["zzq", "unclaimed"]);
+  await closeAllPopups(page);
+});
+
+test("P5b. every rider-visible literal in the popup call graph is pinned, or has a reason", async ({ page }) => {
+  await boot(page);
+  const world = await captureWorld(page, STOCK_SURFACES);
+
+  /* THE NON-VACUITY PREMISE, and it is the single most important line in this test. A door
+     that recorded nothing leaves the closure empty, the inventory empty and this test
+     passing with nothing in it, which reads as the strongest evidence in the file. */
+  expect(world.roots.length, "no popup renderer was discovered: the coverage test would be vacuous")
+    .toBeGreaterThanOrEqual(8);
+
+  /* THE SCANNER'S OWN CASES, written here and executed in the page, because a heuristic is only
+     as good as the constructs it has been shown. Each is a shape this scanner has been WRONG about
+     once: the first two are the false positives that retired its regex-plus-stripper predecessor
+     (a template nested in an interpolation, and a regex carrying a quote), the next two are the
+     reviewer's reproduction of the keyword bug (a regex after `return` and after `case`, each with
+     a quote in it, which lost the prose around them), and the last is an ordinary division, which
+     must NOT be read as a regex. \u0001 is where an interpolation was. */
+  const SCANNER_CASES = [
+    [
+      "function t(x) { return `<p>${x ? `<b>${x}</b>` : \"ok now\"}</p>`; }",
+      ["<b>\u0001</b>", "ok now", "<p>\u0001</p>"],
+    ],
+    ['function m(s) { return s.replace(/\\s(?:width|height)="[^"]*"/g, ""); }', [""]],
+    ['function f(x) { return /["]/.test(x) ? "ok now" : "not ok"; }', ["ok now", "not ok"]],
+    ['function h(x) { switch (x) { case /a"b/.test(x): return "yes sir"; } }', ["yes sir"]],
+    ['function d(a, b) { const r = a / b; return "divide fine " + r; }', ["divide fine "]],
+  ];
+
+  const scanned = await page.evaluate(({ roots, cases }) => {
+    /* ONE SCANNER THAT READS THE SOURCE MODE BY MODE, and it replaced a comment stripper plus a
+       regex in MR5, because that pair could not read the code this stage wrote.
+
+       WHAT IT GOT WRONG, both measured on this run. A template literal nested inside another
+       template's `${...}` ended the outer match at the INNER's opening backtick, so
+       popupTitleHtml reported the fragment "${text ?" as rider prose. And a regex literal
+       carrying a quote (popupMarkHtml's /\s(?:width|height)="[^"]*"/g) opened a string that ran
+       to the next quote in the file, reporting "); return <span class=" as prose. Both are the
+       same false-positive shape as the apostrophe in railroadPopup's comment that this test was
+       written for ("station's"), which is why the answer is not another special case: a scanner
+       that tracks which mode it is in reads all four correctly, and a regex over a stripped
+       string will always be one construct behind the code.
+
+       WHAT IT EMITS: one entry per string or template literal, with \u0001 where an
+       interpolation was, so prose is broken at the boundaries a value fills rather than glued
+       across them. An interpolation's contents are scanned as CODE, so a literal inside one is
+       found rather than skipped (which is how "Unknown route" is reached at all: it lives in
+       `${esc(b.route_id ?? "Unknown route")}`).
+
+       THE REGEX-OR-DIVISION HEURISTIC is the standard one and it is honest about being one: a
+       `/` opens a regex when the last significant character was an operator, an opening bracket
+       or a comma, and divides otherwise. IT ALSO READS THE PREVIOUS WORD, which is a reviewer's
+       correction and the reason the self-tests below exist: after a KEYWORD (`return /x/.test(s)`
+       is the shape this app has, in pathColor and njtColor) the last significant character is a
+       letter, so the class alone called it a division and scanned the regex body as code. When
+       such a regex carries a quote, that opens a string frame and the literals AROUND it are lost
+       rather than merely mis-reported: a silent hole in the direction that claims totality.
+
+       SO THE SCANNER IS MEASURED ON ITS OWN CONSTRUCTS, not only on today's source. The cases are
+       written in the test below, run through this function here, and compared there; each one is a
+       shape that has been got wrong once (a nested template, a regex with a quote after `(`, a
+       regex after a keyword, and a real division). */
+    /* The words a `/` may follow and still open a regex. `return` is the one this app uses; the
+       rest are free, and a `/` after any other identifier is a division. */
+    const OPENS_A_REGEX = new Set(
+      "return typeof case in of new delete void instanceof do else yield await throw".split(" "),
+    );
+    const literals = (src) => {
+      const out = [];
+      const frames = [{ kind: "code", brace: 0, interp: false }];
+      const top = () => frames[frames.length - 1];
+      let prev = "";
+      for (let i = 0; i < src.length; i++) {
+        const c = src[i], d = src[i + 1];
+        const f = top();
+        if (f.kind === "line") { if (c === "\n") frames.pop(); continue; }
+        if (f.kind === "block") { if (c === "*" && d === "/") { frames.pop(); i++; } continue; }
+        if (f.kind === "regex" || f.kind === "class") {
+          if (c === "\\") { i++; continue; }
+          if (f.kind === "regex" && c === "[") { f.kind = "class"; continue; }
+          if (f.kind === "class" && c === "]") { f.kind = "regex"; continue; }
+          if (f.kind === "regex" && c === "/") { frames.pop(); prev = "x"; }
+          continue;
+        }
+        if (f.kind === "str") {
+          if (c === "\\") { f.buf += src[++i] ?? ""; continue; }
+          if (c === f.quote) { out.push(f.buf); frames.pop(); prev = "x"; continue; }
+          f.buf += c;
+          continue;
+        }
+        if (f.kind === "tpl") {
+          if (c === "\\") { f.buf += src[++i] ?? ""; continue; }
+          if (c === "$" && d === "{") { f.buf += "\u0001"; frames.push({ kind: "code", brace: 0, interp: true }); i++; continue; }
+          if (c === "`") { out.push(f.buf); frames.pop(); prev = "x"; continue; }
+          f.buf += c;
+          continue;
+        }
+        // code
+        if (c === "/" && d === "/") { frames.push({ kind: "line" }); i++; continue; }
+        if (c === "/" && d === "*") { frames.push({ kind: "block" }); i++; continue; }
+        if (c === "/") {
+          /* THE PREVIOUS WORD, bounded: a keyword is at most ten characters, so a window is read
+             rather than the whole prefix (this runs once per character of every function in the
+             call graph). No match means the previous significant character was not a letter, and
+             then the operator class decides as it always did. */
+          const before = /([A-Za-z_$][\w$]*)\s*$/.exec(src.slice(i < 24 ? 0 : i - 24, i));
+          const opens = before
+            ? OPENS_A_REGEX.has(before[1])
+            : /[(,=:[!&|?{};+\-*%~^<>]/.test(prev) || prev === "";
+          if (opens) frames.push({ kind: "regex" });
+          prev = "/";
+          continue;
+        }
+        if (c === '"' || c === "'") { frames.push({ kind: "str", quote: c, buf: "" }); continue; }
+        if (c === "`") { frames.push({ kind: "tpl", buf: "" }); continue; }
+        if (c === "{") { f.brace++; prev = "{"; continue; }
+        if (c === "}") {
+          if (f.brace > 0) { f.brace--; prev = "}"; continue; }
+          if (f.interp) { frames.pop(); prev = "x"; continue; }
+          prev = "}";
+          continue;
+        }
+        if (!/\s/.test(c)) prev = c;
+      }
+      return out;
+    };
+    /* The closure: from each root's source, every identifier called as a function that
+       resolves to a function on globalThis, recursively. Depth is bounded only by the
+       graph, and `seen` makes it terminate on cycles. */
+    const seen = new Map();
+    const queue = roots.map((src) => ["<root>", src]);
+    const callees = (src) => [...src.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+    /* KEYED BY THE SOURCE AND NOT BY ITS LENGTH, which is a defect ruling R1 uncovered and worth
+       stating plainly: this map used `name + src.length`, and EVERY root is named "<root>", so two
+       roots whose sources happen to be the same number of characters collided and the second was
+       never walked. Measured: `() => njtTrainPopup(newRecord)` and `() => pathTrainPopup(record)`
+       are both 30 characters, so of the app's seven vehicle popups, one was crawled and the other
+       was silently absent from the graph this test calls total. It surfaced because R1 put
+       `njtBranch` into a STATION root as well, and its literal appeared for the first time in a
+       stage that changed no string.
+       A LENGTH IS NOT AN IDENTITY. The key is the whole source now, which is what "this function,
+       already walked" actually means; the cost is memory in a test that already holds every one of
+       these strings. */
+    const key = (name, src) => `${name}\u0000${src}`;
+    while (queue.length) {
+      const [name, src] = queue.shift();
+      if (seen.has(key(name, src))) continue;
+      seen.set(key(name, src), { name, src });
+      for (const id of callees(src)) {
+        const fn = globalThis[id];
+        if (typeof fn !== "function") continue;
+        const s = String(fn);
+        if (!seen.has(key(id, s))) queue.push([id, s]);
+      }
+    }
+    /* The literals: strip template interpolations, then tags and attribute values, keeping
+       title= and aria-label= values because those ARE rider text. What is left and carries
+       two or more letters is a candidate. */
+    const out = {};
+    for (const { name, src } of seen.values()) {
+      for (const raw of literals(src)) {
+        // The scanner already marked every interpolation with \u0001, so the split below breaks
+        // prose at those boundaries and at every tag.
+        for (const piece of raw.split(/<[^>]*>|\u0001/)) {
+          /* ENTITIES ARE DECODED, because the builder writes `&middot;` and the rider reads
+             `\u00b7`: a literal compared against rendered text has to be in the rider's
+             alphabet or every entity-bearing string reports as uncovered. */
+          const decoded = piece.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e) => {
+            const d = document.createElement("textarea");
+            d.innerHTML = m;
+            return d.value;
+          });
+          const t = decoded.replace(/\s+/g, " ").trim();
+          /* A CANDIDATE IS PROSE OR A LABEL, never an identifier. Two letters together, and
+             then either a SPACE (multi-word, which is what rider prose is) or a capital
+             (a label like "Railroad" or a proper noun). That filter is what separates
+             "No trains" and "prediction age unavailable" from `number`, `object`, `placed`,
+             `hm` and the two dozen other enum values and field names the call graph compares
+             against. Measured on the first run: without it the report was 72 lines, 50 of
+             them identifiers, and a waiver list that long IS the escape hatch. */
+          if (!/[A-Za-z]{2}/.test(t)) continue;
+          if (!/ /.test(t) && !/[A-Z]/.test(t)) continue;
+          /* AND AN ATTRIBUTE FRAGMENT IS NOT PROSE, which MR5's mark wrapper is why. The tag
+             split above removes whole tags, and it cannot remove a tag whose own opening is an
+             interpolation: popupMarkHtml writes ` width="${w}" height="${h}"` against an <svg>
+             tag that arrives as a value, so the piece `" height="` survived with a space in it
+             and read as two words. No string a rider reads contains `="`. */
+          if (/="/.test(t)) continue;
+          (out[t] ??= new Set()).add(name);
+        }
+      }
+    }
+    return {
+      inventory: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v].sort()])),
+      selfTests: cases.map(([src]) => literals(src)),
+    };
+  }, { roots: world.roots, cases: SCANNER_CASES });
+
+  const { inventory, selfTests } = scanned;
+
+  // THE SCANNER BEFORE ITS ANSWER: five constructs, read in the page by the same function that
+  // read the call graph, compared to what a reader of that source says each one contains.
+  SCANNER_CASES.forEach(([src, want], i) => {
+    expect(selfTests[i], `the literal scanner misread: ${src}`).toEqual(want);
+  });
+
+  expect(Object.keys(inventory).length, "the literal extractor found nothing").toBeGreaterThan(20);
+
+  /* THE HAYSTACK IS THE GOLDEN, not this run's capture, because the claim is "is this
+     literal PINNED" and the golden is what pinned means. Every popupText world counts, so a
+     state covered by the ladder world satisfies a literal the stock world never renders. */
+  const pinned = readGolden().popupText ?? {};
+  const textOf = (v) => `${v.seen ?? ""} ${v.spoken ?? ""} ${(v.labels ?? []).join(" ")}`;
+  const haystack = Object.values(pinned)
+    .flatMap((w) => Object.values(w))
+    .map(textOf)
+    .join(" \u0000 ");
+  expect(haystack.length, "no pinned popup text to check coverage against").toBeGreaterThan(500);
+
+  /* AND IT IS KEYED BY SYSTEM WHERE THE LITERAL NAMES ONE, which is a reviewer's correction: the
+     comment here used to promise that "a phrase pinned in one system does not silently cover
+     another's" while the check was a plain `includes` over every world's text joined together, and
+     the attribution was carried in the failure message alone. So a literal that moved into a state
+     of one system that no world here reaches was covered by a coincidental occurrence of the same
+     words in another system's pinned text, which is the laundering the comment forbade.
+
+     ONLY WHEN EVERY FUNCTION IT CAME FROM IS THE SAME SYSTEM'S. A literal inside a shared builder
+     (popupRowsHtml, positionWords, vehicleStaleLine) is legitimately pinned wherever it renders, so
+     those fall back to the whole golden; narrowing them would be a false failure rather than a
+     stronger test. What is narrowed is exactly the case the promise was about: prose that only
+     `busPopup` or only `ferryArrivalsHtml` can reach.
+
+     THE TWO TABLES ARE SMALL AND THEY FAIL LOUDLY. A function's system is its name's own prefix,
+     which is this app's naming and not a list to maintain. A surface's system is its key's first
+     word, with the two railroad systems folded together (they are one renderer) and the ladder
+     world folded into them (every surface in it is an MNR popup). The premise below is what keeps
+     the second table honest: a world or a surface renamed takes a system out of this map, and the
+     assertion says so rather than quietly checking a literal against an empty string. */
+  const SYSTEM_OF_FUNCTION = [
+    ["subway", /^subway/], ["bus", /^bus/], ["njt", /^njt/], ["path", /^path/],
+    ["ferry", /^ferry/], ["airtrain", /^airtrain/], ["rail", /^railroad/],
+  ];
+  const systemOfFunction = (name) => (SYSTEM_OF_FUNCTION.find(([, re]) => re.test(name)) ?? [null])[0];
+  const systemOfSurface = (world, key) => {
+    if (world === "f01") return "rail";
+    const first = key.split(/[\s,]/)[0];
+    return first === "lirr" || first === "mnr" ? "rail" : first;
+  };
+  const perSystem = {};
+  for (const [world, surfaces] of Object.entries(pinned)) {
+    for (const [key, v] of Object.entries(surfaces)) {
+      const system = systemOfSurface(world, key);
+      perSystem[system] = `${perSystem[system] ?? ""} \u0000 ${textOf(v)}`;
+    }
+  }
+  expect(
+    Object.keys(perSystem).sort(),
+    "the golden's surface keys no longer name the systems this coverage check keys on",
+  ).toEqual(["airtrain", "bus", "ferry", "njt", "path", "rail", "subway"]);
+
+  // A literal is covered if it appears in the pinned text it could have come from, or is declared
+  // not to be rider text. The attribution is in the failure message too, so a report names the
+  // function to look in as well as the words.
+  const waived = { ...NOT_RIDER_TEXT, ...UNREACHED_STATES };
+  const uncovered = Object.entries(inventory)
+    .filter(([lit]) => !waived[lit])
+    .filter(([, from]) => from.length > 0)
+    .filter(([lit, from]) => {
+      const systems = new Set(from.map(systemOfFunction));
+      const only = systems.size === 1 ? [...systems][0] : null;
+      return !(only ? perSystem[only] : haystack).includes(lit);
+    })
+    .map(([lit, from]) => `${JSON.stringify(lit)} (from ${from.join(", ")})`)
+    .sort();
+
+  /* WHAT THE WAIVER LIST IS ALLOWED TO BE. A key with a reason, never a bare list, so a
+     waiver cannot be padded silently. And a waiver nobody extracts any more is itself a
+     failure, so dead ones cannot accumulate behind the live ones. */
+  const dead = Object.keys(waived).filter((k) => !inventory[k]);
+  expect(dead, "a waiver for a literal the extractor no longer finds: delete it").toEqual([]);
+
+  expect(
+    uncovered,
+    "a rider-visible literal in a popup that no pin covers. Either pin a world that renders " +
+      "it, or declare it: NOT_RIDER_TEXT if a rider never reads it, UNREACHED_STATES if they " +
+      "do and no world here reaches that state.",
+  ).toEqual([]);
+});
+
+/* P5e: THE KICKER'S OVERFLOW RULE, IN A WORLD THAT REACHES IT (ruling R3).
+
+   NO HERMETIC FIXTURE SERVES A STATION MORE THAN THREE ROUTES, measured across every stops payload:
+   the subway's Times Sq and Canal serve three, NJ Transit's stations two, one and two, the ferry's
+   docks three and one, the railroad's and PATH's one or two. So the cap, the count and the withheld
+   routes are unreachable from every pinned world, and a rule no world runs is a rule that ships
+   broken and green. frontend/popupvocab.test.js holds the arithmetic one builder at a time; this is
+   the half that can only be asked of a browser, which is whether the drawn row stays ONE row.
+
+   WHY THAT IS THE QUESTION. The ledger recorded that twelve plates "wrap to two rows" inside the
+   popup's 220px floor, and that measurement was wrong: Leaflet sizes a popup to its own nowrap
+   content up to maxWidth 320, so twelve plates make the popup 267px WIDE on one row instead. The cap
+   exists because of the family whose marks are widest (an NJ Transit tag reading MNBTN is 66.69
+   units where a subway plate is 17), and at four of those the row does wrap at phone widths. Three
+   is what never wraps anywhere, and this is where "anywhere" is checked. */
+test("P5e. a kicker with more routes than it can draw shows three, counts the rest, and stays one row", async ({
+  page,
+}) => {
+  // Times Sq's real dozen, which is what the fixture's three stand in for: the overflow rule has to
+  // hold for the station that made it necessary rather than for a number invented here.
+  const twelve = { id: "127", name: "Times Sq-42 St", lat: 40.7557, lon: -73.9865,
+    routes: ["1", "2", "3", "7", "A", "C", "E", "N", "Q", "R", "W", "S"] };
+  await boot(page, (ctx) => {
+    ctx.overrides.subwayStops = (route, fixtures) =>
+      json(route, fixtures.subwayStops().map((stop) => (stop.id === "127" ? twelve : stop)));
+  });
+  await page.waitForFunction(
+    () => typeof stationRegistry !== "undefined" && stationRegistry.some((row) => row.key === "subway|127"),
+  );
+
+  const measured = {};
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 667 });
+    await closeAllPopups(page);
+    await page.clock.runFor(300);
+    await page.evaluate(inPage("MARKERS[which]().openPopup();"), "subway station");
+    await expect(page.locator(".leaflet-popup-content .pk .pmark")).toHaveCount(3);
+    measured[width] = await page.evaluate(() => {
+      const content = document.querySelector(".leaflet-popup-content");
+      const slot = content.querySelector(".pk > span:last-child");
+      const marks = [...slot.querySelectorAll(".pmark")];
+      const row = (el) => Math.round(el.getBoundingClientRect().height);
+      return {
+        marks: marks.length,
+        more: (slot.querySelector(".pmore") || {}).textContent ?? null,
+        spoken: (slot.querySelector(".visually-hidden") || {}).textContent ?? null,
+        // ONE ROW is the whole point: every mark's top edge is the same, and the slot is no taller
+        // than a mark. A wrapped row would double the second number and stagger the first.
+        distinctTops: new Set(marks.map((m) => Math.round(m.getBoundingClientRect().top))).size,
+        slotHeight: row(slot),
+        markHeight: row(marks[0]),
+        contentWidth: Math.round(content.getBoundingClientRect().width),
+      };
+    });
+  }
+
+  /* THE PREMISES, per width, outside pin() so a regeneration cannot swallow them: three marks and
+     nine withheld (the rule applied), one row (the reason the rule has that number), and the popup
+     inside the cap it is allowed (D6c's 320, and at 375 the viewport rule's own narrower cap). */
+  for (const [width, m] of Object.entries(measured)) {
+    expect(m.marks, `${width}: three marks, whatever the station serves`).toBe(3);
+    expect(m.more, `${width}: the nine it did not draw`).toBe("+9");
+    expect(m.spoken, `${width}: every route in the words`).toBe("1, 2, 3, 7, A, C, E, N, Q, R, W, S");
+    expect(m.distinctTops, `${width}: the marks are on ONE row`).toBe(1);
+    expect(m.slotHeight, `${width}: and the row is no taller than a mark`).toBeLessThanOrEqual(m.markHeight + 1);
+    expect(m.contentWidth, `${width}: inside the popup's cap`).toBeLessThanOrEqual(width === "375" ? 315 : 320);
+  }
+  pin("kicker/overflow", measured);
+});
+
 /* ---------------- P4: what stage MR4 is not allowed to change ----------------
 
    MR4 restyles the four families that are left: PATH (lines, station dots, the diamond),
@@ -884,6 +1822,28 @@ const classCensus = (page) =>
       // place (smoke.spec.js had a toHaveCount(0) here that would have passed vacuously).
       airtrainMarkers: n(".airtrain-marker"),
       airtrainStationMarkers: n(".rail-airtrain-stn"),
+      /* MR5: THE SIX MARK CLASSES, COUNTED IN BOTH PLACES THEY CAN NOW BE DRAWN, and a reviewer's
+         finding is why they are here at all. This census existed for exactly one defect shape, a
+         count over a class a later stage widened, and MR5 widened six of them without moving a
+         number in it: section 5 copies a marker's own SVG into a popup title, so `svg.rail-tag` and
+         its five siblings are no longer "a marker's mark" by construction. a11y.spec.js A1z4 is
+         where the rail tag's own scope closure is asserted (its axe exception depends on it); this
+         is where a class crossing into a THIRD place (a station popup, the Key panel, a tooltip)
+         shows up as one line of diff.
+
+         FIVE CLASSES AND A PLATE. Five builders write a class on the svg they return; the subway
+         plate writes none, because pins.spec.js P1f pins its markup byte for byte and a class added
+         for a test to count would be markup nobody draws for. Inside a popup it is therefore
+         counted as an unclassed svg, which is unambiguous there (a popup's only svg is its mark)
+         and is not asked of the map at all. */
+      marks: Object.fromEntries(
+        ["rail-tag", "rail-stn", "path-diamond", "ferry-hull", "bus-mark"].map((cls) => [
+          cls,
+          { map: n(`svg.${cls}:not(.leaflet-popup-content svg)`), popup: n(`.leaflet-popup-content svg.${cls}`) },
+        ]),
+      ),
+      popupPlates: n(".leaflet-popup-content .pmark svg:not([class])"),
+      popupMarks: n(".leaflet-popup-content .pmark svg"),
       // The canvas populations, which carry no element at all.
       canvas: {
         subwayStations: group(() => stationLayer),
@@ -906,6 +1866,46 @@ const classCensus = (page) =>
 test("P4a. the census: every class a sentinel counts, and what it counts today", async ({ page }) => {
   await boot(page);
   pin("census/stock", await classCensus(page));
+
+  /* AND THE SAME CENSUS WITH A POPUP OPEN, which is the state MR5 created. In the stock state every
+     `popup` column reads 0, and a column that only ever reads 0 is the vacuous half of the shape
+     this census exists for: it would still read 0 after a stage moved a mark into a second popup.
+
+     TWO POPUPS, ONE AT A TIME, because the two cases fail differently. A rail train's mark carries
+     a CLASS, so it lands in a named column and a third surface adopting `svg.rail-tag` moves that
+     number; the subway plate carries none, so the only thing that says it is drawn at all is
+     `popupMarks` reading one while every named column reads zero. One state would leave the other
+     case unwitnessed. They are separate reads rather than two popups open at once, because a second
+     open popup makes `.leaflet-popup-content` non-unique (the note at the top of tests/e2e/popup.js). */
+  const popups = {};
+  for (const which of ["mnr train", "subway train"]) {
+    /* AND THE CLOCK IS RUN AFTER CLOSING, which cost a measurement to learn: Leaflet removes a
+       closed popup's element on a 200ms fade timer, and this suite's clock is PAUSED, so a closed
+       popup stays in the document until something advances it. Without this the second state
+       counted both popups and `.leaflet-popup-content` stopped being unique. */
+    await closeAllPopups(page);
+    await page.clock.runFor(300);
+    await expect(page.locator(".leaflet-popup-content")).toHaveCount(0);
+    await page.evaluate(inPage("MARKERS[which]().openPopup();"), which);
+    await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+    popups[which] = await classCensus(page);
+  }
+  await closeAllPopups(page);
+  // THE PREMISES, or the second table merely exists: the tag is drawn in both places at once, the
+  // plate is drawn as a mark that no named column claims, and neither popup moved the map's own.
+  expect(popups["mnr train"].marks["rail-tag"], "a rail popup borrows the tag the map still draws").toEqual({
+    map: 6,
+    popup: 1,
+  });
+  expect(popups["subway train"].popupMarks, "a subway popup draws one mark").toBe(1);
+  expect(popups["subway train"].popupPlates, "and it is the unclassed plate").toBe(1);
+  for (const [which, census] of Object.entries(popups)) {
+    const named = Object.values(census.marks).reduce((sum, m) => sum + m.popup, 0);
+    expect(named, `${which}: a popup mark is either named by a class or counted as a plate`).toBe(
+      census.popupMarks - census.popupPlates,
+    );
+  }
+  pin("census/popups", popups);
 });
 
 /* THE FERRY'S COMPOUND, WHICH IS TWO RULES MULTIPLIED AND NOT ONE STATE.
@@ -1049,4 +2049,74 @@ test("P4c. every marker family's contrast in BOTH themes, paint by paint", async
     measured[theme] = best;
   }
   pin("contrast/marks", measured);
+});
+
+test("P4d. every non-opaque paint on the page, composited and not, on the map and in a popup", async ({ page }) => {
+  /* MR47's DETERMINATION, AND THE GUARD ITS REPAIR NEVER HAD.
+
+     THE HISTORY, IN ONE PARAGRAPH. Round 1 of MR4 found that the contrast measurement composited a
+     COLOUR's alpha (which no mark on this map has) and ignored the one alpha that is here, an
+     ELEMENT's `opacity` attribute. R15 fixed it and MR4 recorded the fix as UNGUARDED, because
+     mutation M47 reverts it and survives: the two alphas are both a --paper backing behind
+     something else (the subway plate's at 0.95, the rail tag's at 0.9), a paper backing measured
+     against paper reads about the same either way, and `bestPerFamily` only ever records a
+     family's STRONGEST paint.
+
+     WHAT MR5 CHANGES, which is the determination the stage brief asked for. Section 5 draws a
+     popup's title with the map's own mark, so those two alphas are now also drawn INSIDE A POPUP,
+     over `--surface` rather than over `--paper`. In the dark theme those are two different greys,
+     so compositing stops being a no-op and the repair starts changing numbers. This pin is where
+     they are recorded: each non-opaque paint, composited and as if it were opaque, on both
+     surfaces, from the map and from an open popup.
+
+     SO M47 NOW MOVES NUMBERS rather than surviving. The premises below are what make that true of a
+     revert as well as of a rewrite: each place must have a row whose composited value DIFFERS from
+     its opaque one, or the compositing is doing nothing there and this pin is a table of duplicates.
+
+     PER PLACE, AND A REVIEWER'S CORRECTION IS WHY. The difference used to be asserted of the table
+     as a whole, and every row carries `...OnSurface` numbers whether or not it is on that surface:
+     `--paper` and `--surface` are two different greys in BOTH themes (light `#f3f2f2` against
+     `#eae9e9`, dark `rgb(32,30,29)` against `#2d2b2b`), so a map-drawn plate with no popup open at
+     all satisfies "compositing changed a number". The sentence above attributes the end of the
+     no-op to section 5 drawing the mark inside a popup, and now the premise measures that claim
+     where it is made rather than somewhere the claim is not about.
+
+     WHAT ACTUALLY KILLS M47's REVERT is the three-place premise rather than this one: with
+     `alphaOf` returning 1, `effective < 1` is false for every shape, the `alpha` array comes back
+     empty, and the loop below fails on the first place with nothing in it. Recorded here because a
+     premise that is not the one doing the work should not be read as if it were. */
+  await boot(page);
+  // A rail train's popup, because its tag carries the 0.9 backing: this is the mark section 5 moved
+  // onto a new surface, and a popup has to be open for the measurement to see it.
+  await page.evaluate(() => {
+    const [record] = [...railroads.values()];
+    record.marker.openPopup();
+  });
+  await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+
+  const measured = {};
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((want) => applyTheme(want), theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    // The popup survives a theme swap by being rebuilt (rebuildOpenPopupsForTheme), which D6h
+    // measures; here it only has to still be open, or the popup rows would vanish from the pin.
+    await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+    const rows = alphaPaints(await measureMarkContrast(page));
+    // THE PREMISES. Both places are in the table, or a pin of map-only rows would read as though
+    // the popup carried no alpha at all; and the compositing has to change something.
+    const keys = Object.keys(rows);
+    // All three places, so a table of one is never mistaken for the whole page: the map's marks, the
+    // popup's borrowed one, and the Key panel's glyphs, which carry the same 0.9 backing in H3's
+    // light-theme literals because the panel keeps one surface in both themes.
+    for (const place of ["map ", "popup ", "chrome "]) {
+      const there = keys.filter((k) => k.startsWith(place));
+      expect(there.length, `${theme}: no ${place.trim()} alpha`).toBeGreaterThan(0);
+      expect(
+        there.filter((k) => rows[k].compositedOnSurface !== rows[k].opaqueOnSurface).length,
+        `${theme}: compositing changed no ${place.trim()} number, so this pin cannot see that alpha`,
+      ).toBeGreaterThan(0);
+    }
+    measured[theme] = rows;
+  }
+  pin("contrast/alpha", measured);
 });

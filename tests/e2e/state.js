@@ -101,7 +101,7 @@ const WITNESSES = {
       "real contrast defect and is not one",
   },
   "popup has a cross-link": {
-    ask: () => !!document.querySelector(".leaflet-popup-content .popup-crosslink"),
+    ask: () => !!document.querySelector(".leaflet-popup-content .xlink"),
     absent:
       "the open popup carries no cross-link button, so this is not the popup the spec names. " +
       "Only a railroad train drawn ON its station gets one (see railroadAtItsStation)",

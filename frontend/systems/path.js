@@ -120,6 +120,14 @@ async function loadPathStops() {
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR,
           (routeId) => pathRouteNames.get(routeId) || null,
+          // No title mark: a PATH station is a canvas circle with no icon string to borrow.
+          "",
+          // R3: the routes calling here, as the diamonds the map draws for them, in the published
+          // colour this same call site already resolves for the row badges.
+          (routeId) => ({
+            svg: pathDiamondSvg(pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR),
+            name: pathRouteNames.get(routeId) || routeId,
+          }),
         ),
     })).addTo(pathStations);
     registerStation({
@@ -191,12 +199,17 @@ function pathTrainPopup(record) {
       pathRouteNames.get(t.route_id) || null,
       pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
       position,
+      // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
+      // against it rather than against the white a Leaflet popup used to be.
+      popupSurfaceColor(),
+      // And the mark this train is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
     ) +
-    // C2: PATH is single-feed, so its system is the synthesized one named after the
-    // source (ingestSystems). It gets the SAME age line as the aggregate systems
-    // rather than being exempt from staleness for lacking a systems block, unless the
-    // position's own words already stated an age that old.
-    vehicleStaleLine(pathSystemAge(), position)
+    // C2 restyled as MR5's footer (ruling Q2): PATH is single-feed, so its system is the
+    // synthesized one named after the source (ingestSystems). It gets the SAME footer as the
+    // aggregate systems rather than being exempt from staleness for lacking a systems block, with
+    // the words withheld where the position's own already stated an age that old.
+    popupFreshLine(pathSystemAge(), position)
   );
 }
 
@@ -303,7 +316,7 @@ function applyPath(data) {
         },
         pathMarkerName(train, now),
       )
-        .bindPopup(() => pathTrainPopup(newRecord))
+        .bindPopup(() => pathTrainPopup(newRecord), POPUP_OPTIONS)
         .addTo(pathTrains);
       pathTrainRecords.set(train.id, newRecord);
     }

@@ -1884,7 +1884,7 @@ test("D2l. MR1's chrome and the status line are exactly where MR1 left them", as
      station row for finding F16. All three pins moved together, deliberately: the ruling asked
      for them to be updated rather than relaxed, and a panel with three independent counts is
      exactly how a row leaves quietly. */
-  expect(chrome.legendRows, "the Key panel has sixteen rows and one note").toBe(16);
+  expect(chrome.legendRows, "the Key panel has eighteen rows and one note").toBe(18);
   expect(chrome.keyExpanded).toBe("false");
   expect(chrome.stationsExpanded).toBe("true");
 

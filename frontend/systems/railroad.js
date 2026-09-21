@@ -10,10 +10,12 @@ const railroadRouteIndex = new Map();
 const railroadRouteNames = new Map();
 /* `system|route_id` -> { color, textColor }, the agency's own two colours as
    /api/railroad-routes serves them (hex with no leading "#", null when the feed leaves a
-   column blank). MR3 draws the branch lines and the train tags from these instead of from
-   railroadColor's hash, which was never the agency's palette and could not be: it was a hash
-   of the route id, so two branches sharing one published colour got two different ones and a
-   branch whose id moved changed colour.
+   column blank). MR3 draws the branch lines and the train tags from these instead of from the
+   hash palette that stood in helpers.js until ruling R1 deleted it, which was never the agency's
+   palette and could not be: it was a hash of the route id, so two branches sharing one published
+   colour got two different ones and a branch whose id moved changed colour. RULING R1 finished the
+   move: the station board's badge, the train popup's title ink and the panel's chip read these
+   too, so every surface that answers "what colour is this route" answers from here.
 
    SEPARATE FROM railroadRouteNames RATHER THAN A FIELD ON IT, because the two are filled
    under different conditions: a name is set only `if (route.name)` and a colour is set for
@@ -164,6 +166,23 @@ function railroadBranch(system, routeId) {
   };
 }
 
+/* THE BRANCH'S PAINT AS A PAIR, for the two surfaces that print TYPE on it: the station board's
+   badge and the panel's chip. One expression rather than two, for railroadBranch's own reason one
+   function up.
+
+   railBranchPaint AND NOT railBranchColor, which is the whole reason this exists rather than each
+   caller taking `.color`: a badge is 700-weight type on that fill and owes 4.5, and one published
+   colour clears with neither ink (EE0034, white 4.48 and dark 3.88), which is four of Metro-North's
+   six routes and so the common case on a Grand Central board rather than a corner. railBranchPaint
+   moves such a fill in 1% steps until the ink clears, exactly as the tag's branch block does, and
+   returns the published ink where the agency supplied a legible one. The TITLE's ink is a different
+   judgment and takes railBranchColor (words on the popup's surface, through readableInk), which is
+   the shape systems/njt.js uses for the same thing. */
+function railroadBranchPaint(system, routeId) {
+  const branch = railroadBranch(system, routeId);
+  return railBranchPaint(branch.color, branch.textColor);
+}
+
 
 async function loadRailroadStations() {
   let stations;
@@ -225,7 +244,27 @@ async function loadRailroadStations() {
           s,
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
+          // R1: the badge's fill and ink, the agency's own, from the one lookup the tag uses.
+          (routeId) => railroadBranchPaint(s.system, routeId),
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
+          // MR5: the paper square this station is drawn as, at the title's size.
+          popupMarkHtml(markerMarkHtml(m)),
+          /* R3: and the branches calling here, in the kicker, as BODY-ONLY tags. The same
+             railroadBranch lookup the tag, the badge and the panel chip use, so a kicker cannot
+             resolve a branch a second way; the name a screen reader hears is the branch's own,
+             falling back to its code where the route table has no name for it. */
+          (routeId) => {
+            const branch = railroadBranch(s.system, routeId);
+            return {
+              svg: railRouteTagSvg({
+                system: s.system,
+                code: branch.code,
+                color: branch.color,
+                textColor: branch.textColor,
+              }),
+              name: railroadRouteNames.get(`${s.system}|${routeId}`) || branch.code,
+            };
+          },
         ),
     })).addTo(railroadStopLayer(station.system));
     registerStation({
@@ -249,6 +288,14 @@ async function loadRailroadStations() {
       // The railroad renderer resolves route names per system; the panel needs the
       // same resolution so its sentences say "Babylon" rather than "5".
       nameFor: (routeId) => railroadRouteNames.get(`${station.system}|${routeId}`) || null,
+      /* AND ITS COLOURS, WHICH IS RULING R1's PANEL HALF. stationChipStyle used to hash the route
+         id for a railroad chip while claiming to use "the SAME color authorities the map markers
+         and popups use"; now the railroad joins the colorFor branch the way NJ Transit did, and
+         stations.js stays free of any systems/* symbol (frontend/boards.test.js loads stations.js
+         without this file, so a chip that called in here would take all thirteen board pins down).
+         `.fill` and not `.color`: the chip computes its own ink with readableTextOn, and over all 26
+         published rail colours that answer equals the tag's on 23 and clears 4.5 on all of them. */
+      colorFor: (routeId) => railroadBranchPaint(station.system, routeId).fill,
     });
   }
   return true;
@@ -369,22 +416,55 @@ function railroadPopup(record) {
   const t = record.latest;
   const now = correctedNow();
   const position = railroadPosition(t, now);
-  const head = formatRailroadHead(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
+  const head = railroadHeadParts(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
   return (
     // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
     // another mode never leaks in.
     routeAlertsBlock(t.system, t.route_id) +
-    `<b style="color:${readableInk(railroadColor(t.route_id))}">${esc(head)}</b>` +
-    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
-    // names none, so the line is there exactly when the field is.
-    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
-    (t.direction ? `<br>${esc(t.direction)}` : "") +
-    // HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS, in the compact form this popup
-    // has always used: "live GPS", "live GPS, as of 5m ago", "estimated from a
-    // prediction", "scheduled (no GPS)", "showing last known, as of 7m ago". Before 6.3
-    // this line said "live GPS" of a fix fifteen hours old, which is F01.
-    `<br><span class="popup-sub">${esc(position.compact)}</span>` +
+    /* MR5: the head this popup has printed since phase 9, as section 5's kicker and title. The
+       words are unchanged and the middot is gone with the joining: the agency is the kicker, the
+       branch (or "route 5", or nothing) is the title, and a train whose feed named neither still
+       gets its agency as the title so the popup is never headless.
+
+       THE KICKER IS THE SERVED `system` FIELD, which is the feed's code: "MNR" here where every
+       spoken surface in this app says railroadSystemLabel's "Metro-North". That divergence is
+       older than this stage and it is recorded as an MR5 finding rather than reworded in passing.
+
+       THE MARK IS THE TAG THIS TRAIN IS WEARING, taken off its own marker: the branch code, the
+       body, and the chevron at the bearing it is drawn at. Rebuilding it here would need the
+       train, its previous row and the clock a second time, and the two would disagree on exactly
+       the trains whose state is worth looking at. */
+    /* AND THE AGENCY IS PRINTED ONCE. A train whose feed serves neither a route id nor a name has
+       no line to title, so the title carries the agency and the kicker carries nothing: kicker plus
+       title would read "MNR MNR", which is one word more than the head this replaces printed for
+       the same train. models.RailroadTrain declares route_id nullable, so the state is the feed's
+       to produce even though no fixture does. */
+    popupKickerHtml({ left: head.line ? head.agency : "" }) +
+    popupTitleHtml({
+      markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
+      text: head.line || head.agency,
+      // R1: the branch's PUBLISHED colour, walked to legibility on the popup's surface, which is
+      // the same judgment systems/njt.js resolves the same way. The hash this replaced ignored the
+      // system, so an LIRR 1 and an MNR 1 printed one brown for two published greens.
+      color: readableInk(railBranchColor(railroadBranch(t.system, t.route_id).color), popupSurfaceColor()),
+    }) +
+    popupRowsHtml([
+      { k: "Train", v: t.train_num ?? "" },
+      // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
+      // names none, so the row is there exactly when the field is.
+      { k: "Next stop", v: t.stop_name ?? "" },
+      { k: "Direction", v: t.direction ?? "" },
+      /* HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS. Before 6.3 this line said "live GPS"
+         of a fix fifteen hours old, which is F01.
+         MR5 (ruling Q1): THROUGH positionWords, LIKE EVERY OTHER POPUP. This was the app's one
+         surface that rendered `position.compact` itself, from a line written here, and it did so
+         UNCONDITIONALLY. Two things follow and both are rider-visible. A `placed` train said
+         "scheduled (no GPS)" and now says the contract's "scheduled position (no GPS)". And a
+         FRESH GPS fix said "live GPS" and now says nothing, because silence means current (memo
+         D9) and this popup was the only place in the app that broke that rule. An aged fix still
+         speaks. The before is pinned in the ledger; the pins were retaken after. */
+      { k: "Position", v: positionWords(position) },
+    ]) +
     // A2: the station this train is sitting on, reachable. A train drawn AT its
     // station's coordinates covers the dot entirely, so without this the arrivals a
     // rider came for are unreachable at that pixel. "At" is railroadAtItsStation, read
@@ -398,9 +478,11 @@ function railroadPopup(record) {
     (railroadAtItsStation(t, railroadGlideAt(t, now), record.drawnFrom)
       ? crossLinkHtml(`${t.system}|${t.stop_id}`)
       : "") +
-    // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale, unless the
-    // line above already said an age at least that old (vehicleStaleLine).
-    vehicleStaleLine(systemAgeOf("railroads", t.system), position)
+    // C2 restyled as MR5's footer (ruling Q2): how old this train's own SYSTEM is when LIRR or
+    // MNR has gone stale, with the words withheld where the line above already said an age at
+    // least that old. Scoped to the train's own system, which is why the age is passed rather
+    // than looked up: the two railroads are two feeds.
+    popupFreshLine(systemAgeOf("railroads", t.system), position)
   );
 }
 
@@ -538,7 +620,7 @@ function applyRailroads(data) {
         { icon: railroadIcon(train, before, now), opacity: markerOpacity(age) },
         railroadMarkerName(train, now),
       )
-        .bindPopup(() => railroadPopup(newRecord))
+        .bindPopup(() => railroadPopup(newRecord), POPUP_OPTIONS)
         .addTo(railroadVehicleLayer(train.system));
       railroads.set(key, newRecord);
     }

@@ -323,9 +323,16 @@ const subwayRoutes = () => [
   { route: "A", polylines: [[[40.71, -74.01], [40.72, -74.0]]] },
 ];
 
+/* `routes` IS SERVED AND WAS MISSING HERE, which ruling R3 is what found. backend/models.py's
+   RailroadStop carries `routes: list[str]` and backend/routes/railroad.py fills it from the static
+   archive, and this fixture never had the field: so the panel's railroad chips and (from R3) the
+   popup kicker's branch tags had nothing to draw in any hermetic world, and a pin of either would
+   have been a pin of an empty span. That is trap T4 in pins.spec.js's own words, "every emptiness
+   that used to be loud becomes silent the moment it is written into the golden". One route each,
+   which is what railroadRoutes below carries for them. */
 const railroadStops = () => [
-  { system: "LIRR", id: "12", name: "Jamaica", lat: 40.7005, lon: -73.8095 },
-  { system: "MNR", id: "1", name: "Grand Central", lat: 40.7527, lon: -73.9772 },
+  { system: "LIRR", id: "12", name: "Jamaica", lat: 40.7005, lon: -73.8095, routes: ["1"] },
+  { system: "MNR", id: "1", name: "Grand Central", lat: 40.7527, lon: -73.9772, routes: ["1"] },
 ];
 
 /* THE TWO COLOUR FIELDS, as claude/railroad-route-colors added them and MR3 draws them: the
@@ -617,9 +624,12 @@ const airtrain = () => ({
 // PATH static layer (13a shapes). Two parent stations (WTC first, so
 // pathStations.getLayers()[0] is a deterministic click target) and two routes,
 // each with the modal polyline per direction (so 4 polylines total).
+// `routes` for the same reason as railroadStops above (backend/models.py PathStop carries it and
+// backend/routes/path.py fills it): World Trade Center is served by both routes this fixture
+// publishes, Newark by the one that reaches it.
 const pathStops = () => [
-  { id: "26734", name: "World Trade Center", lat: 40.71271, lon: -74.01193 },
-  { id: "26733", name: "Newark", lat: 40.73454, lon: -74.16375 },
+  { id: "26734", name: "World Trade Center", lat: 40.71271, lon: -74.01193, routes: ["862", "859"] },
+  { id: "26733", name: "Newark", lat: 40.73454, lon: -74.16375, routes: ["862"] },
 ];
 
 const pathRoutes = () => [

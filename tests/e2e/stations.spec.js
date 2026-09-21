@@ -571,10 +571,17 @@ test("A1t. an NJ Transit station whose route has no line still gets a chip, not 
   const chips = njtRow.locator(".station-chip");
   await expect(chips).toHaveText(["2", "17"]);
   const styles = await chips.evaluateAll((els) => els.map((el) => el.style.background));
-  // Route 2's own colour from the feed, and the neutral fallback for the route that
-  // has none. Written as the rendered rgb() rather than the hex the code carries,
-  // because that is what the browser reports back.
-  expect(styles).toEqual(["rgb(230, 104, 89)", "rgb(74, 78, 105)"]);
+  /* Route 2's own colour from the feed, and the neutral fallback for the route that has none.
+     Written as the rendered rgb() rather than the hex the code carries, because that is what the
+     browser reports back.
+
+     RULING R1 MOVED THE FALLBACK, and this is the one place on the live page where that is visible:
+     route 17 (the event-only Meadowlands line) never reaches /api/njt-routes, so its chip draws
+     whatever this panel falls back to. It drew njtColor's #4a4e69 while the TAG for the same route
+     on the map drew the rail families' #6d6e71 (markers.spec.js reads that tag), which is finding
+     N6, two answers for one judgment, on two surfaces a rider can see at once. Now the chip and the
+     tag agree: rgb(109, 110, 113) is #6d6e71. */
+  expect(styles).toEqual(["rgb(230, 104, 89)", "rgb(109, 110, 113)"]);
 });
 
 /* ---- F12: a superseded selection's error body may not touch the panel ---------

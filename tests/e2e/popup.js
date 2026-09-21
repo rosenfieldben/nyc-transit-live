@@ -72,4 +72,87 @@ async function expectPopupState(page, { registry, key }, open, options = {}) {
     .toBe(open);
 }
 
-module.exports = { expectPopupState, popupOpen, REGISTRIES };
+/* MR5: AND ONE PLACE THAT KNOWS WHICH MARK IS WHICH, for the same reason.
+   ==========================================================================
+
+   The three things below were written in pins.spec.js and are now needed by two files:
+   pins.spec.js holds what a popup must NOT stop saying, popups.spec.js holds what the popup
+   CHROME must do, and both have to open the same fourteen surfaces in the same world. A second
+   copy of the marker table would be a second answer to "which mark is the LIRR train", and the
+   two would drift the first time a fixture id moved.
+
+   They are MOVED rather than duplicated, and the moved text is unchanged: the comments below are
+   pins.spec.js's own, including the measured reasons the settle loop runs on the driver side and
+   the map's own closePopup() is not enough. */
+
+// The marker table, sent into the page by name. page.evaluate runs a function's SOURCE in
+// the page's global scope, so the app's top-level consts are in scope the way they are in
+// the console; nothing here closes over this file.
+const MARKER_TABLE = `{
+  "subway train": () => trains.get("sub-1").marker,
+  "subway station": () => stationRegistry.find((e) => e.key === "subway|127").marker,
+  "bus": () => buses.get("MTA NYCT_101").marker,
+  "lirr train": () => railroads.get("LIRR|lirr-placed-1").marker,
+  "lirr station": () => stationRegistry.find((e) => e.key === "LIRR|12").marker,
+  "mnr train": () => railroads.get("MNR|mnr-gps-1").marker,
+  "mnr station": () => stationRegistry.find((e) => e.key === "MNR|1").marker,
+  "njt train": () => njtTrainRecords.get("NJ_3800").marker,
+  "njt station": () => stationRegistry.find((e) => e.key === "NJT|109").marker,
+  "path train": () => pathTrainRecords.get("p-1").marker,
+  "path station": () => stationRegistry.find((e) => e.key === "PATH|26734").marker,
+  "ferry boat": () => ferryBoatRecords.get("H1").marker,
+  "ferry dock": () => stationRegistry.find((e) => e.key === "ferry|18").marker,
+  "airtrain station": () => stationRegistry.find((e) => e.key === "airtrain|A").marker,
+}`;
+
+const inPage = (body) => new Function("which", `const MARKERS = ${MARKER_TABLE}; ${body}`);
+
+/* ONE POPUP AT A TIME, AND READ THROUGH THE MARKER, not through the document. This app
+   can hold a vehicle popup and a station popup open together (state.js carries a "two
+   popups open" witness for exactly that), so `.leaflet-popup-content` is not a unique
+   selector and the previous pin's popup would still be on screen. Asking the marker for
+   its own popup element cannot pick up a neighbour's, and map.closePopup() alone cannot
+   close the second one because only one of them is the map's "current" popup.
+
+   THE SETTLE LOOP RUNS FROM HERE, NOT IN THE PAGE, and that is not a style choice: the
+   boot pauses the clock (page.clock.pauseAt), so a setTimeout inside the page never fires
+   and an in-page wait deadlocks until the test times out. Measured, that is exactly what
+   happened: every station pin sat for the full timeout. Each round trip below is real
+   time on the driver's side, which is what lets a station's arrivals fetch resolve, and
+   the clock is advanced between reads so the app's own timers get their turn too. */
+const closeAllPopups = (page) =>
+  page.evaluate(() => {
+    map.closePopup();
+    for (const record of [...trains.values(), ...railroads.values(), ...buses.values(),
+      ...pathTrainRecords.values(), ...ferryBoatRecords.values(), ...njtTrainRecords.values()]) {
+      record.marker.closePopup();
+    }
+    for (const entry of stationRegistry) if (entry.marker) entry.marker.closePopup();
+  });
+
+const STOCK_SURFACES = [
+  "subway train", "subway station", "bus",
+  "lirr train", "lirr station", "mnr train", "mnr station",
+  "njt train", "njt station", "path train", "path station",
+  "ferry boat", "ferry dock", "airtrain station",
+];
+
+/* THE MARK NORMALISER MOVED, and the move is the fix for a break only CI could see. It used to be
+   defined here and required from frontend/boards.test.js, on the claim that this file "requires
+   nothing itself". It requires @playwright/test, a hundred lines up. A local `node --test` resolved
+   that package from node_modules and stayed green; the frontend-tests job installs nothing, so the
+   require threw at load and boards.test.js's thirteen tests vanished behind a single failure. It now
+   lives in tests/e2e/marktoken.js, which requires nothing and says so under a test, and is
+   re-exported below so every spec keeps the one import it already had. */
+const { withoutMarks } = require("./marktoken.js");
+
+module.exports = {
+  expectPopupState,
+  popupOpen,
+  REGISTRIES,
+  MARKER_TABLE,
+  inPage,
+  closeAllPopups,
+  withoutMarks,
+  STOCK_SURFACES,
+};

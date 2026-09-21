@@ -618,7 +618,20 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
       });
     };
     for (const el of document.querySelectorAll(".arr-badge, .station-chip")) sample(el, "fill");
-    for (const el of document.querySelectorAll(".leaflet-popup-content b, .arr-dir")) sample(el, "ink");
+    /* MR5: A POPUP'S ROUTE-COLOURED INK IS ITS TITLE'S WORDS AND ITS BUCKET HEADINGS. The head
+       was a `<b>` until section 5's vocabulary landed; it is the title's own span now, and the
+       heading's class is `.dir`. Both spellings of the OLD names are gone from the app, so naming
+       them here would sample nothing and this spec's own non-vacuity premise (an N heading must be
+       in the sample) is what caught that: it reported one ink node where there had been several.
+
+       AND THE MARK IS EXCLUDED BY NAME, which is a reviewer's correction. `.pt` holds TWO spans: the
+       title's words and `.pmark`, the map's own mark copied in. `sample` reads `textContent`, and a
+       `.pmark` wrapping a subway plate has the route letter in its SVG `<text>`, painted `var(--ink)`
+       and carrying `aria-hidden`. So `.pt span` put an N in the sample that is not route-coloured
+       text at all, and the sharp premise below ("an N heading must be in the sample") could be
+       satisfied by a decoration: the vacuity it was written to prevent, re-entering through the
+       element this stage added. `> span:not(.pmark)` is the title's words and nothing else. */
+    for (const el of document.querySelectorAll(".leaflet-popup-content .pt > span:not(.pmark), .dir")) sample(el, "ink");
     return out;
   });
 
@@ -901,15 +914,23 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
 
   /* Bottom-left of the viewport is map and only map at this width: the legend is top-right,
      the popup is mid-screen and the station panel is shut.
-     DOWN AND TO THE LEFT, and the direction is load-bearing. The first draft dragged right,
-     which pushed the popup's right edge from 370 to 390, past the map container's 375, and
-     popupClearingShift refuses any move that would leave the popup outside the map. There
-     was no clearing move to decline, so deleting the stand-down guard changed nothing and
-     the spec passed 20/20 against a build with its subject removed. Dragging left keeps a
-     move available (measured: down by 61px), so declining it is a decision. */
+     STRAIGHT DOWN, AND THE DIRECTION IS LOAD-BEARING. popupClearingShift refuses any move
+     that would leave the popup outside the map, so a drag that pushes the popup off an edge
+     leaves no clearing move to decline: deleting the stand-down guard would then change
+     nothing and this spec would pass against a build with its subject removed. It has been
+     wrong in both directions now. The first draft dragged RIGHT, which pushed the popup's
+     right edge from 370 to 390 past the container's 375. Dragging LEFT was the fix, and MR5
+     broke it from the other side: section 5 gives the popup a 220px content floor, so at 375
+     it is 263px wide, and ruling S3's clamped autopan pins it to x 2..265 with 112px of slack
+     in the whole axis. Measured, the old 20px leftward component put it at x -18..245, off
+     the map, and every candidate was refused.
+     A PURELY VERTICAL DRAG cannot reach either edge, and it is a takeover all the same:
+     dragstart is what the app listens for and it does not care about the direction. Measured
+     after this drag: popup y 237..367, and after the growth below a downward clearing move of
+     20px exists, clears the header and lands nowhere near the control stack. */
   await page.mouse.move(60, 620);
   await page.mouse.down();
-  await page.mouse.move(40, 640, { steps: 12 });
+  await page.mouse.move(60, 640, { steps: 12 });
   await page.mouse.up();
   const dragged = await page.evaluate(() => {
     const c = map.getCenter();
@@ -960,7 +981,24 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
      seconds later throws their position away exactly as before.
      The takeover is a property of the rider's ownership of THIS popup, and it ends when the
      popup does (popupopen resets it), so it must survive every resize in between. */
-  const again = await growAndSettle(page, await growthThatReachesTheChrome(page));
+  /* AND THE SECOND GROWTH IS SMALL, WHICH MR5 MEASURED THE HARD WAY. The popup is already under
+     the chrome after the first growth, so the second one's whole job is to BE a resize the app has
+     to decline; how far it grows only decides whether the premise below can still hold.
+
+     THE MEASUREMENT, at 375 after the first growth: the popup is 293 wide at x 0..293, 350 tall at
+     y 17..367, the header's bottom edge is 57 and the bottom-right control stack occupies
+     y 453..575 at x 289..363. A downward clearing move has to clear the header by the 8px gap, so
+     it is 48px from there; the popup's own right edge overlaps the stack's left edge by four
+     pixels, so the move is refused the moment the popup's bottom reaches 453. Growing by the
+     default 40 put the popup at y -23..367, needing a 88px move that lands its bottom at 455: two
+     pixels into the stack, with no sideways escape at this width (the popup is 293 of 375). So
+     popupClearingShift correctly returned null, the app correctly declined a move that does not
+     exist, and this spec's own premise correctly failed. Four pixels leaves the move at 52 and the
+     bottom at 419, well clear.
+
+     THE NUMBER IS STILL NOT WRITTEN DOWN: it is an overlap passed to the same measured helper, and
+     the two premises below are what would catch a chrome or a popup that outgrows it again. */
+  const again = await growAndSettle(page, await growthThatReachesTheChrome(page, 4));
   expect(again.underTheLegend, "and it must still be declined on the NEXT refresh, and every one after").toBe(true);
   expect(again.clearingMoveExists, "with a clearing move still available the second time").toBe(true);
 });
@@ -1021,7 +1059,7 @@ test("A4k. with no rider takeover, that same growth DOES move the popup clear", 
   await expectState(page, "one popup open", "A4k: still exactly one popup after the correction");
 });
 
-test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page }) => {
+test("A4l. an autopan is not the rider taking over", async ({ page }) => {
   /* THE DEFECT THE STAND-DOWN GUARD CREATED, found by measuring the guard rather than by
      reading it. The guard tells the rider's hand from the app's own adjustment by watching
      movestart and ignoring the ones that happen while Leaflet is autopanning. The flag that
@@ -1038,12 +1076,27 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
        after a refresh     popup at y -35..131, still under the legend, still a move available
        with the fix        popup at y 292..458, clear of the legend
 
-     THE SETUP DRIVES LEAFLET, NOT THE APP. The marker moves to 60px below the top of the
-     map, which puts its popup's top off-screen, and popup.update() is Leaflet's own path to
-     _adjustPan. The rider's hand is nowhere in it. */
+     THE SETUP DRIVES THE AUTOPAN, NOT THE RIDER. The marker moves to 60px below the top of the
+     map, which puts its popup's top off-screen, and the autopan brings it back. The rider's hand
+     is nowhere in it.
+
+     MR5 CHANGED WHOSE AUTOPAN THAT IS, and the spec follows the reality rather than the title it
+     used to have. The app now binds every popup with `autoPan: false` and runs exactly one pan
+     itself, in applyPopupAutoPan, with the clamped padding and `autoPan` flipped on for the length
+     of that one call. Leaflet's own autopan therefore no longer happens: popup.update(), which
+     used to be the path this spec drove, cannot pan at all now, which is the second break the
+     README's erratum records closed structurally instead of by guard.
+
+     THE DEFECT IS UNCHANGED AND SO IS THE GUARD. Our autopan fires the same `autopanstart` and
+     the same `movestart`, so the flag's lifetime is exactly as decidable and exactly as easy to
+     get wrong; it is only the caller that moved. So the staging calls applyPopupAutoPan, which is
+     the autopan that exists, and the spec is renamed from "Leaflet's own autopan" to "an
+     autopan". Driving popup.update() here would now stage NOTHING and the premise below would
+     read false, which is how this was found rather than reasoned. */
   await popupOnTheMapAt375(page);
 
-  const staged = await page.evaluate(() => {
+  const GROWTH = 40;
+  const staged = await page.evaluate((grow) => {
     const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
     const popup = placed.marker.getPopup();
     let autoPanned = false;
@@ -1052,21 +1105,45 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
     };
     map.on("autopanstart", note);
     placed.marker.setLatLng(map.containerPointToLatLng([map.getSize().x / 2, 60]));
+    // The app's own autopan, which is the only one there is: popup.update() alone cannot pan now,
+    // because POPUP_OPTIONS binds every popup with autoPan off.
     popup.update();
+    applyPopupAutoPan(popup);
     map.off("autopanstart", note);
     const a = popup.getElement().getBoundingClientRect();
+    const viewport = document.getElementById("map").getBoundingClientRect();
+    const chrome = document.getElementById("panel").getBoundingClientRect();
+    /* A popup is anchored at its tip, so growth raises its TOP and leaves its bottom on the
+       marker: this is the box the guard is about to be asked about. */
+    const grown = { left: a.left, right: a.right, top: a.top - grow, bottom: a.bottom };
+    grown.width = grown.right - grown.left;
+    grown.height = grown.bottom - grown.top;
     return {
       autoPanned,
-      clearingMoveExists: !!popupClearingShift(a, popupObstacles(), document.getElementById("map").getBoundingClientRect()),
+      underTheLegendNow: a.left < chrome.right && a.right > chrome.left && a.top < chrome.bottom && a.bottom > chrome.top,
+      growthReachesTheChrome:
+        grown.left < chrome.right && grown.right > chrome.left && grown.top < chrome.bottom && grown.bottom > chrome.top,
+      clearingMoveExists: !!popupClearingShift(grown, popupObstacles(), viewport),
     };
-  });
-  // Both halves of the premise, because either one silently missing makes the rest vacuous:
-  // Leaflet must really have autopanned, and the app must really have somewhere to move the
-  // popup to. A popup with no clearing move is declined for geometry, not for policy.
-  expect(staged.autoPanned, "the setup must actually make Leaflet autopan").toBe(true);
-  expect(staged.clearingMoveExists, "and a clearing move must exist after it").toBe(true);
+  }, GROWTH);
+  /* THE PREMISE, AND IT IS ABOUT THE BOX THE GUARD IS TESTED ON rather than the box the
+     autopan left. Either half silently missing makes the rest vacuous: Leaflet must really
+     have autopanned, and the app must really have somewhere to move the popup to when it is
+     asked. A popup with no clearing move is declined for geometry, not for policy.
 
-  const after = await growAndSettle(page, 40);
+     IT USED TO ASK ABOUT THE POST-AUTOPAN BOX, and MR5 made that question unanswerable in the
+     app's favour: ruling S3's padding means Leaflet's own autopan now lands this popup CLEAR of
+     the header, so there was nothing to clear at staging time and the premise read false on a
+     build whose guard was working. The growth is what creates the collision here exactly as it
+     does in A4j, so the premise belongs on the grown box; asserting that the popup is clear
+     BEFORE the growth is the other half, and it is what makes "the growth created this" a
+     measurement rather than a hope. */
+  expect(staged.autoPanned, "the setup must actually make Leaflet autopan").toBe(true);
+  expect(staged.underTheLegendNow, "the autopan must leave the popup CLEAR, or the growth proves nothing").toBe(false);
+  expect(staged.growthReachesTheChrome, "and the growth must be what puts it back under").toBe(true);
+  expect(staged.clearingMoveExists, "and a clearing move must exist for the grown box").toBe(true);
+
+  const after = await growAndSettle(page, GROWTH);
   expect(
     after.underTheLegend,
     "an autopan is the app's own adjustment; treating it as a takeover leaves the rider's " +

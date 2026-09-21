@@ -503,26 +503,19 @@ function stationLabelShown(zoom, routes, labelsOn, hasHubs = true) {
   return band === "hubs" && isTransferStation(routes);
 }
 
-// Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
-// ids and with each other, so they get their own palette rather than reusing
-// lineColor. Deterministic per id from a fixed palette, with a neutral default
-// for a missing id.
-const RAILROAD_COLORS = [
-  "#7b1fa2", "#00838f", "#c2185b", "#1565c0", "#ef6c00",
-  "#4527a0", "#2e7d32", "#ad1457", "#00695c", "#5d4037",
-];
+/* RAILROAD COLOURS ARE THE AGENCY'S, AND THE HASH THAT STOOD HERE IS GONE (ruling R1).
+   `railroadColor(routeId)` hashed a route id into a fixed ten-colour palette, which was never any
+   agency's palette and could not be: MR3 added `route_color` to /api/railroad-routes and drew the
+   branch lines and the tags from it, and this function stayed behind on three surfaces, so LIRR|1
+   and MNR|1 (two agencies, two published greens) both drew one brown. Finding N6 is that shape,
+   "two answers for one judgment", and R1 is the ruling that paid it: the board badge, the popup
+   title's ink and the panel chip all resolve `railroadBranch` now (systems/railroad.js), through
+   `railBranchColor` and `railBranchPaint` below, which is the same lookup the tag uses.
 
-// The no-id fallback is the same neutral PATH already uses, and it moved for a measured
-// reason: #607d8b carries white text at 4.37 and dark text at 3.98, so NEITHER ink can
-// make it readable. That is a fill that has to move rather than an ink that has to be
-// chosen, which is the one case readableTextOn cannot rescue and the reason the node
-// test asserts the chosen ink's ratio rather than merely that a choice was made.
-function railroadColor(routeId) {
-  if (!routeId) return "#546e7a";
-  let h = 0;
-  for (const c of routeId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
-}
+   ITS NOTE IS CARRIED, not deleted with it, because two comments cited this one as the authority
+   for "a fill that has to move rather than an ink that has to be chosen": v2's #607d8b carried
+   white at 4.37 and dark at 3.98, so neither ink could rescue it. That measurement and its
+   conclusion now live at railBranchPaint, which is the function that implements the remedy. */
 
 /* ----- A3: one breakpoint, named once ----------------------------------------
    700px is the mobile boundary, and it is declared here as well as in style.css because
@@ -657,22 +650,405 @@ function feedDotState({ scheduled = false, age = null } = {}) {
   return age != null && !staleAge(age) ? "live" : "stale";
 }
 
+/* MR5 (ruling Q2): WHAT A FEED'S STATE IS CALLED, lifted out of the tooltip so that one answer
+   can be given on two surfaces. The words are unchanged and nothing here is coined: they are the
+   clause feedTooltip has carried since MR1, with the button's action taken off the end.
+
+   WHY IT HAD TO COME OUT. Section 5 gives every popup a freshness footer, and the ruling is that
+   the footer's square IS the feed strip's dot at the popup, with "its accessible name from the same
+   helper the strip's dot uses so the state is said one way on both surfaces". feedTooltip cannot be
+   that helper, because its words END in what pressing the button will do ("hide Subway"), and a
+   popup footer has no button to press. Re-deriving the clause in the footer would have been a
+   second answer to one question, which is the shape of finding N6 one stage earlier.
+
+   AND A FEED WITH NO AGE SAYS SO. "As of null ago" is the failure this avoids; the word is
+   `not reporting`, which is the status line's own for the same state. */
+function feedStateWords({ state, age = null } = {}) {
+  if (state === "scheduled") return "Scheduled";
+  if (state === "live") return `Live · ${humanizeAge(age)}`;
+  if (age == null) return "Not reporting";
+  return `As of ${humanizeAge(age)} ago`;
+}
+
 /* The tooltip, in the design's words ("Live · 12s · hide Subway", "As of 6m ago · hide
-   Metro-North", "Scheduled · hide NJ Transit"), with two things the design's three
-   examples could not show because all three are of a showing feed:
+   Metro-North", "Scheduled · hide NJ Transit"), which is now the state's words plus the
+   button's action.
 
-   THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its
-   tooltip says "show". A tooltip that said "hide" on a button that shows would be wrong
-   in the one place a rider looks to find out what pressing it does.
-
-   AND A FEED WITH NO AGE SAYS SO. "As of null ago" is the failure this avoids; the word
-   is `not reporting`, which is the status line's own for the same state. */
+   THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its tooltip
+   says "show". A tooltip that said "hide" on a button that shows would be wrong in the one place a
+   rider looks to find out what pressing it does. That clause is the reason feedStateWords exists
+   separately: it is the half a popup must not repeat. */
 function feedTooltip({ name, state, age = null, hidden = false } = {}) {
-  const action = `${hidden ? "show" : "hide"} ${name}`;
-  if (state === "scheduled") return `Scheduled \u00b7 ${action}`;
-  if (state === "live") return `Live \u00b7 ${humanizeAge(age)} \u00b7 ${action}`;
-  if (age == null) return `Not reporting \u00b7 ${action}`;
-  return `As of ${humanizeAge(age)} ago \u00b7 ${action}`;
+  return `${feedStateWords({ state, age })} · ${hidden ? "show" : "hide"} ${name}`;
+}
+
+/* MR5 (ruling Q2): THE POPUP'S FRESHNESS FOOTER, which is the feed strip's dot at the popup.
+
+   PRESENT IN ALL THREE STATES, which is the half a "show it when it is bad" footer would get
+   wrong: a rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is
+   always there. So the square is unconditional and only the WORDS come and go.
+
+   NO TEXT WHEN LIVE, because this app has no word for "live" on any surface (memo D9, "silence
+   means current"), and the README's "LIVE · UPDATED 12S AGO" is exactly the sentence that rule
+   forbids. Stale and schedule-only get the app's own strings, from feedStateWords.
+
+   AND THE STATE IS SAID ONCE, IN WHICHEVER CHANNELS IT HAS NOT BEEN SAID IN. The square repeats
+   whatever the words say, so it is decorative and carries aria-hidden; labelling it as well would
+   say "As of 6m ago" twice to a screen reader and nothing at all to an eye. The WORDS have three
+   destinations rather than two, and an earlier draft of this paragraph named only two, which is the
+   defect ruling R2 corrects:
+
+     SHOWN AND SPOKEN, where this footer is the first thing to state the age: a stale or
+     schedule-only feed under a position whose words state no age.
+     SPOKEN ONLY, where there is nothing for an eye because the app has no visible word for live
+     (memo D9) and a screen reader still needs the state. `.visually-hidden` is A1's own class.
+     NEITHER, where the popup's Position row has ALREADY stated an age at least as old as the feed's.
+     The old expression put this case in the visually-hidden span with the live one, so a screen
+     reader heard two ages about one train: the row's and the footer's. `said` therefore wins over
+     `live`, and the four cases are pinned in positions.test.js and in helpers.test.js.
+
+   NO POPUP RENDERS THE SCHEDULE-ONLY STATE, and an earlier draft of this comment said the opposite.
+   It read "AirTrain gets one and it says Scheduled", which presumes AirTrain has a popup that calls
+   this: it does not. The footer is a VEHICLE popup's line (popupFreshLine, systems/shared.js) and
+   AirTrain has no vehicles, so `scheduled` is reachable here only through a caller that passes it,
+   and none exists. A rider reads that word on the feed strip's tooltip instead, where chrome.spec.js
+   D1a holds it, and pins.spec.js waives it in UNREACHED_STATES with the same reason. The branch stays
+   because feedStateWords defines three states and this renders whichever it is given; what is not
+   true is that a popup gives it that one. A caller that passes no state at all gets nothing, because
+   inventing a square for a surface with no feed behind it would be a claim.
+
+   AND IT IS vehicleStaleLine RESTYLED, NOT A SECOND VOICE, which is the one thing a footer added
+   naively would have got wrong. Every vehicle popup used to end in vehicleStaleLine, which printed
+   "as of 5m ago" when the vehicle's SYSTEM had gone stale; a footer that also said "As of 6m ago"
+   would have put one fact on screen twice in two capitalisations. So this takes that line's job and
+   its rule, and THE RULE'S REASON MOVED HERE WITH IT, because that function is gone and a rule whose
+   explanation lives in a deleted comment is a rule nobody can check:
+
+     A vehicle's footer speaks only for what its position's words did not say. A position whose
+     words already state an age at least as old as the feed's has said it, and saying it again would
+     say it twice, or, since an observation's age and a feed's differ by the provider's lag, say two
+     ages about one train. A position whose words state no age at all (Metro-North's undated fixes,
+     and every fresh one) leaves the footer to say the only age there is, exactly as C2 drew it.
+
+   THE ONE DIFFERENCE FROM THAT LINE is the square, and it follows from the ruling: the words are
+   withheld, the square never is, because a rider cannot tell "this feed is live" from "this popup
+   forgot to say" unless the mark is always there. What the footer ADDS is the two states that line
+   never had, live and schedule-only.
+
+   THE SQUARE IS NEVER WITHHELD, because the ruling is that it is present in all three states: a
+   rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
+   there. Only the words come and go. (A station popup would pass no position and suppress nothing,
+   but no station popup calls this at all: see above.)
+
+   ONE WIDENING RULING R2 ACCEPTS RATHER THAN HIDES. `said` is true when the FEED's age is null,
+   which is the feed that has never decoded, whose words are "Not reporting": a claim about the feed
+   rather than an age, so a Position row's "as of 5m ago" has not actually said it. Suppressing it is
+   what the rule as written does, and it reaches no rider today (no fixture feed fails its first poll;
+   pins.spec.js waives the state as unreached). The narrower rule would be
+   `position.age != null && age != null && position.age >= age`, which moves no golden; R2 did not
+   ask for it, so the wider one ships and this is the sentence that says so.
+
+   WHAT SURVIVES SUPPRESSION is the square and the rule above it, which is what the footer has drawn
+   in that case since the words were only visually hidden: `.visually-hidden` is `position: absolute`,
+   so it was never a flex item and took no share of `.fresh`'s gap and no height. Measured before and
+   after, the suppressed footer's box is unchanged. */
+function popupFreshHtml({ state, age = null, position = null } = {}) {
+  if (!state) return "";
+  const words = feedStateWords({ state, age });
+  const said = position && position.age != null && (age == null || position.age >= age);
+  // `said` FIRST, which is ruling R2 in one line: already stated beats nothing-to-show, so a
+  // suppressed footer's words are in neither channel rather than in the hidden one.
+  const body = said ? "" : state === "live" ? `<span class="visually-hidden">${esc(words)}</span>` : esc(words);
+  return `<div class="fresh"><span class="fresh-dot" data-state="${esc(state)}" aria-hidden="true"></span>${body}</div>`;
+}
+
+/* ===== MR5: THE POPUP'S VOCABULARY, AS BUILDERS ==========================================
+
+   README section 5 gives every popup one grammar and this is it: `.pk` the kicker row, `.pt`
+   the title with its family's mark, `.kv` the label/value grid a vehicle's facts sit in,
+   `.dir` an arrivals bucket's heading and `.arr` its rows. `.fresh` is above (popupFreshHtml),
+   and `.alert` and `.xlink` stay with the callers that already build them.
+
+   PURE STRINGS IN helpers.js, WHICH IS THE SEAM THIS FILE ALREADY KEEPS: nothing here touches
+   Leaflet, so node loads all of it and every popup in the app is a string built by functions a
+   unit test can ask one at a time. It is the same seam the marks keep, where railTagSvg is a
+   string and only the L.divIcon wrapper is in systems/shared.js.
+
+   THE ESCAPING IS HERE, ONCE. Every text parameter is run through esc() by the builder, so no
+   caller composes markup out of feed text on its way in, and a caller that pre-escaped would
+   double-escape an ampersand rather than fail loudly. The parameters that DO take markup say
+   so in their names (markHtml, rightHtml, extraHtml) and every value they are given is built
+   by another builder in this file.
+
+   WHAT IS NOT HERE: words. Every string a popup prints is the caller's, which is this stage's own
+   defect shape ("a word that came from a literal instead of the app") stated as a rule about THIS
+   FILE: no builder here coins a word, so a word a rider reads can always be traced to the popup
+   that chose it.
+
+   AND THE RULE STOPS THERE, which is a reviewer's correction of a sentence that went further. It
+   used to add that the callers take their words "from the app's own vocabulary rather than from
+   section 5's prose", and five of the twelve grid LABELS are section 5's prose: Position, Direction,
+   Delay, Status and Speed appear nowhere else in the app as rider text. Four of those are disclosed
+   in the README's own erratum as labels the app's fields needed, and the fifth (Position) is the
+   design's word for a row memo D9 and ruling Q1 rewrote the VALUES of. They are deliberate and they
+   are recorded; what was wrong was a file claiming a closure over callers it does not own.
+
+   AND THERE IS A NEWLINE BETWEEN EVERY CELL AND AFTER EVERY BLOCK, which is not formatting: it is
+   what makes the popup's textContent read as words. A grid of adjacent elements with no whitespace between them
+   concatenates to "Train1797", which is what a rider's text reads like to anything that walks
+   the DOM rather than the layout: Playwright's toContainText, a scraper, the specs this stage
+   inherited. CSS ignores a whitespace-only text node in a grid or a flex container (it generates
+   no box and no item), so the separator costs nothing on screen and the pins' reader drops it
+   too, having normalised it away. Measured: without it, A3c read "MNRMHUDHudsonTrain1797", and with
+   it between cells but not after blocks, the AirTrain popup read "Federal Circlescheduled service".
+   The blocks a popup builds outside this section (an alerts block, a board's freshness line, a
+   "No trains" notice, a cross-link button, the bus's route note) end the same way for the same
+   reason. */
+
+/* THE SYSTEM WORD A POPUP'S KICKER CARRIES, and none of the six is coined here.
+
+   Four are the feed strip's own names for the same feed (FEEDS above: Subway, Buses,
+   NJ Transit, PATH), so a rider reads one word for a system on both surfaces. "NYC Ferry" is
+   the word the ferry popups and ferryBoatName already print, where the strip's button says
+   the shorter "Ferry"; "AirTrain JFK" is airtrainStationName's and the AirTrain popup's own.
+   popupvocab.test.js asserts each of the six against those sources, which is what keeps this
+   from becoming six literals that agree with nothing.
+
+   THE RAILROAD IS NOT HERE, because its kicker is the train's own served `system` field, as
+   its head has printed since phase 9. That word is the feed's code ("MNR"), and every SPOKEN
+   surface says railroadSystemLabel's "Metro-North" for the same agency: the divergence is
+   older than this stage, it is recorded as a finding in the MR5 ledger, and it is not quietly
+   changed here. */
+const POPUP_SYSTEM_WORDS = {
+  subway: "Subway",
+  buses: "Buses",
+  njt: "NJ Transit",
+  path: "PATH",
+  ferry: "NYC Ferry",
+  airtrain: "AirTrain JFK",
+};
+
+/* THE TWO MARK SIZES, WHICH ARE THE DESIGN'S OWN. Section 5 draws a title's route mark at
+   `.bul.lg` 24px and the small form at `.bul.sm` 17px, and those are the two heights a popup
+   asks for: 24 in a title, 17 in a kicker or an arrivals row.
+
+   A TITLE MARK IS NEVER SMALLER THAN THE MAP DRAWS IT, which is the one clamp in this section
+   and the reason the rail families pass their own box height instead of this constant: the
+   tag's box is 30 units tall because the stem and the head hang below the 13-unit tag, so
+   scaling that box to 24 would draw the two blocks at 10.4 units with 7px type, smaller and
+   thinner than the map's own. Every other family's box is at most 20, so 24 scales it up. */
+const POPUP_MARK_TITLE = 24;
+const POPUP_MARK_ROW = 17;
+
+/* THE MAP'S OWN MARK AT THE POPUP'S SIZE, and "the map's own" is the whole point: a popup that
+   drew its own route mark would be a second answer to "what does this family look like", and
+   the two would drift the first time either was edited, which is finding N6 one surface out.
+
+   SO THE BODY IS NOT TOUCHED. This re-wraps a builder's string: the opening `<svg>` tag keeps
+   its viewBox, its class and its style, its width and height are replaced with the popup's,
+   and every byte after that tag is copied. popupvocab.test.js asserts exactly that of all six
+   mark builders, which is what makes "the mark in the popup is the mark on the map" a claim a
+   test can check rather than a sentence in a comment.
+
+   WIDTH FOLLOWS THE viewBox, so a mark that is not square (the ferry's 22x14 hull, the rail
+   tag's variable width) keeps its aspect ratio instead of being squashed into a box.
+
+   BOTH DIMENSIONS ARE STRIPPED BEFORE THEY ARE WRITTEN, because the builders disagree about
+   whether they carry them at all: the rail tag and the rail station square set width and
+   height, the bus mark, the PATH diamond and the ferry hull set neither and take their size
+   from the divIcon's box.
+
+   A TITLE ASKS FOR NO HEIGHT AND GETS THE LARGER OF 24 AND THE MARK'S OWN, which is the clamp
+   this section's constants describe, applied here as arithmetic so no caller has to know its
+   family's geometry: the rail tag's 30-unit box holds a 13-unit tag with a stem and a head
+   below it, and scaling that to 24 would draw the tag's two blocks at 10.4 units with 7px
+   type, thinner than the map's own. A kicker or an arrivals row asks for POPUP_MARK_ROW and
+   gets exactly that, because at 17 a mark is a decoration beside words rather than the
+   popup's subject, and the design draws it at `.bul.sm` deliberately.
+
+   aria-hidden ON THE WRAPPER, because the mark repeats in a picture what the title says in
+   words. The subway's plate carries its route letter as SVG TEXT, which a screen reader would
+   otherwise read out before the title says "1 train"; the other five hide themselves already
+   and the attribute changes nothing for them. */
+function popupMarkHtml(svg, height = null) {
+  const source = typeof svg === "string" ? svg : "";
+  const end = source.indexOf(">");
+  if (!source.startsWith("<svg") || end < 0) return "";
+  const open = source.slice(0, end);
+  const box = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(open);
+  if (!box) return "";
+  const h = height == null ? Math.max(POPUP_MARK_TITLE, Number(box[2])) : Number(height);
+  if (!Number.isFinite(h) || h <= 0) return "";
+  const width = Number(((h * Number(box[1])) / Number(box[2])).toFixed(2));
+  const sized = open.replace(/\s(?:width|height)="[^"]*"/g, "");
+  return `<span class="pmark" aria-hidden="true">${sized} width="${width}" height="${h}"${source.slice(end)}</span>`;
+}
+
+/* THE KICKER. Left is the surface's system word, right is whatever small marks it carries: since
+   ruling R3, the routes calling at a station on all five of its boards, plus the wheelchair glyph a
+   ferry dock publishes, which shares the slot with them.
+
+   BOTH SPANS ARE EMITTED WHENEVER THE ROW IS, because the row is a flex with space-between and
+   one span would sit at the left edge rather than at the right. An empty row is no row at all,
+   which is the silence rule this whole stage keeps: a surface with no system word and no marks
+   prints no kicker. */
+function popupKickerHtml({ left = "", rightHtml = "" } = {}) {
+  if (!left && !rightHtml) return "";
+  return `<div class="pk"><span>${esc(left)}</span>\n<span>${rightHtml}</span></div>\n`;
+}
+
+/* THE ROUTES CALLING AT A STATION, AS THE KICKER'S RIGHT-HAND SLOT (ruling R3): one helper for all
+   five station boards, drawing each family's OWN mark at the popup's row size.
+
+   ONE HELPER AND NOT FIVE, which is the ruling's first clause and the reason this is here rather
+   than in each board: the subway board had this slot to itself for a stage, as an unbounded
+   `map().join("")`, and four boards showed a rider nothing about which routes call where. A second
+   copy of the same loop would also be a second answer to the overflow question below.
+
+   THE MARK IS THE MAP'S MARK, through popupMarkHtml at POPUP_MARK_ROW, which is the rule the titles
+   already keep: `markFor(routeId)` returns the family's own builder output and the route's NAME, and
+   a family whose mark cannot be built for a route (no colour table yet, an id nothing knows) returns
+   nothing and is skipped. Skipped BEFORE the cap, or a station with two unnameable routes would
+   spend its budget on nothing.
+
+   THE OVERFLOW RULE, WHICH IS ONE RULE FOR ALL FIVE and is measured rather than chosen. The families'
+   marks are 17 units wide (a subway plate, a PATH diamond) to 66.69 (an NJ Transit tag reading
+   MNBTN), a factor of four, and the popup is sized by Leaflet to its own nowrap content up to
+   maxWidth 320: measured in the app at 1280, 375 and 320, the count at which a kicker first wraps to
+   a second row is 16 for the subway, 13 for the LIRR, 13 for PATH and FOUR for NJ Transit at the two
+   phone widths. So three is the largest shared count that never wraps anywhere, and NJ Transit is the
+   constraint. A shared WIDTH budget would let the subway show nine, and it would be a second rule;
+   the ruling says a count, and this is the count the measurement allows.
+
+   AND THE FULL LIST IS SPOKEN, which is the ruling's last clause and needs one honest note: Leaflet
+   gives a popup no accessible NAME at all (no role, no aria-label; its only aria-label is the close
+   button's), so there is no name to put a list in. What a screen reader can be given is the words,
+   in document order, through A1's `.visually-hidden` class, which is what the station panel already
+   does for its own route chips and its access glyph. Every mark here is aria-hidden (popupMarkHtml
+   writes that), so without this span a rider who cannot see the marks would learn nothing about the
+   routes at all; and the count is aria-hidden for the same reason the square in the footer is, since
+   the words beside it already say what it means. */
+const POPUP_KICKER_MARKS = 3;
+
+function popupRouteMarksHtml(routes, markFor, cap = POPUP_KICKER_MARKS) {
+  const marks = [];
+  for (const routeId of routes ?? []) {
+    const mark = typeof markFor === "function" ? markFor(routeId) : null;
+    const svg = mark && mark.svg ? popupMarkHtml(mark.svg, POPUP_MARK_ROW) : "";
+    if (svg) marks.push({ svg, name: String(mark.name ?? routeId) });
+  }
+  if (!marks.length) return "";
+  const shown = marks.slice(0, Math.max(0, cap));
+  const withheld = marks.length - shown.length;
+  return (
+    shown.map((m) => m.svg).join("") +
+    (withheld > 0 ? `<span class="pmore" aria-hidden="true">+${withheld}</span>` : "") +
+    `<span class="visually-hidden">${esc(marks.map((m) => m.name).join(", "))}</span>`
+  );
+}
+
+/* THE TITLE. `markHtml` is popupMarkHtml's answer (or "" for the three families whose map mark
+   is a canvas circle and therefore has no string builder to borrow), `text` is the head the
+   surface has always printed, and `color` is the ink it printed it in.
+
+   THE INK GOES ON THE TEXT SPAN AND NOT ON THE ROW, so a route colour cannot reach the mark:
+   the marks paint themselves from their own fills and the theme's tokens, and a `color` on
+   their parent would be inherited by anything inside them drawn in currentColor. The callers
+   resolve that ink through readableInk against the popup's own surface, which is what
+   popups.spec.js D6i measures. */
+function popupTitleHtml({ text = "", markHtml = "", color = null } = {}) {
+  if (!text && !markHtml) return "";
+  const tint = color ? ` style="color:${color}"` : "";
+  const words = text ? `<span${tint}>${esc(text)}</span>` : "";
+  return `<div class="pt">${markHtml}${markHtml && words ? "\n" : ""}${words}</div>\n`;
+}
+
+/* THE VEHICLE POPUP'S FACTS, as the design's two-column grid. Rows are [{k, v}] in the order
+   they are to be read, both plain text, both escaped here.
+
+   A ROW WITH NOTHING TO SAY IS NOT PRINTED, which is positionWords' rule generalised to
+   every row in the grid: the app has no word for a fact it does not have, and a "Delay" row
+   reading "unknown" would be a claim where silence is the truth. A row with a value and no
+   LABEL is dropped for the same reason and one of its own: in a two-column grid it would land
+   in the label column and read as a heading.
+
+   AND NO GRID AT ALL WHEN NO ROW SURVIVES, so a popup whose every fact is missing does not
+   print an empty box with a rule across it. */
+function popupRowsHtml(rows) {
+  const cells = (rows || [])
+    .filter((row) => row && row.k && row.v)
+    .map((row) => `<div class="k">${esc(row.k)}</div>\n<div class="v">${esc(row.v)}</div>`)
+    .join("\n");
+  return cells ? `<div class="kv">${cells}</div>\n` : "";
+}
+
+/* AN ARRIVALS BUCKET'S HEADING. `color` is the ferry's: its buckets are ROUTE names, so the
+   heading is the one place a dock's popup can carry a route's colour, and it arrives already
+   resolved against the popup's surface by its caller. Every other family's buckets are
+   directions and take the ink. */
+function popupDirHtml(text, color = null) {
+  if (!text) return "";
+  const tint = color ? ` style="color:${color}"` : "";
+  return `<div class="dir"${tint}>${esc(text)}</div>\n`;
+}
+
+/* THE ARRIVALS ROWS, as the design's three-column grid: the mark, what the row is, and the
+   countdown. One `.arr` per bucket, one row of three spans per arrival.
+
+   THREE SPANS ALWAYS, even when a family has no mark to put in the first one or nothing to
+   name in the second: the grid places cells in order, and a row that emitted two spans would
+   slide its countdown into the middle column and print a board whose numbers do not line up.
+
+   THE ACCENT COMES FROM THE APP'S OWN WORD. Section 5 says a countdown under 30s "reads 'now'
+   in the accent", and formatCountdown is what decides a row reads "now" (countdownParts, at
+   30s). So the class follows the word rather than re-testing the seconds, and the two cannot
+   disagree about which rows are accented.
+
+   `extraHtml` IS THE ROW'S OWN MARKUP: the train number a feed carries and the freshness
+   qualifier arrivalQualifier earned, both already built by helpers in this file. It sits in the
+   middle cell rather than beside the countdown because that cell is the flexible one: the
+   number cell is nowrap and tabular by design, and a parenthetical inside it widens every row
+   in the popup. */
+function popupArrRowsHtml(rows) {
+  const cells = (rows || [])
+    .filter(Boolean)
+    .map((row) => {
+      const countdown = row.countdown ?? "";
+      /* THE ACCENT IS ON THE ROW WHOSE COUNTDOWN READS "now", AND A DEPARTING ROW READS IT TOO.
+         The first draft compared the whole cell to "now", and two of the five boards compose their
+         cell as "departs " plus the countdown (a dwelling boat, a boarding NJ Transit train), so a
+         row leaving in under thirty seconds printed an unaccented "departs now" beside an accented
+         "now" two rows up. Measured on both boards. The test is on the countdown's own last word,
+         which is still formatCountdown's answer and still not a second threshold. */
+      const cls = /(^|\s)now$/.test(countdown) ? "n now" : "n";
+      return (
+        `<span>${row.markHtml ?? ""}</span>\n` +
+        `<span>${row.label ? esc(row.label) : ""}${row.extraHtml ?? ""}</span>\n` +
+        `<span class="${cls}">${esc(countdown)}</span>`
+      );
+    })
+    .join("\n");
+  return cells ? `<div class="arr">${cells}</div>\n` : "";
+}
+
+/* THE RAILROAD HEAD'S TWO PARTS, which is what the popup's kicker and title need from the
+   three fields formatRailroadHead used to join into one string.
+
+   IT REPLACES THAT FORMATTER RATHER THAN SITTING BESIDE IT. Two functions over the same three
+   inputs is the shape this stage keeps finding (N6 in the app, the pins reader in the tests),
+   and the formatter's only caller was the head this stage restyles. Its three cases are this
+   function's three cases and its test moved with them.
+
+   `agency` IS THE SERVED FIELD, unchanged: the popup has printed "LIRR" and "MNR" since phase
+   9 and this stage does not quietly reword a rider-facing string. `line` is the route's name
+   where the tables have one, "route <id>" where they do not, and empty where the feed gave
+   neither: a system with no line still gets a kicker, and the title then carries the agency
+   itself so the popup is never headless. */
+function railroadHeadParts(system, routeId, name) {
+  const agency = system || "";
+  if (name) return { agency, line: name };
+  if (routeId) return { agency, line: `route ${routeId}` };
+  return { agency, line: "" };
 }
 
 /* One entry per feed, ready to render: the count as text, the dot's state, the tooltip,
@@ -782,14 +1158,79 @@ function readableTextOn(background) {
 // the same hue is text and owes 4.5, and #e6b800 on white is 1.87. Scaling the channels
 // toward black preserves the hue, so an N heading still reads yellow, just readably so.
 // Returns the input unchanged when it already clears the target.
+/* MR5: THE BACKGROUND A POPUP'S ROUTE-COLOURED HEAD IS ACTUALLY PRINTED ON, as this file's own
+   fallback for it. readableInk defaults to `#ffffff` and every popup head took that default,
+   which was true while a Leaflet popup was white and is not true now: section 5 makes the popup
+   --surface, and in the dark theme it was never white at all.
+
+   THE LIVE VALUE IS RESOLVED FROM THE TOKEN, in systems/shared.js's popupSurfaceColor(), and is
+   passed in. This is the value to use when nothing passed one: the light theme's own --surface,
+   for the same case paperColor()'s and inkColor()'s literals cover, a caller with no stylesheet
+   applied (which is every node test in this repo). frontend/tokens.test.js asserts it against
+   style.css, so it cannot drift from the token it stands in for.
+
+   MEASURED, WHICH IS WHY IT IS NOT STILL WHITE: layout.spec.js A4g renders the N train, whose
+   #e6b800 readableInk walked to rgb(138, 110, 0) against white. That reads 4.02 against this
+   surface, and A4g failed on it the moment the surface changed. */
+const POPUP_SURFACE_FALLBACK = "#eae9e9";
+
+/* MR5: AND IT MOVES IN WHICHEVER DIRECTION THE BACKGROUND LEAVES ROOM IN, which it did not.
+
+   THE BUG, MEASURED. Every version of this before MR5 only ever DARKENED (`c * scale`, scale
+   falling from 0.95 to 0) and fell back to `#000000` under a comment that said "black fails
+   nothing on a light surface". On a DARK background that is exactly backwards and the fallback is
+   the worst answer available: black reads 1.49:1 against the dark theme's --surface. Measured
+   across the app's twenty-seven subway route colours, nine clear 4.5 on that surface as published
+   and **the other eighteen all came back `#000000` at 1.49**. A function whose contract is "the
+   ink to print ON this background" was returning an unreadable answer for two thirds of its
+   inputs and reporting no failure.
+
+   IT WAS LATENT AND THIS STAGE MADE IT LIVE. Until section 5 the popup was Leaflet's white in
+   BOTH themes, so the only background this function was ever handed was a light one, even after
+   MR4 shipped the dark theme. The popup's surface is the first dark background any caller has
+   passed, and axe named the resulting violation on `[b, .popup-sub]` at all three widths the
+   moment it did.
+
+   THE DIRECTION IS ASKED OF THE BACKGROUND, not of a flag or a theme name: whichever of black and
+   white carries further against it is the way there is room to move. That keeps the decision in
+   the one place that can answer it and costs nothing on a light background.
+
+   THE DARKENING PATH IS THE OLD LOOP, CHARACTER FOR CHARACTER, and that is a deliberate refusal
+   to tidy it. The obvious rewrite is one loop with the direction folded into the step, `1 - step`
+   against `c + (255 - c) * step`. Measured, that is not the same function: 0.05 has no exact
+   binary form, so counting DOWN from 0.95 by subtraction and counting UP from 0.05 by addition
+   accumulate different error, and at a rounding boundary the two disagree by one unit per channel.
+   Thirteen of the app's own colours came back different on the light surfaces (#e6b800 on white
+   went #8b7005 to #8b7006, and so on), which would have moved thirteen pins for a reason that has
+   nothing to do with this repair. So the two directions are two loops, and the darkening one is
+   the one this function has always run. Every light-surface answer is therefore unchanged, proven
+   in helpers.test.js against a transcription of the old body; only the dark-surface answers move,
+   and every one of those was `#000000`.
+
+   THE LIGHTENING PATH IS THE SAME OPERATION MIRRORED, `c + (255 - c) * scale`, which is a tint
+   rather than a hue shift for the reason A3 gives for the scaling: it preserves the hue, so the
+   route stays recognisably its own colour. Measured on the dark surface, eight of the eleven
+   distinct subway colours move and three already clear: #c0392b becomes #d67e75 at 4.76, #1e8449
+   becomes #56a377 at 4.63, and #e6b800 is left alone at 7.52. */
 function readableInk(color, background = "#ffffff", target = 4.5) {
   const rgb = parseColor(color);
   if (!rgb) return color;
   if ((contrastRatio(color, background) ?? 0) >= target) return color;
+  const hexOf = (channels) => `#${channels.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+  const clears = (hex) => (contrastRatio(hex, background) ?? 0) >= target;
+  if ((contrastRatio("#ffffff", background) ?? 0) > (contrastRatio("#000000", background) ?? 0)) {
+    // Toward white, because that is the direction this background leaves room in. The loop may
+    // stop a hair short of 1 through the same float accumulation described above; it does not
+    // matter, because scale 1 IS white and white is the fallback below.
+    for (let scale = 0.05; scale <= 1; scale += 0.05) {
+      const hex = hexOf(rgb.map((c) => Math.round(c + (255 - c) * scale)));
+      if (clears(hex)) return hex;
+    }
+    return "#ffffff"; // white fails nothing on a dark surface
+  }
   for (let scale = 0.95; scale >= 0; scale -= 0.05) {
-    const scaled = rgb.map((c) => Math.round(c * scale));
-    const hex = `#${scaled.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
-    if ((contrastRatio(hex, background) ?? 0) >= target) return hex;
+    const hex = hexOf(rgb.map((c) => Math.round(c * scale)));
+    if (clears(hex)) return hex;
   }
   return "#000000"; // black fails nothing on a light surface
 }
@@ -873,6 +1314,114 @@ function popupClearingShift(popup, obstacles, viewport) {
   return accepted.reduce((best, move) =>
     Math.abs(move.dx) + Math.abs(move.dy) < Math.abs(best.dx) + Math.abs(best.dy) ? move : best,
   );
+}
+
+/* MR5 (ruling S3): THE AUTOPAN PADDING LEAFLET IS ALLOWED TO HAVE, which is not the one the
+   design asked for. The design's recipe reserves the whole page header above the popup
+   (`autoPanPaddingTopLeft = [24, headerBottom + 12]`) and the control stack's width to its
+   right (`[110, 40]`), and it is measured broken on this app twice over. The erratum beside the
+   recipe in docs/design/map-redesign/README.md and ruling S3 in the ledger carry both
+   measurements; what matters here is the ONE arithmetic fact this function exists for.
+
+   LEAFLET'S PADDING ARITHMETIC IS LAST-WRITE-WINS PER AXIS, so an unsatisfiable pair does not
+   split the difference: it silently honours one end and pushes the popup off the other.
+   Vertically the TOP assignment is second and therefore wins; horizontally the LEFT one is.
+   Measured: with the Key panel open at 375x667 the header's bottom edge is 579, the recipe
+   asks for a top padding of 591, and `_adjustPan()` puts a 126px popup at top 592, bottom 718,
+   which is 51px past the bottom of a 667px map. The app's own `panPopupClearOfChrome` cannot
+   rescue that, because it is a collision solver and a popup that has left the viewport is not
+   colliding with anything.
+
+   SO EACH PADDING IS CLAMPED TO WHAT THE MEASURED MAP AND POPUP CAN ACTUALLY SATISFY. A pair
+   is satisfiable on an axis exactly when `padA + padB + popupExtent <= mapExtent`, which is
+   the same inequality Leaflet's two branches encode; when it fails, the padding that WINS is
+   the one cut, because the loser is already being honoured anyway. That spends the slack on
+   the large derived padding and keeps the small fixed ones, which is the right direction: the
+   110 beside the popup clears the control stack and the 24 is only a margin.
+
+   WHAT IS NOT DECIDED HERE. This says nothing about WHERE the popup ends up, only about how
+   much room Leaflet may demand. `panPopupClearOfChrome` remains the authority for the real
+   boxes and for a popup that grows after its first paint, because it reads rects rather than
+   one header's bottom edge, and because a station popup is 29px tall at popupopen.
+
+   Returns integers, never negative, never more than the axis can hold. `clamped` names the
+   ends that were cut, which is what the e2e pin reads: a cap that had stopped firing would
+   otherwise look exactly like a cap that was never needed. */
+function clampedAutoPanPadding({ want, map: mapBox, popup: popupBox } = {}) {
+  const w = want || {};
+  const m = mapBox || {};
+  const p = popupBox || {};
+  // A missing measurement is not a reason to guess at a padding: with no map or no popup to
+  // fit, the honest answer is Leaflet's own default, which this expresses as no padding at all.
+  // The caller reads `usable: false` and leaves the options alone.
+  const usable = [m.width, m.height, p.width, p.height].every((n) => typeof n === "number" && isFinite(n) && n >= 0);
+  const floor = (n) => Math.max(0, Math.round(typeof n === "number" && isFinite(n) ? n : 0));
+  const [wantTop, wantLeft, wantBottom, wantRight] = [w.top, w.left, w.bottom, w.right].map(floor);
+  if (!usable) return { usable: false, topLeft: [0, 0], bottomRight: [0, 0], clamped: { top: false, left: false } };
+  // The room each axis has for padding once the popup itself is placed in it. Negative when the
+  // popup is larger than the map, which the max turns into "no padding at all": a popup that
+  // cannot fit has no satisfiable padding, and demanding one would only choose which edge it
+  // hangs off.
+  const vertical = Math.max(0, Math.floor(m.height - p.height));
+  const horizontal = Math.max(0, Math.floor(m.width - p.width));
+  const top = Math.min(wantTop, Math.max(0, vertical - wantBottom));
+  const left = Math.min(wantLeft, Math.max(0, horizontal - wantRight));
+  return {
+    usable: true,
+    topLeft: [left, top],
+    bottomRight: [Math.min(wantRight, horizontal), Math.min(wantBottom, vertical)],
+    clamped: { top: top < wantTop, left: left < wantLeft },
+  };
+}
+
+/* The design's own numbers, named so the recipe and the clamp can be read against each other
+   rather than against four literals buried in a handler. `top` is derived from a MEASURED edge
+   (the rendered header and alert strip's bottom) and the rest are the recipe's fixed values.
+   POPUP_AUTOPAN_GAP is the recipe's own 12 rather than POPUP_CLEAR_GAP's 8, because the two are
+   different distances: this one sits between the popup and the page's chrome as the design drew
+   it, and the 8 is the collision solver's step. */
+/* MR5: THE ONE SET OF POPUP OPTIONS, applied at every bind site in this app.
+
+   maxWidth IS AN OPTION AND NOT A STYLE, which is why it cannot live in style.css with the rest
+   of section 5's metrics: Leaflet reads it in _updateLayout and writes the result as an INLINE
+   width on .leaflet-popup-content, so a CSS max-width loses to the very declaration it is trying
+   to bound. The 220px floor IS in the stylesheet, because Leaflet's minWidth writes an inline
+   width too and a floor is a floor either way; keeping it in CSS keeps it beside the margin and
+   the type it has to agree with.
+
+   IT REPLACES A minWidth OF 170 on the station popups, the one bind site that carried options
+   before this. That number predates the design and is below its floor, so leaving it would have
+   made station popups the one surface section 5's metrics did not reach. */
+const POPUP_OPTIONS = { maxWidth: 320, autoPan: false };
+
+/* AND autoPan IS OFF, WHICH IS THE APP TAKING THE PAN RATHER THAN DECLINING IT. Leaflet's own
+   autopan runs inside the open, BEFORE any popupopen handler, so the design's padding cannot be in
+   place for it: the padding is derived from the popup's rendered size and the popup has no rendered
+   size until it is in the document. Left on, that meant TWO pans per open, Leaflet's with its
+   default 5px strip and then ours with the clamped padding. Measured, motion.spec.js A5e caught it:
+   `distinct` centres went from 1 to 2, and its claim is that the map "must not travel through
+   intermediate positions". Both pans are synchronous and unanimated, so no frame is painted between
+   them, but a proxy that has to be argued with is a proxy worth satisfying instead.
+
+   SO THERE IS EXACTLY ONE PAN AND THE APP OWNS IT. systems/shared.js's applyPopupAutoPan sets the
+   clamped padding, turns autoPan on for the length of one _adjustPan() call and off again. That
+   also closes the SECOND break the README's erratum records, structurally rather than by guard:
+   popup.update() re-ran Leaflet's autopan on every fifteen-second poll for every open vehicle
+   popup, with no equivalent of this app's riderOwnsTheView rule. With autoPan off at rest a poll
+   cannot pan at all, and the only autopan that exists is one the app asked for and brackets. */
+/* IT LIVES IN helpers.js AND NOT BESIDE THE BIND SITES, which is a factoring decision a broken
+   audit record made for me. It is pure data with no Leaflet and no DOM in it, so it belongs with
+   this file's other popup constants; and docs/reviews/audit-2026-09-05/f04's node:vm driver loads
+   helpers.js and systems/airtrain.js WITHOUT systems/shared.js, so a constant declared there and
+   referenced in airtrain.js is a ReferenceError in that sandbox. The record failed on this commit
+   with "the node:vm driver ran :: exit 3", which is the harness earning its keep. */
+
+const POPUP_AUTOPAN_GAP = 12;
+const POPUP_AUTOPAN_WANT = { left: 24, right: 110, bottom: 40 };
+
+function popupAutoPanWant(chromeBottom) {
+  const edge = typeof chromeBottom === "number" && isFinite(chromeBottom) ? Math.max(0, chromeBottom) : 0;
+  return { ...POPUP_AUTOPAN_WANT, top: Math.round(edge + POPUP_AUTOPAN_GAP) };
 }
 
 // ---- Staleness thresholds, and the one test seam in this file (C6) ----
@@ -1620,10 +2169,16 @@ function humanizeAge(age) {
 // staleness comes from a system block's age (already carrying the server cache-age and
 // skew terms). The station boards render their system line into the same markup
 // (boardLineHtml), so a stale board and a stale train cannot be styled or worded apart.
-function stalePopupLine(age) {
-  if (!staleAge(age)) return "";
-  return `<div class="popup-stale">as of ${humanizeAge(age)} ago</div>`;
-}
+/* MR5 (ruling Q2): stalePopupLine WAS HERE and is gone with its one caller. It rendered the age
+   line gated on staleness, and vehicleStaleLine was the only thing that called it; the popup footer
+   took that job and gates on feedDotState instead. boardLineHtml still renders the same `.popup-stale`
+   element for a station board's system line, which is 6.2's and is untouched, so the string and the
+   class both survive with one renderer rather than two.
+   THE TWO SURFACES NOW WORD THE AGE DIFFERENTLY and that is a consequence of the ruling rather than
+   an oversight: a board says the contract's "as of 4m ago" and a vehicle's footer says the feed
+   strip's "As of 4m ago", because the ruling is that the footer says it the strip's way so the state
+   is said one way on BOTH of those surfaces. helpers.test.js pins both forms side by side so the
+   difference is a record rather than a surprise. */
 
 // ---- 6.2: a board's rows, each qualified by its own age ----
 //
@@ -1755,7 +2310,7 @@ function boardSystemLine(board, rows) {
 // the same element stalePopupLine writes, and a row's qualifier beside its countdown.
 // Escaped like every other string these renderers emit, though both are our own words.
 function boardLineHtml(line) {
-  return line ? `<div class="popup-stale">${esc(line)}</div>` : "";
+  return line ? `<div class="popup-stale">${esc(line)}</div>\n` : "";
 }
 
 function qualifierHtml(qualifier) {
@@ -1851,7 +2406,7 @@ function observationStaleAt(row) {
 //            otherwise the words
 // `age` is the age those words STATE, or null when they state none (a fresh position,
 // an undated one, a row with no provenance): what a popup reads to decide whether its
-// system's age line would only say the same thing twice (vehicleStaleLine).
+// feed's age line would only say the same thing twice (popupFreshHtml's suppression rule).
 function positionQualifier(row, board) {
   const r = row || {};
   const b = board || {};
@@ -1890,11 +2445,12 @@ function positionQualifier(row, board) {
   // THE FAIL-SAFE BRANCH STATES NO AGE, so it must report none. `answer`'s default is
   // `stated = stale ? age : null`, which on a row with a stale clock and no usable
   // provenance would hand back age 400 beside the words "age unknown": the contract
-  // above says `age` is the age the WORDS state, and vehicleStaleLine reads it to decide
-  // whether the system's own age line would repeat the position's. A non-null age there
-  // deleted the one age the popup actually knew, so the pessimistic branch lost
-  // information instead of adding it. REVIEW FIX; positions.test.js covers it with a
-  // stale clock now, where it only ever passed a fresh one.
+  // above says `age` is the age the WORDS state, and popupFreshHtml reads it to
+  // decide whether the footer's own age would repeat the position's (MR5; before
+  // that it was vehicleStaleLine). A non-null age there deleted the one age the
+  // popup actually knew, so the pessimistic branch lost information instead of
+  // adding it. REVIEW FIX; positions.test.js covers it with a stale clock now,
+  // where it only ever passed a fresh one.
   return answer("unknown", "age unknown", { stated: null });
 }
 
@@ -2080,9 +2636,14 @@ const RAIL_BRANCH_CODES = {
 };
 
 // The neutral a route nothing names or colours falls back to (README: "Unknown route ->
-// code = route id, colour #6d6e71"). It takes white ink at 4.83 and dark ink at 4.35, so
-// readableTextOn's answer on it clears 4.5, which is why this hue and not v2's #607d8b
-// (the note at railroadColor says what that one cost).
+// code = route id, colour #6d6e71"). It takes white ink at 5.10 and dark ink at 3.41, so
+// readableTextOn's answer on it clears 4.5 and the other does not, which is why this hue and not
+// v2's #607d8b (white 4.37, dark 3.98: nothing clears, and railBranchPaint's comment carries that
+// measurement now that the hash palette it used to sit beside is deleted).
+// RULING R1 MADE IT LOAD-BEARING ON TWO MORE SURFACES: it is the fallback for the NJ Transit board
+// badge and for the panel chip, both of which used to fall back to NJT_FALLBACK_COLOR's #4a4e69.
+// (The two ratios above read 4.83 and 4.35 until R1 re-measured them with this file's own
+// contrastRatio. The conclusion never moved; the numbers were simply wrong.)
 const RAIL_NEUTRAL_COLOR = "#6d6e71";
 
 // The agency glyph and its block width (README: 11px for "L" and "M", 16px for "NJ").
@@ -2122,7 +2683,7 @@ function railBranchCode(system, routeId, routeName = null, shortName = null) {
    agency does not use, drawn as if it did. */
 /* VALIDATED BEFORE PREFIXING, which njtColor's own guard does and which this dropped: the value
    is a FEED's, it is interpolated into marker markup that reaches innerHTML through L.divIcon,
-   and what it replaced (railroadColor, a hash) could only ever produce #rrggbb. A publication
+   and what it replaced (the hash palette ruling R1 deleted) could only ever produce #rrggbb. A publication
    whose route_color is empty, a word, or anything with a quote or an angle bracket in it now
    takes the neutral rather than becoming part of the tag's markup. */
 const RAIL_HEX = /^#?[0-9a-fA-F]{6}$/;
@@ -2154,10 +2715,11 @@ function railBranchColor(color) {
    common case on that railroad, not a corner. The other 25 colours clear, the worst of them
    at 4.69.
 
-   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class. The note
-   at railroadColor says it in as many words about v2's #607d8b: "That is a fill that has to
-   move rather than an ink that has to be chosen, which is the one case readableTextOn cannot
-   rescue". The move is the same scaling readableInk uses for text, so it preserves the hue,
+   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class, and this is
+   where that argument lives now. It was written against v2's #607d8b, beside the hash palette
+   ruling R1 deleted: that fill carried white at 4.37 and dark at 3.98, so NEITHER ink could make it
+   readable, which is a fill that has to move rather than an ink that has to be chosen, and it is
+   the one case readableTextOn cannot rescue. The move is the same scaling readableInk uses for text, so it preserves the hue,
    and it is taken in 1% steps and stopped at the first that clears: EE0034 becomes #ec0033,
    a two-unit change in one channel, and white goes from 4.48 to 4.55.
 
@@ -2440,6 +3002,63 @@ function railTagChevronPath(cx) {
    refuses to trust (kind "unknown") are both "we are not telling you which way this is
    going", and drawing a chevron at an arbitrary angle for either would be worse than
    drawing none. */
+/* THE TAG'S TYPE, ON THE TEXT ELEMENTS THEMSELVES, and MR5 is the stage that had to put it there.
+
+   It was `.rail-tag-marker svg text` in the stylesheet, which drew correctly for as long as every
+   tag this builder made was inside a rail tag MARKER. Section 5 draws a popup's title with the map's
+   own mark, so the same string is now also rendered inside `.pt`, where that selector does not
+   match and the type inherits the title's `font: 800 17px`. Measured in the browser: the map's tag
+   text computes to `800 8px` and the popup's to `800 17px`, with 17px glyphs drawn inside a
+   13-unit block and clipped by the viewport. The shipped captures show it as a smear.
+
+   THE LESSON WAS ALREADY IN THE LEDGER, one surface away: mutation M60 dropped the inline font from
+   the KEY panel's hand-written copies "on the theory that a stylesheet supplies it" and died, with
+   the note "it does not: `.rail-tag-marker svg text` is scoped to the MARKER". A mark that travels
+   has to carry its own type, which is what `subwayPlateSvg` has always done (font-size, font-weight
+   and font-family as presentation attributes) and what the Key's copies do.
+
+   PRESENTATION ATTRIBUTES RATHER THAN AN INLINE STYLE, for the reason the fills next to them are
+   inline styles: a style attribute would beat the theme's `var()` fills nothing here needs to beat,
+   while a presentation attribute is the lowest-priority author form and can still be overridden by
+   a stylesheet if a later surface ever needs to. */
+const RAIL_TAG_TYPE = ' font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" letter-spacing="0.01"';
+
+/* THE TAG'S BODY, WHICH IS TWO BLOCKS AND THEIR TWO LETTERS, extracted so there is ONE answer to
+   "what does a rail tag body look like" (ruling R3). It had one caller and now has two: the map's
+   full tag below, and the BODY-ONLY tag a station kicker draws for each route calling there. The
+   Key panel hand-writes two more in index.html, which is why this is an extraction rather than a
+   copy: a third written body would be a third answer, which is finding N6 inside the stage that
+   just paid it.
+
+   `backing` IS THE ONE PARAMETER THAT IS NOT GEOMETRY. The solid body carries a paper rectangle a
+   half unit larger than the tag at 0.9 opacity, so a tag reads against any basemap tile. A popup's
+   surface is opaque `--surface`, so there is no tile to read against there; and the backing is one
+   of only two non-opaque paints on this whole map (pins.spec.js P4d's `contrast/alpha` pin exists
+   for it), so drawing it inside a popup would put a second instance of it on a second surface. The
+   route form passes false and the map's tag passes true, which is why the map's output is
+   byte-identical to what it was before this extraction. */
+function railTagBodySvg({ w, aw, cw, glyph, code, branch, branchInk, stripe, solid, backing = true }) {
+  return solid
+    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
+      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
+      (backing
+        ? `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>`
+        : "") +
+      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
+      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--paper)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} fill="${branchInk}">${esc(code)}</text>`
+    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
+      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
+      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
+      // the 13px it is allowed.
+      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(code)}</text>`;
+}
+
 function railTagSvg({ system, code, color, textColor = null, state, bearing = null } = {}) {
   const geom = railTagGeometry(system, code);
   const { width: w, agencyWidth: aw, codeWidth: cw, glyph, centre: cx } = geom;
@@ -2454,23 +3073,7 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
   const headFilled = state.head === "filled";
   const showChevron = state.headingTrusted && bearing != null;
 
-  const body = solid
-    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
-      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
-      `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>` +
-      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
-      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--paper)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" fill="${branchInk}">${esc(code)}</text>`
-    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
-      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
-      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
-      // the 13px it is allowed.
-      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
-      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
-      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(code)}</text>`;
+  const body = railTagBodySvg({ w, aw, cw, glyph, code, branch, branchInk, stripe, solid, backing: true });
 
   const stem =
     `<line x1="${cx}" y1="${RAIL_TAG_HEIGHT}" x2="${cx}" y2="${RAIL_TAG_STEM_END}"` +
@@ -2490,6 +3093,53 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
     `<svg viewBox="0 0 ${w} ${RAIL_TAG_BOX_HEIGHT}" width="${w}" height="${RAIL_TAG_BOX_HEIGHT}"` +
     ` class="rail-tag rail-tag-${state.body} rail-head-${state.head}" aria-hidden="true"` +
     ` focusable="false">${body}${stem}${head}</svg>`
+  );
+}
+
+/* THE SAME TAG WITH NOTHING BUT ITS BODY, for a station kicker's route marks (ruling R3).
+
+   A ROUTE HAS NO PROVENANCE, which is what decides every difference from the tag above. The 30-unit
+   box's stem and its chevron-or-dot state where one TRAIN is and whether its heading is trusted, and
+   a route calling at a station has neither: drawing them would be drawing a claim about a vehicle
+   that is not there. So the box is the body's own 13 units, and the class is its own.
+
+   SOLID AND NOT OUTLINED, for the same reason one level down: the outlined body reduces the branch
+   colour to a 2.5-unit stripe and prints both letters in ink, because that is how the map says
+   "this train's position is a schedule estimate". A route's identity IS its colour, so the kicker
+   takes the form that carries it as a block.
+
+   `rail-route-tag` AND NOT `rail-tag`, which is not cosmetic: a11y.spec.js A1z4 asserts where every
+   `svg.rail-tag` on the page is (a rail marker, or a rail TRAIN popup's title) and the axe gate's
+   exception for that class's 8px type rests on A1z4 measuring every place it appears. A kicker full
+   of them would be a third place, excused by an exception whose decider never looks at it, which is
+   the reviewer finding that comment already records. The Key panel took the same road with
+   `key-rail-tag`, and keyglyphs.test.js holds it.
+
+   AND THE viewBox MUST START "0 0", which popupMarkHtml requires to read a box at all: it returns
+   the EMPTY STRING for any other origin, so a shifted box (the Key's hand-written tags use
+   `-3.5 -1.5 42 16`) would make every kicker silently mark-free. popupvocab.test.js puts this
+   builder through the re-wrap for exactly that reason. */
+function railRouteTagSvg({ system, code, color, textColor = null } = {}) {
+  const geom = railTagGeometry(system, code);
+  const { width: w, agencyWidth: aw, codeWidth: cw, glyph } = geom;
+  const paint = railBranchPaint(color, textColor);
+  const body = railTagBodySvg({
+    w,
+    aw,
+    cw,
+    glyph,
+    code,
+    branch: paint.fill,
+    branchInk: paint.ink,
+    stripe: railBranchColor(color),
+    solid: true,
+    // No paper backing: a popup's surface is opaque, and that rect is one of two non-opaque
+    // paints on the map (see railTagBodySvg).
+    backing: false,
+  });
+  return (
+    `<svg viewBox="0 0 ${w} ${RAIL_TAG_HEIGHT}" class="rail-route-tag" aria-hidden="true"` +
+    ` focusable="false">${body}</svg>`
   );
 }
 
@@ -2666,13 +3316,60 @@ function pathDiamondSvg(color) {
 const FERRY_HULL_BOX = [22, 14];
 const FERRY_HULL_PATH = "M1 3 H21 L17.5 11 H4.5 Z";
 
+/* THE HULL'S INK EDGE, AND WHY IT IS TWO STROKES ON ONE PATH (MR4 ruling Q1, paid in MR5).
+
+   A boat is filled with the colour NYC Ferry publishes for its route, and the app does not
+   move a published fill. Measured on the drawn page, that left exactly one paint on this map
+   under the 3:1 a mark owes: South Brooklyn's #ffd100 at 1.31 against the light paper. The
+   hull's only other paint was the paper casing, which cannot raise a fill's ratio against
+   paper because it IS approximately the paper. So the ruling's answer is a third paint that
+   the app DOES choose: an ink edge, inside the casing.
+
+   TWO STROKES ON THE SAME `d`, WIDER FIRST. A stroke is centred on its path, so a single
+   stroke cannot be both the casing and the edge. The paper goes to 2 (1 out, 1 in) and the
+   ink follows at 0.8 on the same geometry, drawn second so it sits on the boundary with a
+   full pixel of paper still outside it. Reading outward a rider gets: the route's published
+   fill, the ink edge that finds it, the paper casing that separates it from the tile. The
+   drawn mark grows half a pixel on each side and stays inside its 22x14 box.
+
+   WHAT IT COSTS, named because it is a marker change in a popup stage: `markers/ferry` and
+   `contrast/marks` both move, `theme.spec.js` D5d's exemption assertion INVERTS by design,
+   and the captures that show a boat are regenerated. All four are in this stage's ledger
+   entry. What it does not touch is the fill: `color` is still the feed's, unchanged. */
 function ferryHullSvg(color) {
   return (
     `<svg viewBox="0 0 ${FERRY_HULL_BOX[0]} ${FERRY_HULL_BOX[1]}" class="ferry-hull"` +
     ` aria-hidden="true" focusable="false">` +
-    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="2"/>` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: none; stroke: var(--ink)" stroke-width="0.8"/>` +
     `</svg>`
   );
+}
+
+/* THE SUBWAY'S PLATE, which is the oldest mark in this app and the last one to become a string
+   builder. It moved here from trainIcon in systems/subway.js in MR5, unchanged to the byte
+   (`pins.spec.js` P1f pins the markup and did not move), for the reason the other five are here:
+   a popup title draws its family's mark, helpers.js is where a mark that is not tied to Leaflet
+   lives, and a popup that drew its own 18x18 rounded square would be a second answer to "what
+   does a subway train look like".
+
+   THE LABEL IS VALIDATED HERE AND NOT BY THE CALLER, which is what moving it buys: the plate
+   holds one to three characters and a feed that served a route id of twenty would otherwise have
+   drawn a plate with a sentence in it. trainIcon did that test inline and the popup would have
+   had to do it again.
+
+   THE TYPE SHRINKS FOR TWO CHARACTERS AND MORE (10.5 to 8.5), which is why the test is on the
+   validated label rather than on the served route: "?" takes the wide size, because it is one
+   character. */
+function subwayPlateSvg(route, color, textColor) {
+  const label = /^[A-Za-z0-9]{1,3}$/.test(route ?? "") ? String(route) : "?";
+  return `<svg viewBox="0 0 18 18">
+      <rect x="0" y="0" width="18" height="18" rx="4" style="fill: var(--paper)" opacity="0.95"/>
+      <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}"/>
+      <text x="9" y="9.5" text-anchor="middle" dominant-baseline="central"
+            font-size="${label.length > 1 ? 8.5 : 10.5}" font-weight="800"
+            font-family="Archivo, system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
+    </svg>`;
 }
 
 /* The bus mark, which is TWO marks and one box (README: "Heading known: 14x14 arrow
@@ -2851,11 +3548,39 @@ function withheldFix(row, block, servedAt, now) {
   return age != null && age > OBS_MAX_S ? "withheld" : null;
 }
 
-// The popup line a position's words go on, or nothing for a fresh reported position:
-// silence means current on every surface that has never said "live GPS" (memo D9), and
-// the railroad popup, which always has, prints its compact form itself.
-function positionLineHtml(position) {
-  return position && position.kind ? `<br><span class="popup-sub">${esc(position.words)}</span>` : "";
+/* The words a position gets to say in a popup, or nothing for a fresh reported position: silence
+   means current (memo D9), which is the rule every surface in this app follows.
+
+   IT RETURNS WORDS AND NOT MARKUP SINCE MR5, which is the shape the vocabulary wanted: section 5
+   puts a vehicle's facts in a label/value grid, so the Position row is a value like any other and
+   the rule above is what decides whether that row exists. popupRowsHtml drops a row with no value,
+   so the two rules compose rather than being written twice: this one says when a position has
+   nothing to say, and the grid's says what a row with nothing to say looks like (nothing).
+
+   MR5 (ruling Q1): EVERY SURFACE NOW, INCLUDING THE RAILROAD POPUP, which had been the one
+   exception. That popup printed `position.compact` itself, unconditionally, from a line of its own
+   in systems/railroad.js, and the two differences that made are the whole content of this ruling:
+   its `placed` trains said "scheduled (no GPS)" where the contract says "scheduled position (no
+   GPS)", and its FRESH GPS fixes said "live GPS" where every other surface in the app says nothing.
+   An AGED fix still speaks, which is the contract working rather than a compromise: the silence is
+   only ever about a current one.
+
+   `.compact` STILL EXISTS AND NOW HAS NO READER, which is worth stating precisely rather than
+   softly. It is one of the three forms section 3.2 of the freshness contract defines, it still
+   differs from `.words` in exactly one family (`placed`), and positions.test.js still pins that
+   difference. But the railroad popup was its ONLY caller, so after this ruling nothing in the app
+   renders it. Deleting a form the contract defines is an amendment to that contract rather than a
+   stage's tidying, so it stays, and pins.spec.js P5b carries its string as a waiver naming exactly
+   this reason. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
+   rider-visible literal that no pin covered, on the commit that unified the call site.
+
+   THE GUARD IS ON BOTH FIELDS. The ruling says an empty `.words` omits the row, and `positionQualifier`
+   never returns one, so today that is belt to the brace `kind` already provides. It is written down
+   because a future branch of that function could, and a row rendering `<br><span></span>` would be
+   an empty line a rider cannot account for rather than an omission. */
+function positionWords(position) {
+  if (!position || !position.kind || !position.words) return "";
+  return position.words;
 }
 
 // A position's clause in a marker's accessible name, under the same rule: its spoken
@@ -2865,17 +3590,13 @@ function positionClause(position) {
   return position && position.kind ? position.spoken : null;
 }
 
-// A VEHICLE POPUP'S SYSTEM AGE LINE, which speaks only for what the position's words
-// cannot: the rule boardSystemLine keeps for a station board, one row at a time. A row
-// whose words already state an age at least as old as its system's has said it, and a
-// second line would say it twice, or, since an observation's age and a system's differ
-// by the provider's lag, say two ages about one train. A row whose words state no age
-// (Metro-North's undated positions, a fresh one) keeps the line exactly as C2 drew it.
-function vehicleStaleLine(systemAge, position) {
-  const said = position ? position.age : null;
-  if (said != null && (systemAge == null || said >= systemAge)) return "";
-  return stalePopupLine(systemAge);
-}
+/* MR5 (ruling Q2): vehicleStaleLine WAS HERE and is gone, because the popup footer took its job.
+   It rendered a vehicle popup's system age line and withheld itself where the position's words had
+   already stated an age at least that old. popupFreshHtml keeps that rule exactly, keeps its
+   reasoning (copied there rather than cited, so it cannot outlive this comment), and adds the two
+   states the line never had. It was the function's only caller in either direction: nothing in the
+   freshness contract names it, unlike positionQualifier's `.compact`, which is why this is deleted
+   where that is recorded and kept. */
 
 // ONE WRITE PER RENDER, AS ONE STRING (memo D11). The page's live region is atomic and
 // polite, so two writes before a screen reader reads it are one sentence lost: the second
@@ -3106,16 +3827,21 @@ function orderedRailroadBuckets(directions) {
   return orderedBuckets(RAILROAD_BUCKET_ORDER, directions);
 }
 
-// Rider-facing head text for a railroad TRAIN popup: "LIRR · Babylon Branch"
-// when the route name is known, else "LIRR route 5", else just the system.
-// Returns PLAIN text (system, routeId, and name are all feed-derived, so the
-// caller escapes the whole result before inserting it into markup).
-function formatRailroadHead(system, routeId, name) {
-  const sys = system || "";
-  if (name) return `${sys} · ${name}`;
-  if (routeId) return `${sys} route ${routeId}`;
-  return sys;
-}
+/* formatRailroadHead IS GONE, AND THIS IS WHERE IT WAS. It joined a railroad train's system,
+   route id and route name into one line ("LIRR · Babylon Branch", "LIRR route 5", "MNR") for the
+   one caller that wanted them joined: the popup head MR5 takes apart. Section 5 wants those parts
+   separately, as a kicker and a title, and railroadHeadParts up in the vocabulary section is the
+   same three cases returning them that way.
+
+   ITS WORDS DID NOT CHANGE, only where they sit. The middot it joined with was a visual separator
+   and the two parts are separated by being rows now, which is the argument railroadTrainName's
+   comment already makes for not speaking it.
+
+   A COMMENT RATHER THAN A FUNCTION WITH NO CALLER, which is this stage's third such disposal
+   (vehicleStaleLine and stalePopupLine were the first two, in the footer's commit) under the same
+   rule: a helper nothing calls is a second answer waiting for someone to call it. Its three cases
+   are asserted in popupvocab.test.js against railroadHeadParts, joined back into the three strings
+   it used to return, so the words it carried are still pinned somewhere. */
 
 // Full railroad station arrivals popup HTML. Lives here (not map.js) so node can
 // test the escaping and ordering. `now` is the skew-corrected clock, passed in
@@ -3123,37 +3849,63 @@ function formatRailroadHead(system, routeId, name) {
 // resolves a route's rider-facing name for this station's system (map.js closes
 // over the (system|route_id) name map), returning null when unknown. Header is
 // the station name plus a muted system tag; each present bucket renders its
-// heading and one row per train: a route badge (railroadColor, white text on the
-// dark palette), the route name where known, the train number when the feed
-// carries one, and the countdown. Every feed-derived string is escaped.
-function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
+// heading and one row per train: a route badge whose fill and ink are `paintFor(routeId)`'s
+// (systems/railroad.js closes that over the (system|route_id) colour table the way it already
+// closes `nameFor` over the name table), the route name where known, the train number when the
+// feed carries one, and the countdown. Every feed-derived string is escaped.
+//
+// `paintFor` IS IN SLOT 4 BECAUSE THE OTHER TWO BOARDS PUT THEIR RESOLVER THERE (njtArrivalsHtml
+// and pathArrivalsHtml), and ruling R1 is why it exists at all: this badge resolved the deleted
+// `railroadColor` hash, so LIRR|1 and MNR|1 drew one brown for two published greens. It returns
+// railBranchPaint's PAIR rather than a colour because the badge is 700-weight type on that fill and
+// owes 4.5, and one published colour clears with neither ink (EE0034, four of Metro-North's six
+// routes): the pair is the only resolver that can move such a fill, exactly as the tag's branch
+// block does. The default is the rail neutral rather than a second one.
+  /* `markFor` IS TRAILING AND DEFAULTED (ruling R3), which is a lesson from R1 one ruling earlier:
+     docs/reviews/audit-2026-09-05/f12 hand-copies one of these calls verbatim, and R1 put a resolver
+     in the MIDDLE of this signature, which slid that copy's nameFor into the paint slot and rendered
+     `background:undefined` while the record kept printing PASS. A trailing slot cannot do that. */
+function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPaint(null), nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row qualified by its own served age, and the system line where the R1 age
   // line was (6.2; see arrivalQualifier and boardSystemLine).
   const board = boardFreshness("railroad", body, now);
+  /* MR5: section 5's kicker, title and board. The agency moves from a muted tag beside the
+     station's name to the kicker above it, and it is still the SERVED `system` field: "MNR"
+     here, where this station's own panel row says railroadSystemLabel's "Metro-North". That
+     divergence is recorded as an MR5 finding rather than reworded in passing.
+     R3: AND THE KICKER HAS A RIGHT-HAND SIDE NOW, the branches calling at this station as
+     body-only tags, through the shared helper every station board uses. */
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">${esc(station.system ?? "")}</span>` +
+    popupKickerHtml({ left: station.system ?? "", rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedRailroadBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
-    html += `<div class="arr-dir">${esc(dir)}</div>`;
-    html += arrivals
-      .map((a) => {
+    html += popupDirHtml(dir);
+    html += popupArrRowsHtml(
+      arrivals.map((a) => {
         const route = a.route_id ?? "";
-        const badge =
-          `<span class="arr-badge" style="background:${railroadColor(route)};color:${readableTextOn(railroadColor(route))}">` +
-          `${esc(route || "?")}</span>`;
-        const routeName = a.route_id ? nameFor(a.route_id) : null;
-        const label = routeName ? ` ${esc(routeName)}` : "";
-        const num = a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "";
-        return (
-          `${badge}${label}${num} ${esc(formatCountdown(a.arrival - now))}` +
-          qualifierHtml(arrivalQualifier(a, board))
-        );
-      })
-      .join("<br>");
+        const paint = paintFor(route);
+        return {
+          /* THE ROW'S MARK IS THE BOARD'S OWN CHIP, not the map's rail tag: a tag states a body and
+             a heading, and an arrivals row has neither to state. Its two paints come from
+             railBranchPaint through `paintFor`, so the fill can move where no ink clears, and
+             popups.spec.js D6i measures the drawn result in both themes. (That sentence used to
+             name pins.spec.js P4c, which was never true: P4c pins `contrast/marks`, the map's
+             marker families, and has no badge in it.) */
+          markHtml:
+            `<span class="arr-badge" style="background:${paint.fill};color:${paint.ink}">` +
+            `${esc(route || "?")}</span>`,
+          label: (a.route_id ? nameFor(a.route_id) : null) || "",
+          extraHtml:
+            (a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "") +
+            qualifierHtml(arrivalQualifier(a, board)),
+          countdown: formatCountdown(a.arrival - now),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3191,26 +3943,36 @@ function selectHeadwayBand(bands, minutesSinceMidnight) {
 // clearly labeled "(scheduled)". `minutes` is minutes since NY midnight, computed
 // by the CALLER and passed in (kept pure and testable with a plain numeric input).
 // Every feed-derived string is escaped.
-function airtrainStationPopupHtml(station, routes, minutes) {
+function airtrainStationPopupHtml(station, routes, minutes, markHtml = "") {
   const serving = (routes ?? []).filter((r) => (r.stations ?? []).includes(station.id));
+  /* MR5: section 5's kicker and title, and the branches as its label/value grid. The one
+     sentence this popup used to print as a muted line is now the kicker's "AirTrain JFK" and
+     the line under the title, which is the same split the railroad's head took: the middot
+     was joining two things that are a row apart now. */
   const header =
-    `<b>${esc(station.name ?? station.id)}</b>` +
-    `<div class="popup-sub">AirTrain JFK &middot; scheduled service (no live tracking)</div>`;
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.airtrain }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
+    `<div class="popup-sub">scheduled service (no live tracking)</div>\n`;
   if (!serving.length) {
-    return `${header}<div>No AirTrain branch serves this station.</div>`;
+    return `${header}<div>No AirTrain branch serves this station.</div>\n`;
   }
-  let html = header;
-  for (const route of serving) {
-    const band = selectHeadwayBand(route.headways, minutes);
-    const name = esc(route.name ?? route.id);
-    // headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int), not
-    // feed-derived text, so it is interpolated directly; esc() is reserved for the
-    // untrusted string fields (station and route names).
-    html += band
-      ? `<div>${name}: every ~${band.headway_min} min <span class="popup-sub">(scheduled)</span></div>`
-      : `<div>${name}: <span class="popup-sub">schedule unavailable</span></div>`;
-  }
-  return html;
+  /* A BRANCH IS A LABEL AND ITS HEADWAY IS THE VALUE, which is what the grid is for. "(scheduled)"
+     stays inside the value rather than becoming a muted span of its own: the words are the ones
+     this popup has printed since phase 16, and a row's value is one string in this vocabulary.
+     headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int) and the grid escapes
+     every value, so nothing here needs to escape anything itself. */
+  return (
+    header +
+    popupRowsHtml(
+      serving.map((route) => {
+        const band = selectHeadwayBand(route.headways, minutes);
+        return {
+          k: route.name ?? route.id,
+          v: band ? `every ~${band.headway_min} min (scheduled)` : "schedule unavailable",
+        };
+      }),
+    )
+  );
 }
 
 // ---- PATH (phase 13c: map layer over the 13a/13b endpoints) ----
@@ -3254,13 +4016,15 @@ function formatPathHead(routeId, name) {
 // train's positionQualifier answer (6.3): PATH serves every train `placed`, so the line
 // reads "scheduled position (no GPS)", and its age once its own trip update is past
 // OBS_FRESH_S; before 6.3 the line was a constant that could not say either.
-function pathTrainPopupHtml(train, name, color, position = null) {
+function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   return (
-    `<b style="color:${readableInk(color)}">${esc(formatPathHead(train.route_id, name))}</b>` +
-    ` <span class="popup-sub">PATH</span>` +
-    (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
-    (train.direction ? `<br>${esc(train.direction)}` : "") +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path }) +
+    popupTitleHtml({ markHtml, text: formatPathHead(train.route_id, name), color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Next stop", v: train.stop_name },
+      { k: "Direction", v: train.direction },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3270,30 +4034,33 @@ function pathTrainPopupHtml(train, name, color, position = null) {
 // closes both over the /api/path-routes tables, keeping this pure and
 // node-testable. An empty directions dict renders the shared "No trains"
 // treatment. Every feed-derived string is escaped.
-function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null) {
+function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // PATH dates every trip itself, so two rows on one board can carry two different
   // ages, and only the old one is qualified (6.2).
   const board = boardFreshness("path", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">PATH</span>` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedPathBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
-    html += `<div class="arr-dir">${esc(dir)}</div>`;
-    html += arrivals
-      .map((a) => {
+    html += popupDirHtml(dir);
+    html += popupArrRowsHtml(
+      arrivals.map((a) => {
         const route = a.route_id ?? "";
-        const badge =
-          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:${readableTextOn(colorFor(a.route_id))}">` +
-          `${esc(route || "?")}</span>`;
-        const routeName = a.route_id ? nameFor(a.route_id) : null;
-        const label = routeName ? ` ${esc(routeName)}` : "";
-        return `${badge}${label} ${esc(formatCountdown(a.arrival - now))}${qualifierHtml(arrivalQualifier(a, board))}`;
-      })
-      .join("<br>");
+        const color = colorFor(a.route_id);
+        return {
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(route || "?")}</span>`,
+          label: (a.route_id ? nameFor(a.route_id) : null) || "",
+          extraHtml: qualifierHtml(arrivalQualifier(a, board)),
+          countdown: formatCountdown(a.arrival - now),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3405,18 +4172,21 @@ function ferrySpeedKnots(status, speedMs) {
 // the subway/bus popup HTML helpers keep their route-alert prepend in the caller.
 // Every feed-derived string is escaped. `position` is the boat's positionQualifier
 // answer (6.3): a fresh fix adds nothing, since the legend already says a boat is GPS,
-// and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionLineHtml).
-function ferryBoatPopupHtml(boat, name, color, position = null) {
-  const routeText = name || "Unassigned";
-  const status = ferryStatusText(boat.status);
-  const speed = ferrySpeedKnots(boat.status, boat.speed);
+// and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionWords).
+function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   return (
-    `<b style="color:${readableInk(color)}">${esc(routeText)}</b>` +
-    ` <span class="popup-sub">NYC Ferry</span>` +
-    (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
-    (status ? `<br>${esc(status)}` : "") +
-    (speed ? `<br>${esc(speed)}` : "") +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.ferry }) +
+    popupTitleHtml({ markHtml, text: name || "Unassigned", color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Boat", v: boat.label },
+      // Both of these are null where the feed has nothing to say (a docked boat has no speed,
+      // an unknown status has no words), and the grid drops a row with no value: the popup
+      // says what it knows and is silent about the rest, which is what it did with its
+      // `<br>`-joined lines before section 5's grid.
+      { k: "Status", v: ferryStatusText(boat.status) },
+      { k: "Speed", v: ferrySpeedKnots(boat.status, boat.speed) },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3428,30 +4198,46 @@ function ferryBoatPopupHtml(boat, name, color, position = null) {
 // `wheelchair` flag surfaces as a small accessibility marker in the header, the
 // first such display in the app. An empty routes dict renders "No boats". Every
 // feed-derived string is escaped; colorFor returns a validated css color.
-function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR) {
+function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK, markHtml = "", markFor = () => null) {
+  /* MR5: THE DOCK'S ACCESSIBILITY GLYPH IS THE KICKER'S RIGHT-HAND SLOT, which is where section 5
+     puts it ("right: route bullets / direction / accessibility"). It keeps its title attribute,
+     which is the only place its WORDS exist: pins.spec.js reads them through the `labels` view for
+     exactly that reason. */
   const access = station.wheelchair
-    ? ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
+    ? '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
     : "";
   // Dock rows are dated by the TripUpdates clock, never the boat's (6.1), and each is
   // qualified by it here (6.2).
   const board = boardFreshness("ferry", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">NYC Ferry</span>${access}` +
+    // R3: the routes calling at this dock, then the access glyph, which keeps the glyph rightmost
+    // where it has always been and is the one right-hand slot that was already occupied.
+    popupKickerHtml({
+      left: POPUP_SYSTEM_WORDS.ferry,
+      rightHtml: popupRouteMarksHtml(station.routes, markFor) + access,
+    }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedFerryBuckets(body.routes);
-  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>\n`;
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
-    html += `<div class="arr-dir" style="color:${readableInk(color)}">${esc(routeName)}</div>`;
-    html += rows
-      .map((row) => {
+    // The bucket is a ROUTE here rather than a direction, so it carries the route's colour,
+    // walked against the popup's own surface (readableInk) like every other ink in a popup.
+    html += popupDirHtml(routeName, readableInk(color, surface));
+    html += popupArrRowsHtml(
+      rows.map((row) => {
         const d = ferryArrivalDisplay(row, now);
-        const prefix = d.mode === "departing" ? "departs " : "";
-        return `${prefix}${esc(formatCountdown(d.seconds))}${qualifierHtml(arrivalQualifier(row, board))}`;
-      })
-      .join("<br>");
+        // "departs " STAYS ON THE COUNTDOWN, not in the label cell: it is half of one phrase
+        // ("departs 1 min") and the number cell is the nowrap one, so the phrase cannot break.
+        // The NJ Transit board does the same with the same prefix.
+        return {
+          extraHtml: qualifierHtml(arrivalQualifier(row, board)),
+          countdown: (d.mode === "departing" ? "departs " : "") + formatCountdown(d.seconds),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3620,8 +4406,13 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
        for this agency (the brief's section 6: NJ Transit publishes one and the railroads do
        not, so hand-tabling it would answer a question the feed answers).
 
-       `colors` STAYS AS IT WAS and is still what the popup head and the arrivals badge read,
-       so nothing that already worked is re-routed through the new pair. */
+       `colors` IS DOWN TO ONE READER, AND THAT IS RULING R1's DOING. It said "stays as it was and
+       is still what the popup head and the arrivals badge read" when MR3 built the pair; the popup
+       head moved to njtBranch in MR5 round 1 and R1 moved the station board's badge and the panel's
+       chip, so the only thing left reading `colors` is the route LINE (systems/njt.js). That is the
+       last residue of finding N6 on this layer: a route published with a blank colour would draw a
+       #4a4e69 line beside a #6d6e71 tag. No live route does (all twelve publish one) and route 17,
+       which publishes nothing, has no polylines at all, so nothing can draw it today. */
     if (route.short_name) shortNames.set(id, route.short_name);
     paints.set(id, { color: route.color ?? null, textColor: route.text_color ?? null });
     const polylines = route.polylines || [];
@@ -3650,16 +4441,22 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
 // train running to schedule is the unremarkable case and "0 min late" is noise.
 // Sign is respected, because NJ Transit does publish negative delays (running
 // early) and rendering one as "late" would be a lie about the direction.
-function njtTrainPopupHtml(train, name, color, position = null) {
+function njtTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   const t = train || {};
   return (
-    `<b style="color:${readableInk(color)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
-    ` <span class="popup-sub">NJ Transit</span>` +
-    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    (t.headsign ? `<br>To ${esc(t.headsign)}` : "") +
-    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
-    njtDelayLine(t.delay) +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt }) +
+    popupTitleHtml({ markHtml, text: formatNjtHead(t.route_id, name), color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Train", v: t.train_num },
+      // "To" IS THE LABEL AND THE HEADSIGN IS THE VALUE, which is the same two words this popup
+      // printed as one line ("To New York") with the preposition doing the labelling.
+      { k: "To", v: t.headsign },
+      { k: "Next stop", v: t.stop_name },
+      // njtDelayText prints nothing for a train running to schedule and nothing for a delay that
+      // rounds to zero, so the grid drops the row: the unremarkable case says nothing at all.
+      { k: "Delay", v: njtDelayText(t.delay) },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3679,10 +4476,11 @@ function njtDelayText(delaySeconds) {
   return `${minutes} min ${delaySeconds < 0 ? "early" : "late"}`;
 }
 
-function njtDelayLine(delaySeconds) {
-  const text = njtDelayText(delaySeconds);
-  return text ? `<br>${esc(text)}` : "";
-}
+/* njtDelayLine WAS HERE, and it was njtDelayText wrapped in a `<br>` and escaped. MR5's grid
+   escapes its own values and separates rows by being rows, so the wrapper had nothing left to do
+   and njtTrainPopupHtml was its only caller. The rule it carried is in the grid: njtDelayText
+   returns "" for a train running to schedule and for a delay that rounds to zero, and a row with
+   no value is not printed, so the unremarkable case still says nothing at all. */
 
 /* "Jamaica, LIRR, station" and "Grand Central, Metro-North, station". MR3 needed one: the rail
    station was a canvas circleMarker with no element and therefore no accessible name, and the
@@ -3770,33 +4568,35 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // never rendered; njtRowLabel is the authority and it returns one string.) A row with
 // neither still renders its countdown rather than being dropped: the train is real
 // and the time is the thing the rider came for.
-function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null) {
+function njtArrivalsHtml(station, body, now, colorFor = () => RAIL_NEUTRAL_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row dated by the TripUpdates header and qualified by it (6.2).
   const board = boardFreshness("njt", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">NJ Transit</span>` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const rows = njtOrderedArrivals(body.arrivals, now);
-  if (!rows.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!rows.length) return `${header}<div class="arr-none">No trains</div>\n`;
   return (
     header +
-    rows
-      .map((row) => {
+    popupArrRowsHtml(
+      rows.map((row) => {
         const color = colorFor(row.route_id);
-        const badge =
-          `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
-          `${esc(row.route_id || "?")}</span>`;
-        const label = njtRowLabel(row, nameFor);
         const display = njtArrivalDisplay(row, now);
-        const prefix = display.mode === "departing" ? "departs " : "";
-        const num = row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "";
-        return (
-          `${badge}${label}${num} ${esc(prefix + formatCountdown(display.seconds))}` +
-          qualifierHtml(arrivalQualifier(row, board))
-        );
-      })
-      .join("<br>")
+        return {
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(row.route_id || "?")}</span>`,
+          // njtRowLabel returns PLAIN TEXT since MR5: the grid escapes its own label, and a
+          // helper that escaped first would print "&amp;amp;" for a headsign with an ampersand.
+          label: njtRowLabel(row, nameFor),
+          extraHtml:
+            (row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "") +
+            qualifierHtml(arrivalQualifier(row, board)),
+          countdown: (display.mode === "departing" ? "departs " : "") + formatCountdown(display.seconds),
+        };
+      }),
+    )
   );
 }
 
@@ -3836,8 +4636,7 @@ function njtRowLabel(row, nameFor = () => null) {
   const r = row || {};
   const headsign = r.headsign || null;
   const routeName = r.route_id ? nameFor(r.route_id) : null;
-  const text = headsign || routeName;
-  return text ? ` ${esc(text)}` : "";
+  return headsign || routeName || "";
 }
 
 // ---- Service alerts in the station popups (phase 12b) ----
@@ -4204,7 +5003,7 @@ function bannerRenderKey(shown, stale) {
 function alertsBlockHtml(alerts) {
   const rows = shownAlerts(alerts).map((a) => `<div class="alert-row">${esc(a.header)}</div>`);
   if (!rows.length) return "";
-  return `<div class="alert-block">${rows.join("")}</div>`;
+  return `<div class="alert-block">${rows.join("\n")}</div>\n`;
 }
 
 // The alerts a surface actually SHOWS: those with a header to show. An alert with no
@@ -5013,8 +5812,8 @@ if (typeof module !== "undefined" && module.exports) {
     vanishingFocusMessage,
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    computeRouteSlice, railroadColor, orderedRailroadBuckets,
-    railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
+    computeRouteSlice, orderedRailroadBuckets,
+    railroadArrivalsHtml, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
@@ -5033,7 +5832,16 @@ if (typeof module !== "undefined" && module.exports) {
     namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
+    POPUP_SURFACE_FALLBACK,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,
+    // MR5 (Q2): the state's own words, and the popup footer that says them the strip's way.
+    feedStateWords, popupFreshHtml,
+    // MR5: the popup's vocabulary, and the subway plate that became a builder so a title
+    // could draw the map's own mark.
+    POPUP_SYSTEM_WORDS, POPUP_MARK_TITLE, POPUP_MARK_ROW, popupMarkHtml, popupKickerHtml,
+    POPUP_KICKER_MARKS, popupRouteMarksHtml,
+    popupTitleHtml, popupRowsHtml, popupDirHtml, popupArrRowsHtml, railroadHeadParts,
+    subwayPlateSvg,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
     humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
@@ -5046,10 +5854,11 @@ if (typeof module !== "undefined" && module.exports) {
     // 6.3: a vehicle's position, qualified by its own observation, and its rendering.
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,
-    drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionLineHtml, positionClause,
+    drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionWords, positionClause,
     // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
     // time and the tag's markup read as a string rather than off a screenshot.
     RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
+    railTagBodySvg, railRouteTagSvg,
     RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
     segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
@@ -5064,9 +5873,9 @@ if (typeof module !== "undefined" && module.exports) {
     railLabelBand, RAIL_LABEL_ZOOM, ferryLabelBand, FERRY_LABEL_ZOOM,
     railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
-    vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
+    composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
-    stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
+    STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,
@@ -5075,7 +5884,7 @@ if (typeof module !== "undefined" && module.exports) {
     ferryStatusText, ferrySpeedKnots, ferryBoatPopupHtml, ferryArrivalsHtml,
     // 15c: NJ Transit Rail.
     NJT_FALLBACK_COLOR, njtColor, njtRouteColor, njtRouteName, njtKey, formatNjtHead,
-    njtRouteTables, njtTrainPopupHtml, njtDelayText, njtDelayLine, njtTrainName,
+    njtRouteTables, njtTrainPopupHtml, njtDelayText, njtTrainName,
     njtStationName,
     njtArrivalDisplay, njtArrivalsHtml, njtRowLabel, njtAtItsStation, njtGlideTrain,
     njtOrderedArrivals, isNotConfigured,
@@ -5096,5 +5905,7 @@ if (typeof module !== "undefined" && module.exports) {
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
     // A4: the popup-clearing geometry.
     boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP,
+    clampedAutoPanPadding, popupAutoPanWant, POPUP_AUTOPAN_GAP, POPUP_AUTOPAN_WANT,
+    POPUP_OPTIONS,
   };
 }

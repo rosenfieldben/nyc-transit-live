@@ -100,7 +100,44 @@ Unknown route → code = route id, colour #6d6e71. **Map these against the real 
 
 Leaflet popup restyle (`.leaflet-popup-content-wrapper`, `.leaflet-popup-tip`): `background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(14px); color: var(--ink); border-radius: 0; box-shadow: var(--shadow); border-left: 2px solid var(--ink)`. Content margin `14px 16px`, Archivo 13px / 1.35, min-width 220px, `maxWidth 320`. Close button `--muted`, 16px.
 
+> **Erratum, MR5 (2026-09-20): the popup ships at full `--surface` opacity, and the 94% is
+> overruled the way MR1 overruled the header's 90%.** MR1's finding F1 is the same finding about
+> the same drawing one surface out: "axe cannot resolve the contrast of text over a translucent
+> surface whose backdrop is a tile IMAGE", and making the header opaque took the undecidable set
+> from nine entries to one. Measured on this branch at 94%, every popup's text came back
+> `incomplete` ("background color could not be determined because element contains an image node")
+> at 1280, 375 and 320 in both themes. **And it did worse than obscure a safe surface: the dark
+> theme's real `color-contrast` violation on the popup head's ink and `.popup-sub` was reported
+> ONLY as undecidable, so the translucency hid a serious failure.** Opaque, axe names that
+> violation, which is how MR5 came to fix it. The undecidable inventory does not grow.
+> **`backdrop-filter: blur(14px)` goes with the alpha**, for the same reason and by the same
+> precedent: a backdrop filter filters what is behind the element and the element's own background
+> then paints over it, so at full opacity none of the filtered backdrop is ever visible. MR1 took
+> the filter off the header along with the header's 90%; this is that pair one surface out. The ink
+> edge, the radius, the shadow and the content metrics are as drawn. Full measurements in
+> `docs/reviews/map-redesign-rounds.md` under Stage MR5.
+
 Auto-pan must clear the page chrome: on `popupopen`, measure the rendered header + alert strip bottom edge and set `autoPanPaddingTopLeft = [24, bottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then call `_adjustPan()`.
+
+> **Erratum, MR5 (2026-09-19): the recipe above is measured broken on this app, and stage MR5
+> implements a clamped form of it.** Two measurements, both on the shipped frontend. (1) The
+> paddings carry no viewport-fit guard, and Leaflet's own arithmetic lets the TOP padding win
+> unconditionally when top and bottom cannot both be honoured. With the Key panel open at
+> 375x667 the header's bottom edge is 579, so the recipe asks for a top padding of 592 and
+> `_adjustPan()` puts the popup at `top 592, bottom 718` on a 667px map: 51px off the bottom.
+> (That viewport read "375x640" until a reviewer read the sentence against itself: a 667px map does
+> not fit in a 640px window, 375x667 is the phone this suite uses (`PHONE` in
+> `tests/e2e/a11y.spec.js`), and 718 - 667 = 51 is arithmetic that closes only there.)
+> The app's own `panPopupClearOfChrome` cannot rescue it, because that is a collision solver
+> and the popup is not colliding, it is off-screen. Horizontally `24 + 110` is unsatisfiable
+> below about 400px wide. (2) Leaflet's autopan has no equivalent of this app's
+> `riderOwnsTheView` guard, and `popup.update()` runs it every fifteen seconds for every open
+> vehicle popup, so the recipe's padding grows the band in which the map is yanked out from
+> under a rider from a 5px strip to the whole header. **What MR5 ships**: each padding clamped
+> to what the measured map and popup can satisfy, `panPopupClearOfChrome` kept as the authority
+> for the real boxes and for growth after the first paint, and the padding stood down while the
+> rider owns the view. The full measurements are in `docs/reviews/map-redesign-rounds.md` under
+> Stage MR5, ruling S3.
 
 Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.pk` kicker row: 600 10px uppercase, letter-spacing .1em, `--muted`, `flex; justify-content: space-between` (left: "Subway station", right: route bullets / direction / accessibility).
@@ -111,6 +148,70 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.alert` block above everything: `border-left 3px var(--accent); padding 6px 0 6px 10px; 11px/1.4`.
 - `.xlink` cross-link button ("Also here: Jamaica →"): 600 11px, `border 1px --divider`, transparent.
 - `.fresh` footer: `border-top 1px --rule; margin-top 10px; 600 10px uppercase --muted` with a 6×6 square: green `#00933c` "LIVE · UPDATED 12S AGO"; stale → accent text and square, "AS OF 6M AGO · FEED STALE"; schedule-only → gray square, "SCHEDULED HEADWAYS · NO LIVE FEED".
+
+> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with six deviations,
+> each measured.** (Four when this erratum was written: a reviewer counted the items against the
+> prose and found the fourth carrying two unrelated deviations, so it is two items now, and ruling
+> R3 added the sixth after the adversarial round.)
+>
+> 1. **A popup's route mark is the MAP's mark, not `.bul.lg` / `.sq` / `.rtag`.** The three DOM
+>    forms above would be a second drawing of a mark this app already builds (the subway's plate,
+>    the rail tag, the bus arrow or dot, the PATH diamond, the ferry hull), and two drawings of one
+>    thing drift the first time either is edited, which is this phase's finding N6 one surface out.
+>    So `popupMarkHtml` re-wraps the string the marker's own icon is wearing, at the size this list
+>    gives (`.bul.lg` 24 in a title, `.bul.sm` 17 in a kicker or a row), with the mark's body copied
+>    byte for byte. The rail tag is drawn at its own 30-unit box instead of 24, because scaling that
+>    box down would draw its blocks at 10.4 units with 7px type, smaller than the map draws them.
+>    A subway station, a PATH station and a ferry dock are canvas circles with no string to borrow,
+>    so their titles carry words alone.
+> 2. **`.arr .now` is `--accent-ink`, not `--accent`.** Measured on the popup's surface, `--accent`
+>    reads 3.47 in the light theme, below the 4.5 a string owes; `--accent-ink` is the token that
+>    exists for that case and reads 5.03 light and 5.44 dark. Same hue, readable lightness. This is
+>    the same correction the `.fresh` footer's words took under ruling Q2.
+> 3. **The footer's three sentences are not typed anywhere** (ruling Q2): "LIVE · UPDATED 12S AGO"
+>    is the sentence memo D9 forbids, so the live state shows its square and says its words only to
+>    a screen reader, and the stale state takes the feed strip's own string from `feedStateWords`.
+>    (Ruling R2, after the adversarial round: where the popup's Position row has already stated an age
+>    at least as old as the feed's, the footer says the words in NEITHER channel. A screen reader was
+>    hearing two ages about one train.)
+>    The square, the rule above it and the metrics are as drawn. **The schedule-only state is not a
+>    popup state at all**: the footer is a vehicle popup's line and the only schedule-only feed is
+>    AirTrain, which has no vehicles, so a rider reads that word on the feed strip's tooltip.
+>
+> 4. **`.alert` is NOT renamed: it ships as the app's own `.alert-block` with `.alert-row` inside
+>    it**, carrying this list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on
+>    the REGION rather than on each alert. The `.alert + .alert` rule above implies one box per
+>    alert, which draws an accent edge per alert: a station popup with three of them would read as
+>    three warnings rather than one block of them.
+>
+> 5. **`.xlink` IS renamed**, because there the class was the only thing left to adopt, **but its
+>    arrow is not drawn.** Added as an `aria-hidden` span, so that no screen reader would read
+>    "right arrow" after the station's name, it made axe report a NEW undecidable finding ("Element
+>    content contains only non-text characters") at every width in both themes. The ruling on this
+>    surface is that the undecidable inventory does not grow, and a decorative glyph is the weakest
+>    reason there is to grow it: the button already says where it goes and its border already says it
+>    is pressable.
+>
+> **The `.kv` row list ships as given EXCEPT for the Position row's values**, and that exception is a
+> ruling rather than a slip: the three strings in the bullet above ("Live GPS" | "Scheduled, no GPS"
+> | "Placed from arrivals") are printed nowhere in this app. What a rider reads is the freshness
+> contract's own vocabulary through `positionWords`: `scheduled position (no GPS)`, `estimated from a
+> prediction`, and SILENCE for a fresh reported fix, because silence means current (memo D9, ruling
+> Q1). An earlier draft of this erratum certified the row list "as given" with no such note, which
+> would have invited a later stage to reintroduce three strings the contract forbids.
+>
+> 6. **The kicker's route marks have a cap the design does not mention** (ruling R3, after the
+>    adversarial round): "right: route bullets" is drawn on all five station boards, through one
+>    helper, showing the first THREE routes, then a `+n` count of the rest, with every route's name in
+>    a visually-hidden span because the marks themselves are aria-hidden. Three is measured rather
+>    than chosen: the five families' marks run from 17 units wide (a subway plate, a PATH diamond) to
+>    66.69 (an NJ Transit tag reading MNBTN), and at four marks that family's kicker wraps to a second
+>    row at 375 and 320. Leaflet sizes a popup to its own nowrap content up to maxWidth 320, so an
+>    uncapped list does not wrap, it widens the popup: twelve subway plates make it 267px.
+>
+> The row list gains **five labels the app's own fields needed** (Direction, Status, Speed, To,
+> Heading) and two nouns it already printed (Bus, Boat). Full measurements in
+> `docs/reviews/map-redesign-rounds.md` under Stage MR5.
 
 ---
 

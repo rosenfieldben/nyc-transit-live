@@ -119,6 +119,16 @@ async function loadFerryStops() {
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => ferryColorFor(routeId),
+          // MR5: the surface this board's route headings are printed on, for readableInk.
+          popupSurfaceColor(),
+          // No title mark: a dock is a canvas circle, like a PATH station.
+          "",
+          // R3: the routes calling here, as hulls in their published colours, sharing the kicker's
+          // right-hand slot with the access glyph this dock was already publishing there.
+          (routeId) => ({
+            svg: ferryHullSvg(ferryColorFor(routeId)),
+            name: ferryRouteNames.get(routeId) || routeId,
+          }),
         ),
     })).addTo(ferryDocks);
     registerStation({
@@ -197,10 +207,21 @@ function ferryBoatPopup(record) {
   const position = ferryPosition(b);
   return (
     routeAlertsBlock("ferry", b.route_id) +
-    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id), position) +
-    // C2: single-feed source, synthesized system, same age line as every other
-    // vehicle popup, unless the boat's own words already stated an age that old.
-    vehicleStaleLine(systemAgeOf("ferry", "ferry"), position)
+    // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
+    // against it rather than against the white a Leaflet popup used to be (popupSurfaceColor).
+    ferryBoatPopupHtml(
+      b,
+      ferryRouteNames.get(b.route_id) || null,
+      ferryColorFor(b.route_id),
+      position,
+      popupSurfaceColor(),
+      // And the hull this boat is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
+    ) +
+    // C2 restyled as MR5's footer (ruling Q2): single-feed source, synthesized system, same
+    // footer as every other vehicle popup, and its WORDS are withheld when the boat's own words
+    // already stated an age that old. The square is not.
+    popupFreshLine(systemAgeOf("ferry", "ferry"), position)
   );
 }
 
@@ -299,7 +320,7 @@ function applyFerryBoats(data) {
           ferryBaseOpacity(boat),
         ),
       }, ferryMarkerName(boat))
-        .bindPopup(() => ferryBoatPopup(newRecord))
+        .bindPopup(() => ferryBoatPopup(newRecord), POPUP_OPTIONS)
         .addTo(ferryBoats);
       ferryBoatRecords.set(boat.id, newRecord);
     }

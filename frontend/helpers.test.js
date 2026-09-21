@@ -58,11 +58,9 @@ const {
   pointAtArcLength,
   projectOntoRoute,
   computeRouteSlice,
-  railroadColor,
   positionQualifier,
   orderedRailroadBuckets,
   railroadArrivalsHtml,
-  formatRailroadHead,
   PATH_BUCKET_ORDER,
   PATH_FALLBACK_COLOR,
   PATH_ROUTE_MAX_SLICE,
@@ -111,7 +109,6 @@ const {
   staleAge,
   markerOpacity,
   glideClock,
-  stalePopupLine,
   STALE_MARKER_OPACITY,
   FERRY_DOCKED_OPACITY,
 } = require("./helpers.js");
@@ -202,6 +199,24 @@ test("railroadArrivalsHtml escapes a hostile station name and train_num", () => 
   assert.ok(html.includes("1 min")); // (100 - 40)s -> "1 min" countdown
 });
 
+/* RULING R1's SHARPEST CASE, ASKED OF THE BOARD ITSELF: the badge must resolve its pair through
+   railBranchPaint, not through the published colour plus readableTextOn.
+
+   WHY IT NEEDS ITS OWN TEST. EE0034 is Metro-North's New Haven red and it takes white at 4.48 and
+   dark at 3.88, so NEITHER ink clears on it; railBranchPaint answers that by MOVING the fill two
+   units to #ec0033, which is the remedy this repo already applies to the tag's branch block. No
+   fixture serves that colour, so a board that took the published fill and computed an ink would ship
+   an AA failure on four of Metro-North's six routes with every gate green. The A3 sweep measures
+   railBranchPaint's own pairs; this measures that the BOARD asks it. */
+test("MR5 R1: a board badge takes the moved fill where no ink clears the published one", () => {
+  const station = { id: "1", system: "MNR", name: "Grand Central" };
+  const body = { directions: { Inbound: [{ route_id: "6", trip_id: "t1", arrival: 100, train_num: null }] } };
+  const html = railroadArrivalsHtml(station, body, 40, () => railBranchPaint("EE0034", "FFFFFF"));
+  assert.match(html, /background:#ec0033;color:#ffffff/, "the fill moved so its ink clears");
+  assert.ok(!html.includes("background:#EE0034"), "the published fill would be 4.48 with white");
+  assert.ok(contrastRatio("#ffffff", "#ec0033") >= 4.5, "and the moved pair is what clears");
+});
+
 test("railroadArrivalsHtml renders a No trains state for empty directions", () => {
   const html = railroadArrivalsHtml({ id: "1", system: "MNR", name: "Grand Central" }, { directions: {} }, 0);
   assert.ok(html.includes("Grand Central"));
@@ -215,11 +230,14 @@ test("railroadArrivalsHtml shows the route name from nameFor and escapes it", ()
     directions: { Inbound: [{ route_id: "1", trip_id: "t1", arrival: 100, train_num: null }] },
   };
   // Hostile route name via the resolver: it must appear escaped, never raw.
-  const html = railroadArrivalsHtml(station, body, 40, () => "Bab<script>Branch");
+  // SLOT 5 SINCE RULING R1, because slot 4 is the paint resolver now. Passed as `undefined` rather
+  // than omitted: a hostile name in the paint slot would render no label at all and this test would
+  // keep passing while testing nothing, which is the shape the phase's fifth defect is named for.
+  const html = railroadArrivalsHtml(station, body, 40, undefined, () => "Bab<script>Branch");
   assert.ok(html.includes("Bab&lt;script&gt;Branch"));
   assert.ok(!html.includes("<script>"));
   // Absent name (resolver returns null) just omits the label, no crash.
-  const plain = railroadArrivalsHtml(station, body, 40, () => null);
+  const plain = railroadArrivalsHtml(station, body, 40, undefined, () => null);
   assert.ok(plain.includes("arr-badge") && plain.includes("1 min"));
 });
 
@@ -276,10 +294,24 @@ test("pathTrainPopupHtml shows placement fields, never the unstable trip id", ()
   const position = positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "path" });
   const html = pathTrainPopupHtml(train, "Newark - World Trade Center", "#d93a30", position);
   assert.ok(html.includes("Newark - World Trade Center"));
-  assert.ok(html.includes("Next stop: Journal Square"));
-  assert.ok(html.includes("To New Jersey"));
-  assert.ok(html.includes("scheduled position (no GPS)"));
-  assert.ok(html.includes("#d93a30"));
+  /* MR5: THE FACTS ARE SECTION 5's LABEL/VALUE ROWS, so "Next stop: Journal Square" is a label
+     cell and a value cell rather than one sentence. The words are the same words; what moved is
+     the colon, which the grid draws as a column. */
+  assert.ok(html.includes('<div class="k">Next stop</div>\n<div class="v">Journal Square</div>'));
+  assert.ok(html.includes('<div class="k">Direction</div>\n<div class="v">To New Jersey</div>'));
+  assert.ok(html.includes('<div class="k">Position</div>\n<div class="v">scheduled position (no GPS)</div>'));
+  // And the kicker is the feed strip's own word for this feed, which is where "PATH" moved to.
+  assert.ok(html.startsWith('<div class="pk"><span>PATH</span>'));
+  /* MR5: THE HEAD'S INK IS THE ROUTE COLOUR WALKED AGAINST THE POPUP'S OWN SURFACE, not the
+     published colour and not the colour walked against white. This used to assert the raw
+     `#d93a30`, which passed because PATH's red happens to clear 4.5 on white and readableInk
+     returned it untouched. MR5 makes the popup --surface, so it no longer does: measured,
+     #d93a30 reads 4.57 on white and is walked to #c3342b for 4.51 here.
+     ASSERTED AS THE HELPER'S OWN OUTPUT rather than as the new hex, so this is not a second
+     copy of readableInk's arithmetic, and asserted AGAINST the white form too: those two
+     differ, so a builder that went back to the default fails on the second line. */
+  assert.ok(html.includes(readableInk("#d93a30", POPUP_SURFACE_FALLBACK)));
+  assert.ok(!html.includes(`color:${readableInk("#d93a30")}"`), "the head must not be inked against white");
   // The API contract: bridge trip ids are unstable and display-poor, never shown.
   assert.ok(!html.includes("329352234"));
 });
@@ -334,13 +366,9 @@ test("pathArrivalsHtml renders No trains for an empty directions dict and escape
   assert.ok(hostile.includes(PATH_FALLBACK_COLOR));
 });
 
-test("formatRailroadHead prefers the route name, falls back to route id, then system", () => {
-  assert.equal(formatRailroadHead("LIRR", "1", "Babylon Branch"), "LIRR · Babylon Branch");
-  assert.equal(formatRailroadHead("LIRR", "1", null), "LIRR route 1");
-  assert.equal(formatRailroadHead("MNR", null, null), "MNR");
-  // Returns plain text (the caller escapes); it does not itself inject markup.
-  assert.equal(formatRailroadHead("MNR", "3", "New Haven"), "MNR · New Haven");
-});
+// formatRailroadHead's test WENT WITH IT, to popupvocab.test.js: MR5 replaced the joined head with
+// railroadHeadParts (a kicker and a title), and that file asserts the parts AND joins them back
+// into the three strings this test used to assert, so the words are still pinned.
 
 test("esc escapes all HTML-significant characters", () => {
   assert.equal(esc(`<b a="1" b='2'>&`), "&lt;b a=&quot;1&quot; b=&#39;2&#39;&gt;&amp;");
@@ -361,15 +389,6 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
   assert.equal(lineColor("6X"), lineColor("6")); // express variant by first char
   assert.equal(lineColor(null), "#555555");
   assert.equal(lineColor("X9"), "#555555"); // unknown line
-});
-
-test("railroadColor is deterministic, from the palette, and null-safe", () => {
-  assert.equal(railroadColor("3"), railroadColor("3")); // deterministic
-  assert.match(railroadColor("3"), /^#[0-9a-f]{6}$/);
-  assert.equal(railroadColor(null), "#546e7a"); // neutral default, readable with white ink
-  assert.equal(railroadColor(""), "#546e7a");
-  // A railroad route id is colored on its own scale, not the subway's.
-  assert.notEqual(railroadColor("1"), lineColor("1"));
 });
 
 // isPlacedRailroad's test went with it in 6.3: the railroad glyph, glide, words and
@@ -896,6 +915,10 @@ const { selectHeadwayBand, airtrainStationPopupHtml } = require("./helpers.js");
 const {
   parseColor, contrastRatio, readableTextOn, readableInk, INK_DARK, LINE_COLORS,
   statusLineText, MOBILE_MAX_WIDTH_PX, narrowViewport,
+  // MR5: the background a popup head's ink is walked against now that a popup is not white.
+  POPUP_SURFACE_FALLBACK,
+  // R1: the rail families' neutral and the pair resolver that replaced the hash palette.
+  RAIL_NEUTRAL_COLOR, railBranchPaint,
 } = require("./helpers.js");
 
 // The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
@@ -951,16 +974,17 @@ test("airtrainStationPopupHtml: scheduled label + subhead, single-branch station
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720); // 12:00 -> 4 min
   assert.match(html, /Jamaica Station-Station D/);
   assert.match(html, /scheduled service \(no live tracking\)/);
-  assert.match(html, /Jamaica: every ~4 min/);
-  assert.match(html, /\(scheduled\)/);
+  // MR5: a branch is a label and its headway is the value, in section 5's grid. The colon the
+  // sentence used to carry is the column between them; "(scheduled)" stays inside the value.
+  assert.match(html, /<div class="k">Jamaica<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
   assert.doesNotMatch(html, /Howard Beach/); // 160565 is served only by the Jamaica branch
 });
 
 test("airtrainStationPopupHtml: multi-branch station lists every serving branch", () => {
   const station = { id: "160564", name: "Federal Circle-Station C" };
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
-  assert.match(html, /Jamaica: every ~4 min/);
-  assert.match(html, /Howard Beach: every ~4 min/);
+  assert.match(html, /<div class="k">Jamaica<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
+  assert.match(html, /<div class="k">Howard Beach<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
 });
 
 test("airtrainStationPopupHtml: null band renders a fallback, never 'undefined'", () => {
@@ -983,9 +1007,12 @@ test("airtrainStationPopupHtml escapes station and route names", () => {
 test("airtrainStationPopupHtml uses no live-countdown markup", () => {
   const station = { id: "160564", name: "Federal Circle" };
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
-  // None of the CSS classes the live-arrivals countdown popups use.
-  for (const cls of ["arr-dir", "arr-badge", "arr-none"]) {
-    assert.ok(!html.includes(cls), `must not use live-arrivals class ${cls}`);
+  /* None of the CSS classes the live-arrivals countdown popups use. MR5 renamed the bucket heading
+     from .arr-dir to section 5's .dir, and this asks for the class ATTRIBUTE rather than the bare
+     word: "dir" is three letters that occur inside ordinary prose, and a substring test on it would
+     pass or fail for reasons that have nothing to do with a heading. */
+  for (const cls of ["dir", "arr", "arr-badge", "arr-none"]) {
+    assert.ok(!html.includes(`class="${cls}"`), `must not use live-arrivals class ${cls}`);
   }
 });
 
@@ -1502,16 +1529,23 @@ test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in
     "#00839c",
   );
   assert.ok(html.includes("East River"));
-  // A3: the heading carries the route's IDENTITY, darkened only as far as readability
-  // demands. This fixture colour is a real NYC Ferry route colour and it measures 4.44
-  // on white, so it darkens; the old assertion pinned the literal #00839c and was
-  // therefore pinning an unreadable value. Asserting the obligation instead survives any
-  // future change to how far readableInk goes.
-  assert.ok(html.includes(readableInk("#00839c")));
-  assert.ok(contrastRatio(readableInk("#00839c"), "#ffffff") >= 4.5);
-  assert.ok(html.includes("Boat H201"));
-  assert.ok(html.includes("Under way"));
-  assert.ok(html.includes("NYC Ferry"));
+  /* A3: the heading carries the route's IDENTITY, darkened only as far as readability demands.
+     This fixture colour is a real NYC Ferry route colour and it measures 4.44 on white, so it
+     darkens; the old assertion pinned the literal #00839c and was therefore pinning an
+     unreadable value. Asserting the obligation instead survives any future change to how far
+     readableInk goes.
+     MR5 MOVED THE BACKGROUND, NOT THE OBLIGATION. The popup is --surface rather than white, so
+     the obligation is now against that: measured, #00839c is walked to #007c94 for 4.87 on white
+     and to #006f85 for 4.80 here. The white form is excluded too, because the two differ and that
+     is the only way this can tell which one shipped. */
+  assert.ok(html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)));
+  assert.ok(contrastRatio(readableInk("#00839c", POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5);
+  assert.ok(!html.includes(`color:${readableInk("#00839c")}"`), "the head must not be inked against white");
+  // MR5: section 5's rows. "Boat H201" was one line with the noun in front of the label; it is a
+  // label cell and a value cell now, and "NYC Ferry" is the kicker the popup opens with.
+  assert.ok(html.includes('<div class="k">Boat</div>\n<div class="v">H201</div>'));
+  assert.ok(html.includes('<div class="k">Status</div>\n<div class="v">Under way</div>'));
+  assert.ok(html.startsWith('<div class="pk"><span>NYC Ferry</span>'));
   // Under way above the floor: speed shown in knots (H4). 6.5 m/s = 12.6 kn.
   assert.ok(html.includes("12.6 kn"));
   // The raw m/s value is never surfaced.
@@ -1525,19 +1559,24 @@ test("ferryBoatPopupHtml omits speed for a docked boat", () => {
     "#00839c",
   );
   assert.ok(html.includes("At dock"));
-  // Docked boat: no speed line at all (dock jitter is noise, not motion).
+  // Docked boat: no speed row at all (dock jitter is noise, not motion).
   assert.ok(!html.includes("kn"));
+  assert.ok(!html.includes(">Speed<"));
 });
 
 test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {
   const html = ferryBoatPopupHtml({ label: "H099", status: null }, null, FERRY_FALLBACK_COLOR);
   assert.ok(html.includes("Unassigned"));
-  // The fallback fill is #78909c, which is 2.72 on white and therefore darkens when used
-  // as heading text. Its use as a chip FILL is unchanged and covered separately.
-  assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR)));
-  assert.ok(html.includes("Boat H099"));
-  // Unknown status -> no status line at all (ferryStatusText returned null).
+  // The fallback fill is #78909c, which is 2.72 on white and therefore darkens when used as
+  // heading text. Its use as a chip FILL is unchanged and covered separately. MR5: against the
+  // popup's own surface rather than white, so #60737d becomes #5a6c75.
+  assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR, POPUP_SURFACE_FALLBACK)));
+  assert.ok(html.includes('<div class="k">Boat</div>\n<div class="v">H099</div>'));
+  // Unknown status -> no status ROW at all (ferryStatusText returned null, and the grid drops a
+  // row with no value). Asserted on the label as well as on the words, because a row printed with
+  // an empty value would still say "Status" to a rider.
   assert.ok(!html.includes("At dock") && !html.includes("Under way"));
+  assert.ok(!html.includes(">Status<"), "a boat with no status says nothing about its status");
 });
 
 test("ferryBoatPopupHtml escapes hostile route name and label", () => {
@@ -1560,12 +1599,16 @@ test("ferryArrivalsHtml buckets by route name with arriving/departing countdowns
   assert.ok(html.includes("NYC Ferry"));
   assert.ok(html.includes("&#9855;")); // wheelchair accessibility marker
   assert.ok(html.indexOf("East River") < html.indexOf("South Brooklyn")); // alphabetical
-  // Route-coloured headings, each darkened to clear AA on the white popup. #ffd100 is
-  // the sharper case: bright yellow measures 1.51 on white, which is not text.
-  assert.ok(html.includes(readableInk("#00839c")) && html.includes(readableInk("#ffd100")));
+  // Route-coloured headings, each darkened to clear AA on the popup. #ffd100 is the sharper
+  // case: bright yellow measures 1.51 on white, which is not text. MR5: the popup is --surface
+  // rather than white, so the background the walk targets is the token's own value.
+  assert.ok(
+    html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)) &&
+      html.includes(readableInk("#ffd100", POPUP_SURFACE_FALLBACK)),
+  );
   for (const raw of ["#00839c", "#ffd100"]) {
     assert.ok(
-      contrastRatio(readableInk(raw), "#ffffff") >= 4.5,
+      contrastRatio(readableInk(raw, POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5,
       `${raw} heading ink is below AA on the popup`,
     );
   }
@@ -2211,14 +2254,25 @@ test("C2 a lag-stale source freezes too: the regression the age-based freeze had
   assert.equal(glideClock(now + 300, at), now);
 });
 
-test("C2 stalePopupLine renders the shared age line only once stale", () => {
-  assert.equal(stalePopupLine(null), "");
-  assert.equal(stalePopupLine(10), "");
-  assert.equal(stalePopupLine(240), '<div class="popup-stale">as of 4m ago</div>');
-  // The same markup a stale board's system line renders into (6.2), so a stale board
-  // and a stale train cannot be worded or styled apart.
-  assert.equal(stalePopupLine(240), boardLineHtml("as of 4m ago"));
+test("C2 / MR5 Q2: a board's age line and a vehicle's footer are two surfaces, and the difference is pinned", () => {
+  /* THIS TEST CHANGED SHAPE BECAUSE THE APP DID. It used to assert that stalePopupLine and
+     boardLineHtml produced IDENTICAL markup, "so a stale board and a stale train cannot be worded or
+     styled apart". stalePopupLine is gone: vehicleStaleLine was its only caller and ruling Q2's
+     footer took that job. So the claim it made is no longer true, and pretending otherwise by
+     deleting the test would hide a rider-visible divergence rather than record it.
+
+     WHAT A RIDER SEES NOW. A station board's system line is 6.2's and is untouched: lowercase "as of
+     4m ago" in a .popup-stale div. A vehicle popup's footer says the FEED STRIP's words for the same
+     age, "As of 4m ago", because the ruling is that the footer says it the strip's way so that the
+     state is said one way on BOTH of those surfaces. The two are different facts from different
+     sources (a board's arrivals against a feed's poll), which is the argument for letting them read
+     differently; that they differ only in a capital letter is the argument against. Both forms are
+     pinned here so whichever way a later stage resolves it, it does so deliberately. */
+  assert.equal(boardLineHtml("as of 4m ago"), '<div class="popup-stale">as of 4m ago</div>\n');
   assert.equal(boardLineHtml(null), "");
+  assert.equal(feedStateWords({ state: "stale", age: 240 }), "As of 4m ago");
+  // The divergence, stated as an assertion so it cannot close silently either:
+  assert.notEqual(feedStateWords({ state: "stale", age: 240 }), "as of 4m ago");
 });
 
 test("C2 alertsFreshnessBasis is the WORST system's fetched_at (the F1 partial case)", () => {
@@ -3048,24 +3102,17 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     assert.ok(color, `${selector} must still declare a color`);
     return color[1].trim();
   };
-  // MR1 SPLIT THIS TEST IN TWO HALVES, because the chrome is now tokenised and the popups
-  // are not: the popups keep their literal white surface until MR5 restyles them, while
-  // every chrome ink resolves through a custom property and has to be checked against BOTH
-  // themes. The claim is unchanged in both halves: a muted ink clears AA on the surface it
-  // is actually painted on, and the surfaces this test believes in are asserted too, so a
-  // stylesheet that moved one cannot make the pairing pass while the real thing got worse.
+  /* MR1 SPLIT THIS TEST IN TWO HALVES, because the chrome was tokenised and the popups were not:
+     "the popups keep their literal white surface UNTIL MR5 RESTYLES THEM", it said, and half one
+     measured three popup greys against a literal `#ffffff`. MR5 is that stage, so the halves
+     converge: there is no literal surface left to measure against and both halves resolve tokens
+     per theme. The claim is unchanged throughout, and it is the claim that caught this: a muted
+     ink clears AA on the surface it is ACTUALLY painted on. MR5's popup greys were #666 on white,
+     which is 4.74 on the light surface and 2.45 on the dark one, and axe named the dark one a
+     serious violation the moment the popup stopped being white.
 
-  // Half one: the popup inks, on the literal surface the popups still have.
-  const WHITE = "#ffffff";
-  for (const selector of [".popup-sub", ".arr-none", ".popup-stale"]) {
-    const ink = declared(selector);
-    const ratio = contrastRatio(ink, WHITE);
-    assert.ok(
-      ratio >= 4.5,
-      `${selector} is ${ink} on ${WHITE} = ${ratio.toFixed(2)}, below the 4.5 it owes`,
-    );
-  }
-  assert.ok(css.includes("background: #fff;"), "the popup surface is still opaque white");
+     THE SURFACES THIS TEST BELIEVES IN ARE ASSERTED TOO, so a stylesheet that moved one cannot
+     make a pairing pass while the real thing got worse. */
 
   // Half two: the chrome, resolved per theme out of the two :root blocks. The tokens are
   // read from the stylesheet rather than repeated here, so a token edited without measuring
@@ -3080,6 +3127,19 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
   const light = tokens(":root,\n:root\\[data-theme=\"light\"\\]");
   const dark = tokens(':root\\[data-theme="dark"\\]');
 
+  /* MR5: a declared value may now be `var(--muted)` rather than a hex, because the popup rules are
+     tokenised. Resolved against the theme's own token map, one level, which is all this stylesheet
+     ever nests: a var() whose token the block does not declare fails loudly rather than resolving
+     to undefined and comparing as null, which is how a tokenised rule would otherwise pass this
+     test by being unmeasurable. */
+  const resolved = (value, t, what) => {
+    const ref = /^var\(--([\w-]+)\)$/.exec(String(value).trim());
+    if (!ref) return value;
+    const token = t[ref[1]];
+    assert.ok(token, `${what}: style.css declares var(--${ref[1]}), which this theme does not define`);
+    return token;
+  };
+
   for (const [theme, t] of [["light", light], ["dark", dark]]) {
     // TEXT owes 4.5. Each of these is a real string in the chrome: the muted feed names and
     // the note, the ink the rows are set in, the accent variant the stale note and the OFF
@@ -3090,11 +3150,34 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
       [t["accent-ink"], t.surface, "the accent AS TEXT on the header surface"],
       [t.chipink, t["accent-ink"], "the filled button's label on its own fill"],
       [t.surface, t.ink, "an active view preset's label on its inverted fill"],
+      // MR5: the popup's own strings, on the popup's own surface, which is the same --surface
+      // token the header uses. Read out of the stylesheet by selector so a grey reintroduced in
+      // either rule fails here rather than shipping.
+      [declared(".popup-sub"), t.surface, "the popup's kicker and sub text"],
+      [declared(".arr-none"), t.surface, "the popup's \"No trains\" line"],
+      [declared(".popup-stale"), t.surface, "the popup's freshness hedge"],
+      [declared(".arr-qualifier"), t.surface, "a board row's own age qualifier"],
+      [declared(".alert-block"), t.surface, "the popup's service alert text"],
+      [declared(".xlink"), t.surface, "the cross-link button's label"],
+      [declared(".leaflet-popup-content .alert-stale"), t.surface, "the popup's alerts-stale hedge"],
+      // MR5 (Q2): the footer's WORDS take --muted, not the state's colour. --accent as text reads
+      // 3.47 in the light theme, below the 4.5 a string owes, and every other honesty line in this
+      // app uses --muted; the state's colour goes on the square, which is measured below as a
+      // graphic. Read by selector so a later edit that "matches the words to the dot" fails here.
+      [declared(".fresh"), t.surface, "the popup freshness footer's words"],
+      /* MR5: AND THE COUNTDOWN THAT READS "now", for the same reason one rule down in the
+         stylesheet and because a reviewer found that rule's comment claiming this sweep already
+         measured it. It did not: every other popup ink here is read BY SELECTOR and `.arr .now` was
+         not among them, so the pairing that was actually measured was the bare `--accent-ink`
+         token. An edit taking section 5's own instruction literally ("the countdown reads in the
+         accent") would have shipped 3.47 in the light theme with nothing failing. */
+      [declared(".arr .now"), t.surface, "an arrival row that reads \"now\""],
     ]) {
-      const ratio = contrastRatio(ink, surface);
+      const paint = resolved(ink, t, `${theme}: ${what}`);
+      const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));
       assert.ok(
         ratio != null && ratio >= 4.5,
-        `${theme}: ${what} is ${ink} on ${surface} = ${ratio}, below the 4.5 it owes`,
+        `${theme}: ${what} is ${paint} on ${surface} = ${ratio}, below the 4.5 it owes`,
       );
     }
     // NON-TEXT owes 3. The freshness dots and the focus ring are graphics: each carries a
@@ -3102,15 +3185,25 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     // none of them is text.
     for (const [mark, surface, what] of [
       [t.accent, t.surface, "the stale freshness dot"],
+      // MR5: the popup's alert rule, its accessibility glyph and the freshness footer's square are
+      // graphics, not prose, so each owes 3 rather than 4.5. The square is the feed strip's dot at
+      // the popup and carries the same three tokens, measured here on the POPUP's surface rather
+      // than the header's: a rider reads them in both places and only one was ever measured.
+      [t.accent, t.surface, "the popup alert block's 3px accent rule"],
+      [declared(".popup-access"), t.surface, "the dock popup's wheelchair glyph"],
+      [t.live, t.surface, "the popup footer's live square"],
+      [t.scheduled, t.surface, "the popup footer's schedule-only square"],
+      [t.accent, t.surface, "the popup footer's stale square"],
       [t.live, t.surface, "the live freshness dot"],
       [t.scheduled, t.surface, "the scheduled-only freshness dot"],
       [t.focus, t.surface, "the focus ring on the header surface"],
       [t.focus, t.bg, "the focus ring on the map's own backdrop"],
     ]) {
-      const ratio = contrastRatio(mark, surface);
+      const paint = resolved(mark, t, `${theme}: ${what}`);
+      const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));
       assert.ok(
         ratio != null && ratio >= 3,
-        `${theme}: ${what} is ${mark} on ${surface} = ${ratio}, below the 3 it owes`,
+        `${theme}: ${what} is ${paint} on ${surface} = ${ratio}, below the 3 it owes`,
       );
     }
   }
@@ -3125,6 +3218,19 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
   assert.match(headerRule[1], /background: var\(--surface\);/, "the header surface is a token");
   assert.doesNotMatch(headerRule[1], /backdrop-filter/, "the header must not blur its backdrop");
   assert.doesNotMatch(headerRule[1], /color-mix|rgba/, "the header surface must not be translucent");
+
+  /* AND MR5's POPUP IS THE SAME RULING ON THE SAME GROUNDS. Section 5 asks for it at 94% over the
+     same blurred tiles. Measured on this branch, that translucency did worse than make the popup
+     undecidable: the dark theme's REAL violation on the head's ink and .popup-sub was reported
+     ONLY as incomplete, so it hid the failure this test now catches. frontend/tokens.test.js
+     holds the rule itself; this holds the pairing, and the two together are why the entry above
+     stayed at one. The blur went with the alpha, as it did on the header, so the two surfaces are
+     now asserted in exactly the same three ways. */
+  const popupRule = css.match(/\.leaflet-popup-content-wrapper,\s*\.leaflet-popup-tip \{([\s\S]*?)\n\}/);
+  assert.ok(popupRule, "the popup surface rule must still exist in style.css");
+  assert.match(popupRule[1], /background: var\(--surface\);/, "the popup surface is a token");
+  assert.doesNotMatch(popupRule[1], /backdrop-filter/, "the popup must not blur its backdrop");
+  assert.doesNotMatch(popupRule[1], /color-mix|rgba/, "the popup surface must not be translucent");
 });
 
 test("A3: readableTextOn replaces the hand-curated dark-text set, and is never wrong", () => {
@@ -3148,17 +3254,28 @@ test("A3: readableTextOn replaces the hand-curated dark-text set, and is never w
   }
   // FALLBACK FILLS INCLUDED ON PURPOSE. Each is what a rider sees when a feed omits a
   // route id, which is a degraded state and therefore when the label matters most.
-  // railroadColor's #607d8b failed when this test was written: 4.37 with white ink and
-  // 3.98 with dark, so NEITHER choice could rescue it and the fill itself had to move.
+  // The rail families' #607d8b failed when this test was written: 4.37 with white ink and
+  // 3.98 with dark, so NEITHER choice could rescue it and the fill itself had to move. That is
+  // railBranchPaint's whole argument, and its comment carries the measurement now.
   // routeColor is absent from this list for the reason given above.
-  for (const bg of [railroadColor(null), lineColor(null), PATH_FALLBACK_COLOR, FERRY_FALLBACK_COLOR]) {
+  for (const bg of [RAIL_NEUTRAL_COLOR, lineColor(null), PATH_FALLBACK_COLOR, FERRY_FALLBACK_COLOR]) {
     const ratio = contrastRatio(readableTextOn(bg), bg);
     assert.ok(ratio >= 4.5, `fallback fill ${bg} ink is only ${ratio.toFixed(2)}`);
   }
-  for (const id of ["", "1", "2", "3", "BABYLON", "HARLEM", "PORT JEFFERSON", "NEW HAVEN"]) {
-    const bg = railroadColor(id);
-    const ratio = contrastRatio(readableTextOn(bg), bg);
-    assert.ok(ratio >= 4.5, `railroad "${id}" (${bg}) ink is only ${ratio.toFixed(2)}`);
+  /* AND THE RAIL FAMILIES' PUBLISHED PAIRS, which is ruling R1's substitution for a sweep over a
+     hash palette that no longer exists. The ids are gone because a rail colour is not a function of
+     its id any more; what a rider reads is the agency's own fill with the agency's own ink, and
+     railBranchPaint is what decides that pair.
+
+     EE0034 IS IN THE LIST ON PURPOSE. It is Metro-North's New Haven red, four of that railroad's six
+     routes, and readableTextOn gives it 4.48 with white: a badge that took the published colour
+     through readableTextOn rather than through railBranchPaint would ship an AA failure on the
+     common case at Grand Central, and no fixture serves that colour so no gate would say so.
+     railtag.test.js sweeps all 26 published colours; this is the four that decide the shape. */
+  for (const [hex, textColor] of [["", ""], ["00985F", "FFFFFF"], ["EE0034", "FFFFFF"], ["FFD411", ""]]) {
+    const paint = railBranchPaint(hex, textColor);
+    const ratio = contrastRatio(paint.ink, paint.fill);
+    assert.ok(ratio >= 4.5, `rail paint "${hex}" (${paint.fill} on ${paint.ink}) is only ${ratio.toFixed(2)}`);
   }
   // DELIBERATELY NOT THE BUS WHEEL. hsl(h, 75%, 40%) has hues where neither ink clears
   // 4.5 (hue 30 tops out at 4.36), and the first draft of this test swept it and failed.
@@ -3191,6 +3308,84 @@ test("A3: readableInk darkens only what must darken, and keeps the hue", () => {
   // Unparseable input passes through rather than throwing: a caller that hands us
   // something odd gets its own colour back, not a crash in a popup.
   assert.equal(readableInk("chartreuse"), "chartreuse");
+});
+
+/* MR5: THE OTHER DIRECTION, WHICH THIS FUNCTION DID NOT HAVE AND SILENTLY FAILED WITHOUT.
+   Every version before MR5 only ever darkened and fell back to `#000000`, under a comment saying
+   "black fails nothing on a light surface". On a DARK background that is backwards and the
+   fallback is the worst answer available: black reads 1.49:1 on the dark theme's --surface.
+   It was latent until this stage because the popup was Leaflet's white in BOTH themes, even after
+   MR4 shipped the dark one, so no caller had ever handed this function a dark background. The
+   popup's surface is the first, and axe named the violation the moment it did. */
+const DARK_SURFACE = "#2d2b2b"; // the dark theme's --surface, which tokens.test.js holds to style.css
+
+test("MR5: readableInk lightens on a dark background, where darkening could only fail", () => {
+  // The exact shape of the old bug: two thirds of the palette came back as unreadable black.
+  assert.ok(contrastRatio("#000000", DARK_SURFACE) < 1.5, "black on this surface is the worst answer");
+  for (const line of Object.keys(LINE_COLORS)) {
+    const ink = readableInk(lineColor(line), DARK_SURFACE);
+    const ratio = contrastRatio(ink, DARK_SURFACE);
+    assert.ok(ratio >= 4.5, `subway ${line} on the dark popup is only ${ratio.toFixed(2)} (${ink})`);
+    assert.notEqual(ink.toLowerCase(), "#000000", `subway ${line} came back black on a dark surface`);
+  }
+  for (let hue = 0; hue < 360; hue += 5) {
+    const ratio = contrastRatio(readableInk(`hsl(${hue}, 75%, 40%)`, DARK_SURFACE), DARK_SURFACE);
+    assert.ok(ratio >= 4.5, `bus hue ${hue} on the dark popup is only ${ratio.toFixed(2)}`);
+  }
+  // And the hue survives the tint, which is the whole reason it is a tint: the 1/2/3's red
+  // lightens to a lighter red rather than washing to grey.
+  const red = parseColor(readableInk("#c0392b", DARK_SURFACE));
+  assert.ok(red[0] > red[1] && red[0] > red[2], "a lightened red must still read red");
+  // A colour that already clears is returned untouched in this direction too. The app's own N
+  // yellow rather than the authority's #FCCC0A: MR2's ruling R1 is that the palette is this app's,
+  // and a test that reaches for the published value teaches the next reader the wrong colour.
+  assert.equal(readableInk("#e6b800", DARK_SURFACE), "#e6b800");
+});
+
+test("MR5: readableInk's darkening path is unchanged, character for character", () => {
+  /* THE REGRESSION GUARD THE REPAIR NEEDED, and it exists because the obvious rewrite fails it.
+     Folding both directions into one loop with `1 - step` against `c + (255 - c) * step` looks
+     identical and is not: 0.05 has no exact binary form, so counting DOWN by subtraction and UP by
+     addition accumulate different error, and at a rounding boundary the two disagree by one unit
+     per channel. Measured, thirteen of this app's own colours came back different on the light
+     surfaces, which would have moved thirteen pins for a reason unrelated to the repair.
+
+     SO THE OLD BODY IS TRANSCRIBED HERE AS THE ORACLE. This is the one place in this repo where a
+     copy of an implementation is the right test: the claim is precisely "the new function agrees
+     with the old one wherever the old one was right", and only the old one can say what that was.
+     It is compared over every colour the app ships and every surface it prints on. */
+  const wasReadableInk = (color, background = "#ffffff", target = 4.5) => {
+    const rgb = parseColor(color);
+    if (!rgb) return color;
+    if ((contrastRatio(color, background) ?? 0) >= target) return color;
+    for (let scale = 0.95; scale >= 0; scale -= 0.05) {
+      const scaled = rgb.map((c) => Math.round(c * scale));
+      const hex = `#${scaled.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+      if ((contrastRatio(hex, background) ?? 0) >= target) return hex;
+    }
+    return "#000000";
+  };
+  const colours = [
+    ...new Set(Object.values(LINE_COLORS)),
+    "#d93a30", "#546e7a", "#00839c", "#78909c", "#ffd100", "#e6b800", "#DD3439", "#08A652",
+    "#e6b800", "#4a4e69", "#6d6e71", "#000", "#fff", "#123456", "#abcdef", "chartreuse", "",
+  ];
+  // Every LIGHT surface this app prints on: white (the old default), the popup's --surface, --bg,
+  // the popup cream the alert block used to carry, the banner's amber, and a mid yellow as the
+  // boundary case where the direction is decided closest to the line.
+  const surfaces = ["#ffffff", "#eae9e9", "#f3f2f2", "#fdf6e3", "#fde8b0", "#ffd100"];
+  let compared = 0;
+  for (const bg of surfaces) {
+    for (const c of colours) {
+      assert.equal(readableInk(c, bg), wasReadableInk(c, bg), `${c} on ${bg} moved`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared >= 120, `the comparison must be broad to mean anything, got ${compared}`);
+  // And the NEW behaviour is genuinely new rather than the old one relabelled: on a dark surface
+  // the two must disagree, or this repair changed nothing.
+  const disagreements = colours.filter((c) => readableInk(c, DARK_SURFACE) !== wasReadableInk(c, DARK_SURFACE));
+  assert.ok(disagreements.length >= 8, `the dark path must differ from the old one, got ${disagreements.length}`);
 });
 
 test("A3: the status line states its order and never truncates a problem", () => {
@@ -3399,6 +3594,98 @@ test("popupClearingShift still prefers a single-axis move when one clears everyt
   assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
 });
 
+/* MR5 (ruling S3): THE CLAMP, WITH THE MEASUREMENT THAT MADE IT NECESSARY AS ITS FIRST CASE.
+   Same discipline as the block above: these are browser measurements, not invented numbers. The
+   claim under test is one inequality, `padA + padB + popupExtent <= mapExtent`, which is what
+   Leaflet's two per-axis branches encode and what the design's recipe violates at phone widths. */
+const { clampedAutoPanPadding, popupAutoPanWant, POPUP_AUTOPAN_GAP, POPUP_AUTOPAN_WANT } = require("./helpers.js");
+
+test("S3: the design's recipe, unclamped, is the padding that pushes a popup off a phone", () => {
+  const want = popupAutoPanWant(579); // the recipe verbatim: a measured edge plus its own gap
+  assert.equal(want.top, 579 + POPUP_AUTOPAN_GAP, "the top padding is derived, not typed");
+  assert.deepEqual(
+    { left: want.left, right: want.right, bottom: want.bottom },
+    POPUP_AUTOPAN_WANT,
+    "and the other three are the recipe's fixed values",
+  );
+  // Leaflet can honour top and bottom together only while they fit around the popup: this is
+  // the arithmetic the erratum records, 591 + 40 + 126 on a 667px map.
+  assert.equal(want.top + want.bottom + 126 > 667, true, "unsatisfiable, which is the finding");
+});
+
+test("S3: the clamp cuts the padding that WINS, and keeps the one already being honoured", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(579),
+    map: { width: 375, height: 667 },
+    popup: { width: 256, height: 126 },
+  });
+  const [left, top] = got.topLeft;
+  const [right, bottom] = got.bottomRight;
+  // Vertically Leaflet's TOP branch assigns second and therefore wins, so the top is what is
+  // cut and the 40px below the popup survives intact.
+  assert.equal(bottom, 40, "the small fixed padding is kept whole");
+  assert.equal(top, 667 - 126 - 40, "and the derived one takes exactly the slack that is left");
+  assert.equal(top + bottom + 126, 667, "which makes the pair satisfiable, with nothing spare");
+  // Horizontally the LEFT branch is the one that wins, and the 110 clears the control stack
+  // while the 24 is a margin, so the margin is what gives way.
+  assert.equal(right, 110, "the padding that clears actual chrome is kept whole");
+  assert.equal(left, 375 - 256 - 110, "and the margin takes the slack");
+  assert.deepEqual(got.clamped, { top: true, left: true }, "and it says which ends it cut");
+});
+
+test("S3: at desktop nothing is clamped, so the clamp cannot be hiding a bug", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(60),
+    map: { width: 1280, height: 720 },
+    popup: { width: 320, height: 200 },
+  });
+  assert.deepEqual(got.topLeft, [24, 72], "the recipe's own numbers, untouched");
+  assert.deepEqual(got.bottomRight, [110, 40]);
+  assert.deepEqual(got.clamped, { top: false, left: false });
+});
+
+test("S3: a popup bigger than the map asks for no padding rather than choosing an edge", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(579),
+    map: { width: 375, height: 640 },
+    popup: { width: 400, height: 700 },
+  });
+  // There is no satisfiable padding for a popup that does not fit, and demanding one would only
+  // decide which edge it hangs off. Zero leaves that to Leaflet, which at least keeps the
+  // popup's own anchor in view.
+  assert.deepEqual(got.topLeft, [0, 0]);
+  assert.deepEqual(got.bottomRight, [0, 0]);
+  assert.equal(got.usable, true, "the boxes were measurable; it is the fit that failed");
+});
+
+test("S3: an unmeasurable box stands the padding down instead of guessing at one", () => {
+  for (const args of [{}, { map: { width: 375, height: 667 } }, { popup: { width: 1, height: 1 } }]) {
+    const got = clampedAutoPanPadding({ want: popupAutoPanWant(100), ...args });
+    assert.equal(got.usable, false, JSON.stringify(args));
+    assert.deepEqual(got.topLeft, [0, 0]);
+    assert.deepEqual(got.bottomRight, [0, 0]);
+  }
+  // A NaN or an Infinity is the same case: a measurement that did not happen.
+  const nan = { want: popupAutoPanWant(100), map: { width: NaN, height: 667 }, popup: { width: 1, height: 1 } };
+  assert.equal(clampedAutoPanPadding(nan).usable, false);
+});
+
+test("S3: every padding the clamp returns is a non-negative integer", () => {
+  // Leaflet does arithmetic on these and writes the result into a transform, so a fraction or a
+  // negative would land in the page as a sub-pixel pan or a pan the wrong way.
+  const cases = [
+    { chrome: 579, map: { width: 375, height: 667 }, popup: { width: 256.4, height: 126.7 } },
+    { chrome: 0, map: { width: 320.5, height: 640.5 }, popup: { width: 260, height: 300 } },
+    { chrome: 1e6, map: { width: 1280, height: 720 }, popup: { width: 320, height: 200 } },
+  ];
+  for (const c of cases) {
+    const got = clampedAutoPanPadding({ want: popupAutoPanWant(c.chrome), map: c.map, popup: c.popup });
+    for (const n of [...got.topLeft, ...got.bottomRight]) {
+      assert.equal(Number.isInteger(n) && n >= 0, true, `${JSON.stringify(c)} -> ${n}`);
+    }
+  }
+});
+
 test("popupClearingShift re-checks a move against obstacles that were NOT blocking it", () => {
   // A MUTATION SURVIVED THE FIRST VERSION OF THE TEST ABOVE, because there both obstacles
   // blocked from the start, so "re-check against all obstacles" and "re-check against the
@@ -3472,8 +3759,9 @@ test("AMENDMENT A: a route with no line still gets a colour and a head, never a 
     positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" }),
   );
   assert.match(html, /NJ Transit route 17/);
-  assert.match(html, /Train 1701/);
-  assert.match(html, /To Meadowlands/);
+  // MR5: section 5's rows, so the noun in front of each fact is a label cell now.
+  assert.match(html, /<div class="k">Train<\/div>\n<div class="v">1701<\/div>/);
+  assert.match(html, /<div class="k">To<\/div>\n<div class="v">Meadowlands<\/div>/);
   assert.match(html, /scheduled position \(no GPS\)/);
   assert.doesNotMatch(html, /undefined|null/, "a missing route must not leak a placeholder word");
   // The accessible name takes the same fallback, so the marker a screen reader
@@ -3585,12 +3873,16 @@ test("njtTrainPopupHtml and njtTrainName word one train the same way", () => {
   };
   const position = positionQualifier({ ...train, observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" });
   const html = njtTrainPopupHtml(train, "Morris & Essex Line", "#08A652", position);
-  assert.match(html, /<span class="popup-sub">scheduled position \(no GPS\)<\/span>$/);
+  // MR5: the position is the LAST row of the grid, which is where the popup's last line was.
+  assert.match(html, /<div class="k">Position<\/div>\n<div class="v">scheduled position \(no GPS\)<\/div><\/div>\n$/);
   assert.match(html, /Morris &amp; Essex Line/, "the ampersand in a real route name is escaped");
-  assert.match(html, /Train 6633/);
-  assert.match(html, /To Dover/);
-  assert.match(html, /Next stop: Summit/);
-  assert.match(html, /4 min late/);
+  // AND ESCAPED ONCE, which is the trap of moving escaping into a builder: a caller that also
+  // escaped would print "&amp;amp;" and no test that only looked for the escaped form would say so.
+  assert.doesNotMatch(html, /&amp;amp;/);
+  assert.match(html, /<div class="k">Train<\/div>\n<div class="v">6633<\/div>/);
+  assert.match(html, /<div class="k">To<\/div>\n<div class="v">Dover<\/div>/);
+  assert.match(html, /<div class="k">Next stop<\/div>\n<div class="v">Summit<\/div>/);
+  assert.match(html, /<div class="k">Delay<\/div>\n<div class="v">4 min late<\/div>/);
   assert.equal(
     njtTrainName(train, "Morris & Essex Line", position),
     "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min late, scheduled position, no GPS",
@@ -3624,7 +3916,7 @@ test("EVERY NJT train popup says how its position was derived, from the served p
   for (const [train, words, spoken] of cases) {
     const position = positionQualifier(train, at);
     const html = njtTrainPopupHtml(train, "Northeast Corridor", "#DD3439", position);
-    assert.ok(html.endsWith(`<span class="popup-sub">${words}</span>`), html);
+    assert.ok(html.endsWith(`<div class="k">Position</div>\n<div class="v">${words}</div></div>\n`), html);
     assert.doesNotMatch(html, /live GPS/);
     assert.ok(njtTrainName(train, "Northeast Corridor", position).endsWith(`, ${spoken}`));
   }
@@ -3665,7 +3957,7 @@ test("njtArrivalsHtml renders a flat chronological board with badges and countdo
   assert.match(html, /NJ Transit/);
   // NO DIRECTION HEADINGS AT ALL. /api/njt-arrivals is flat and chronological;
   // inventing buckets here would be inventing a field the endpoint does not serve.
-  assert.doesNotMatch(html, /arr-dir/);
+  assert.doesNotMatch(html, /class="dir"/);
   assert.match(html, /background:#DD3439/);
   assert.match(html, /Trenton/);
   assert.match(html, /3800/);
@@ -3719,8 +4011,12 @@ test("njtArrivalsHtml renders No trains for an empty board and escapes hostile f
 
 test("njtRowLabel prefers the destination, falls back to the route name, else nothing", () => {
   const nameFor = (id) => (id === "9" ? "Northeast Corridor" : null);
-  assert.equal(njtRowLabel({ route_id: "9", headsign: "Trenton" }, nameFor), " Trenton");
-  assert.equal(njtRowLabel({ route_id: "9" }, nameFor), " Northeast Corridor");
+  /* MR5: PLAIN TEXT, WITH NO LEADING SPACE AND NO ESCAPING. The row's grid cell escapes its own
+     label and the space between cells is a column now, so a helper that kept doing either would
+     double-escape an ampersand and print a stray space inside a flex cell. */
+  assert.equal(njtRowLabel({ route_id: "9", headsign: "Trenton" }, nameFor), "Trenton");
+  assert.equal(njtRowLabel({ route_id: "9" }, nameFor), "Northeast Corridor");
+  assert.equal(njtRowLabel({ route_id: "9", headsign: "Penn & Broad" }, nameFor), "Penn & Broad");
   // A row with neither still renders (the caller keeps its countdown): the train is
   // real and the time is what the rider came for.
   assert.equal(njtRowLabel({ route_id: "17" }, nameFor), "");
@@ -3857,7 +4153,7 @@ test("a route-less arrivals row renders its countdown rather than the word null"
   assert.doesNotMatch(html, /null|undefined/);
   // The row's label still resolves without a route, and njtRowLabel survives a
   // missing row entirely, which its siblings in this family already did.
-  assert.equal(njtRowLabel({ route_id: null, headsign: "Bay Head" }), " Bay Head");
+  assert.equal(njtRowLabel({ route_id: null, headsign: "Bay Head" }), "Bay Head");
   assert.equal(njtRowLabel(null), "");
   assert.equal(njtRowLabel(undefined), "");
 });
@@ -3966,6 +4262,8 @@ test("the live region calls NJ Transit by name, never by its payload key", () =>
    Separate require, additive, leaving the blocks above untouched. */
 const {
   FEEDS, feedDotState, feedTooltip, feedStripModel, statusNoteText, themeChoice, nextTheme,
+  // MR5 (Q2): the state's own words, lifted out of the tooltip, and the popup footer that says them.
+  feedStateWords, popupFreshHtml,
 } = require("./helpers.js");
 // FEED_STALE_AFTER_S is already in this file's top import block; named here so the threshold
 // assertions below read as what they are.
@@ -4024,6 +4322,117 @@ test("MR1: the freshness dot is the FEED's, and a null age is never live", () =>
   // reporting"; the dot has a smaller vocabulary and says stale.
   assert.equal(feedDotState({ age: null }), "stale");
   assert.equal(feedDotState({}), "stale");
+});
+
+/* ===== MR5, ruling Q2: the state's words, said one way on two surfaces ====================
+
+   THE TOOLTIP'S CLAUSE, LIFTED OUT SO THE POPUP FOOTER CAN HAVE IT. Section 5 gives every popup a
+   freshness footer, and the ruling is that its square IS the feed strip's dot at the popup, with
+   "its accessible name from the same helper the strip's dot uses so the state is said one way on
+   both surfaces". feedTooltip could not BE that helper: its words end in what pressing the button
+   will do, and a popup has no button. So the state's half came out, and the tooltip is now that
+   half plus the action.
+
+   THE FIRST TEST BELOW IS THEREFORE A REFACTOR PROOF and is deliberately redundant with the
+   tooltip test that follows it: the same three design examples, asserted through the composition,
+   so a change to feedStateWords that moved the tooltip fails twice and visibly. */
+test("MR5 Q2: feedStateWords is the tooltip's own clause, and coins nothing", () => {
+  // The three the design wrote down, without the action.
+  assert.equal(feedStateWords({ state: "live", age: 12 }), "Live · 12s");
+  assert.equal(feedStateWords({ state: "stale", age: 360 }), "As of 6m ago");
+  assert.equal(feedStateWords({ state: "scheduled" }), "Scheduled");
+  // And the fourth the design's examples could not show, because all three of them had an age.
+  assert.equal(feedStateWords({ state: "stale", age: null }), "Not reporting");
+
+  /* THE COMPOSITION IS THE CLAIM: every tooltip is these words plus the action, so no third
+     spelling of a feed's state can exist without this failing. Asserted over the whole matrix
+     rather than three examples, because "they happen to agree on the examples" is what a copy
+     looks like from the outside. */
+  for (const state of ["live", "stale", "scheduled"]) {
+    for (const age of [8, 360, null]) {
+      for (const hidden of [false, true]) {
+        const verb = hidden ? "show" : "hide";
+        assert.equal(
+          feedTooltip({ name: "Subway", state, age, hidden }),
+          `${feedStateWords({ state, age })} · ${verb} Subway`,
+          `${state}/${age}/${hidden}`,
+        );
+      }
+    }
+  }
+});
+
+test("MR5 Q2: the popup's footer is the strip's dot, with no word for live", () => {
+  const square = (state) => `<span class="fresh-dot" data-state="${state}" aria-hidden="true"></span>`;
+
+  /* PRESENT IN ALL THREE STATES, which is the half a "show it when it is bad" footer gets wrong: a
+     rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
+     there. So the square is asserted for each state before anything about the words. */
+  for (const [state, age] of [["live", 9], ["stale", 370], ["scheduled", null]]) {
+    assert.match(popupFreshHtml({ state, age }), /^<div class="fresh">/);
+    assert.ok(popupFreshHtml({ state, age }).includes(square(state)), `${state} draws its square`);
+  }
+
+  /* NO TEXT WHEN LIVE, because this app has no word for "live" on any surface (memo D9, silence
+     means current), and the README's "LIVE · UPDATED 12S AGO" is the sentence that rule forbids. It
+     is still SAID, through A1's visually-hidden class, so a screen reader gets the state exactly
+     where an eye gets the square, WHERE NOTHING HAS SAID IT YET: the suppression case below takes
+     it out of that channel too, and ruling R2's precedence is asserted at the end of this test. */
+  const live = popupFreshHtml({ state: "live", age: 9 });
+  assert.match(live, /<span class="visually-hidden">Live · 9s<\/span>/);
+  assert.ok(!/>Live/.test(live.replace(/<span class="visually-hidden">[^<]*<\/span>/, "")), "no visible live text");
+
+  // The two states that DO have something to show say the app's own strings, not a coined pair.
+  assert.ok(popupFreshHtml({ state: "stale", age: 370 }).endsWith("As of 6m ago</div>"));
+  assert.ok(popupFreshHtml({ state: "scheduled" }).endsWith("Scheduled</div>"));
+  assert.ok(popupFreshHtml({ state: "stale", age: null }).endsWith("Not reporting</div>"));
+
+  /* AND IT IS vehicleStaleLine's RULE, CARRIED OVER. Every vehicle popup already ended in that
+     line, which prints the system's age and withholds itself when the vehicle's own position has
+     already stated an age at least as old: an observation's age and a feed's differ by the
+     provider's lag, so saying both is saying two ages about one train. The footer inherits that,
+     with one difference the ruling requires: the SQUARE is never withheld, only the words.
+
+     AND RULING R2 MADE THAT LITERALLY TRUE. Until R2 the withheld words went into the same
+     visually-hidden span the live state uses, so they were withheld from an EYE and a screen reader
+     heard the age twice, which is the thing the paragraph above forbids. Asserted as the whole
+     markup rather than as an absence, because a footer that printed the suppressed words visibly
+     would satisfy a bare absence and nothing else here would notice. */
+  const older = { kind: "aged", words: "live GPS, as of 7m ago", age: 420 };
+  const younger = { kind: "aged", words: "live GPS, as of 1m ago", age: 60 };
+  const suppressed = popupFreshHtml({ state: "stale", age: 370, position: older });
+  assert.ok(suppressed.includes(square("stale")), "the square survives suppression");
+  assert.equal(
+    suppressed,
+    `<div class="fresh">${square("stale")}</div>`,
+    "the position said the age, so the footer says it in neither channel",
+  );
+  assert.ok(
+    popupFreshHtml({ state: "stale", age: 370, position: younger }).endsWith("As of 6m ago</div>"),
+    "a position that stated a YOUNGER age does not suppress the feed's older one",
+  );
+  // A station popup passes no position, so nothing is ever suppressed on one.
+  assert.ok(popupFreshHtml({ state: "stale", age: 370 }).endsWith("As of 6m ago</div>"));
+
+  // A surface with no feed behind it gets no footer rather than an empty square: AirTrain is NOT
+  // that case, because its feed row has no source and feedDotState calls it schedule-only.
+  assert.equal(popupFreshHtml({ state: null }), "");
+  assert.equal(popupFreshHtml({}), "");
+  assert.equal(feedDotState({ scheduled: true }), "scheduled");
+
+  /* THE PRECEDENCE, WHICH IS RULING R2 ITSELF AND HAS ONE OTHER PIN IN THE REPO. A LIVE feed under a
+     position that already stated an older age is the case that distinguishes `said` winning from
+     `live` winning: written the other way round, the footer puts "Live · 9s" in the tree beside a
+     Position row that has just said "as of 7m ago", which is two ages about one train and is what
+     the ruling closed. positions.test.js's loop holds the same case; each tier holds it alone. */
+  assert.equal(
+    popupFreshHtml({ state: "live", age: 9, position: older }),
+    `<div class="fresh">${square("live")}</div>`,
+    "a live feed whose position already stated an older age says nothing in either channel",
+  );
+
+  // Escaped, like every other builder in this file: the state reaches a data attribute.
+  assert.ok(!popupFreshHtml({ state: 'x"><img>', age: null }).includes('"><img>'));
 });
 
 test("MR1: the tooltip says the state and the ACTION, in the design's words", () => {

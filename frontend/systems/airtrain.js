@@ -95,7 +95,13 @@ async function loadAirtrain() {
       icon: airtrainIcon(),
       pane: "stationPane",
     }, airtrainStationName(station))
-      .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
+      .bindPopup(
+        // MR5: the paper square this station is drawn as, at the title's size. `marker` is in
+        // scope here because this family binds its popup directly rather than through
+        // bindStationPopup (AirTrain has no feed to count down from).
+        () => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight(), popupMarkHtml(markerMarkHtml(marker))),
+        POPUP_OPTIONS,
+      )
       .addTo(airtrainStationLayer);
     registerStation({
       key: `airtrain|${station.id}`,

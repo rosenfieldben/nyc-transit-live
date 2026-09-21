@@ -7,10 +7,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const {
   RAIL_BRANCH_CODES,
   RAIL_NEUTRAL_COLOR,
+  NJT_FALLBACK_COLOR,
   railBranchCode,
   railBranchColor,
   railBranchInk,
@@ -622,4 +625,97 @@ test("MR3 bearing: the served bearing wins, the anchors are next, and nothing le
   // A slice with no measured interval is not a direction either: s0 and s1 are what make it
   // travel-directed, so without them there is nothing to read and the anchors answer.
   assert.equal(railTrainBearing({ _route: { points: [[40.7, -74.0], [40.6, -74.0]] }, ...anchored }), 0);
+});
+
+/* MR5, finding N6: ONE NEUTRAL REACHES EVERY NJ TRANSIT SURFACE BUT THE ROUTE LINE, and it is the
+   rail family's.
+
+   MR3 left two on screen for one unknown route and said so: the tag reaches
+   `railBranchColor` and draws the design's `#6d6e71`; the popup head reached
+   `njtRouteColor` and drew phase 15c's older `#4a4e69`. Route 17, the event-only
+   Meadowlands line, never appears on `/api/njt-routes` at all, so it is the live example
+   and it wore both at once. MR3 named it and left it because `P1k` pinned that popup byte
+   for byte; MR5 owns the popup and converged the two here in round 1.
+
+   AND RULING R1 CONVERGED THE OTHER TWO, which is why this test now reads the whole file rather
+   than the popup head alone. The station board's badge and the panel registry's chip were still
+   resolving `njtRouteColor`, so N6's own sentence ("two neutrals are on screen for an unknown
+   route") stayed literally true one surface out: at Hoboken, whose served routes include 17, the
+   panel chip drew #4a4e69 beside a map tag drawing #6d6e71. Those two are pinned BY VALUE now
+   (stations.spec.js A1t and frontend/boards.test.js's NJ Transit board), which is what R1's "new
+   pins" asks for; this file's job is the SOURCE fact underneath them.
+
+   THE ROUTE LINE IS THE ONE READER LEFT, deliberately: `njtRouteColor` still paints the polyline at
+   the load site, so a route published with a blank colour would draw a #4a4e69 line beside a
+   #6d6e71 tag. No live route does (all twelve publish a colour) and route 17 has no polylines at
+   all, so nothing can draw it today. It is the last residue of N6 on this layer, it is recorded in
+   the ledger, and the assertion below is written to allow exactly that one site and nothing else.
+
+   ASSERTED AS A SOURCE FACT, and that is the point rather than laziness: what is checkable without
+   a world that serves an unknown route is that every surface reads the SAME RESOLVER the tag does.
+   Two constants that happen to be equal would be a coincidence waiting for someone to change one of
+   them; one function is a fact. */
+/* RULING R1, THE RAILROAD's HALF, AS A SOURCE FACT for the reason the NJ Transit test below states:
+   the case that matters is one no fixture serves.
+
+   EE0034 is Metro-North's New Haven red, four of that railroad's six routes, and it takes white at
+   4.48 and dark at 3.88: NEITHER ink clears, so the FILL has to move, which is what railBranchPaint
+   does and what railBranchColor does not. A board badge resolved through railBranchColor plus
+   readableTextOn would therefore ship an AA failure on the common case at Grand Central with every
+   gate green, because the hermetic feeds publish 00985F and 009B3A and both of those clear either
+   way. helpers.test.js measures that the BOARD renders the pair it is given; this measures that the
+   resolver behind it is the one that can move a fill. */
+test("MR5 R1: the railroad's board and panel resolve their paint through railBranchPaint", () => {
+  const railroad = readFileSync(join(__dirname, "systems", "railroad.js"), "utf8");
+  const body = railroad.slice(railroad.indexOf("function railroadBranchPaint("));
+  const fn = body.slice(0, body.indexOf("\n}"));
+  assert.match(fn, /railBranchPaint\(/, "the pair resolver is railBranchPaint's");
+  assert.ok(
+    !/railBranchColor\(/.test(fn),
+    "railBranchColor returns the published fill unmoved, which EE0034 needs moved",
+  );
+  // And the two ends of the claim, so this says what the colours ARE and not only which function ran.
+  assert.equal(railBranchPaint("EE0034", "FFFFFF").fill, "#ec0033");
+  assert.equal(railBranchColor("EE0034"), "#EE0034");
+  assert.ok(contrastRatio("#ffffff", "#EE0034") < 4.5, "which is why the fill has to move");
+});
+
+test("MR5 N6: every NJ Transit surface but the route line resolves its colour the way the tag does", () => {
+  const njt = readFileSync(join(__dirname, "systems", "njt.js"), "utf8");
+  const body = njt.slice(njt.indexOf("function njtTrainPopup("));
+  const call = body.slice(0, body.indexOf("\n}"));
+
+  assert.match(
+    call,
+    /railBranchColor\(njtBranch\(/,
+    "the NJ Transit popup head must resolve through railBranchColor, the way njtIcon's tag does",
+  );
+  assert.ok(
+    !/njtRouteColor\(/.test(call),
+    "the NJ Transit popup head still reaches njtRouteColor, which falls back to the second neutral",
+  );
+
+  /* AND THE WHOLE FILE, MINUS COMMENTS, HAS EXACTLY ONE njtRouteColor CALL LEFT: the route line's.
+     Ruling R1 moved the station board's badge and the panel's chip, and a count is what keeps a
+     later stage from quietly opening a third reader, which is the shape N6 is. The comments are
+     stripped first because this file's own prose names the function repeatedly. */
+  const code = njt.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  const calls = code.match(/njtRouteColor\(/g) ?? [];
+  assert.equal(
+    calls.length,
+    1,
+    `exactly one njtRouteColor call may remain (the route line); found ${calls.length}`,
+  );
+  assert.match(
+    code,
+    /const color = njtRouteColor\(route\.route, njtRouteColors\);/,
+    "and the one that remains is the polyline's, at the load site",
+  );
+
+  // And the two ends of the claim, so the test says what the colours ARE and not only which
+  // function was called: an unknown route resolves to the rail neutral, and the second
+  // neutral is a different colour, which is what made this a finding.
+  assert.equal(railBranchColor(null), RAIL_NEUTRAL_COLOR);
+  assert.equal(RAIL_NEUTRAL_COLOR, "#6d6e71");
+  assert.notEqual(NJT_FALLBACK_COLOR, RAIL_NEUTRAL_COLOR);
 });

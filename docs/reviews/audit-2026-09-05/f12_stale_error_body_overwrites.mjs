@@ -113,12 +113,21 @@
  *   * The 503 detail string is the production one, copied from backend/cache.py
  *     _serve_cached: "Feed cache is warming up; try again in a few seconds." That is the
  *     "warming message" the audit refers to.
+ *   * `railroadRouteNames` and `railroadBranchPaint`, both declared in systems/railroad.js, which
+ *     this harness cannot load. An empty name table and a neutral paint are the same real
+ *     production state: neither endpoint has resolved, so the panel prints route ids and every
+ *     badge takes the rail neutral. railBranchPaint, which the stub calls, is production.
  *   * THE ONE NARROW COPY: arm 3 needs the popup descriptor that systems/railroad.js builds
  *     at its lines 85 to 100 and hands to bindStationPopup. railroad.js cannot be loaded
  *     here (it fetches its stop list at load), so that descriptor literal is reproduced
  *     verbatim below and marked. It is four fields and a render call; every function it
  *     calls (stationAlertsBlock, railroadArrivalsHtml) is production, and the code under
- *     test in arm 3 (openStationArrivals) is production and untouched.
+ *     test in arm 3 (openStationArrivals) is production and untouched. IT IS ALSO A COPY THAT
+ *     BREAKS SILENTLY, which ruling R1 demonstrated: R1 gave railroadArrivalsHtml a paint
+ *     resolver in slot 4, and this copy's nameFor lambda would have landed in that slot and
+ *     rendered `background:undefined` while arm 3's only board measurement (a count of
+ *     `arr-badge` substrings) stayed unchanged. A verbatim copy has to be edited with the thing
+ *     it copies; nothing here can notice on its own.
  */
 
 import fs from "node:fs";
@@ -465,6 +474,21 @@ function bootFrontend({ withBuses = false } = {}) {
   // Empty is a real production state: the route-names endpoint has not resolved yet, and
   // the panel then prints route ids. Nothing in this finding depends on route names.
   vm.runInContext("var railroadRouteNames = new Map();", ctx, { filename: "harness:route-names" });
+  // AND `railroadBranchPaint`, FOR THE SAME REASON, since ruling R1 gave the board's badge a paint
+  // resolver: it is declared in systems/railroad.js too, and an empty colour table is the same real
+  // production state (the routes endpoint has not resolved, so every badge takes the rail neutral).
+  // railBranchPaint itself is production, loaded from helpers.js, so no production logic is copied.
+  vm.runInContext("function railroadBranchPaint() { return railBranchPaint(null); }", ctx, {
+    filename: "harness:branch-paint",
+  });
+  // AND `railroadBranch`, which ruling R3's kicker resolver calls for each route a station serves.
+  // Same file, same reason, same real production state: with no colour table and no name table, a
+  // branch is its own id in the neutral, which is what railBranchCode and railBranchColor answer.
+  vm.runInContext(
+    "function railroadBranch(system, routeId) { return { code: railBranchCode(system, routeId, null), color: null, textColor: null }; }",
+    ctx,
+    { filename: "harness:branch" },
+  );
 
   const probe = (expr) => vm.runInContext(`(${expr})`, ctx, { filename: "harness:probe" });
   const exec = (src) => vm.runInContext(src, ctx, { filename: "harness:exec" });
@@ -690,7 +714,21 @@ const RAILROAD_DESCRIPTOR_SRC = `(station, arrivalsUrl) => (m) => ({
       s,
       b,
       Date.now() / 1000 - (minClockOffset ?? 0),
+      (routeId) => railroadBranchPaint(s.system, routeId),
       (routeId) => railroadRouteNames.get(\`\${s.system}|\${routeId}\`) || null,
+      popupMarkHtml(markerMarkHtml(m)),
+      (routeId) => {
+        const branch = railroadBranch(s.system, routeId);
+        return {
+          svg: railRouteTagSvg({
+            system: s.system,
+            code: branch.code,
+            color: branch.color,
+            textColor: branch.textColor,
+          }),
+          name: railroadRouteNames.get(\`\${s.system}|\${routeId}\`) || branch.code,
+        };
+      },
     ),
 })`;
 

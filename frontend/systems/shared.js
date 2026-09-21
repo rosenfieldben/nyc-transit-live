@@ -328,6 +328,25 @@ function applyTheme(theme) {
      above namesToggleEl. On that first call the array exists and is empty, so nothing is
      repainted, which is correct: no system file has drawn anything yet. */
   repaintCanvasFamilies();
+  /* MR5: AND EVERY OPEN POPUP BOUND AS A FUNCTION IS REBUILT, for exactly the reason above one
+     surface further out. A popup's markup is HTML and follows the tokens through the cascade, with
+     one exception: the six heads that print a route colour as text resolve popupSurfaceColor() to a
+     STRING when the popup is built (readableInk needs a background, not a variable). So a popup
+     built in the light theme keeps light-theme ink on a dark surface until something rebuilds it,
+     and for a VEHICLE popup that something would otherwise be the next fifteen-second poll.
+
+     WHICH POPUPS THIS REACHES, stated because the first version of this comment claimed it reached
+     all of them and a reviewer read Leaflet's own source against it. popup.update() re-invokes the
+     bound content only where that content IS a function (`"function" == typeof this._content`), so
+     it rebuilds every vehicle popup and the AirTrain station popup. The five ticking station boards
+     are bound with a STRING and filled by setPopupContent, so update() re-sets the identical string
+     and changes nothing. That is not a hole: openStationArrivals runs renderStation on a one-second
+     interval, so a station board picks the new theme up within a second on its own, which is also
+     why the old claim ("nothing at all for a station") was false in the other direction.
+     tests/e2e/popups.spec.js D6h measures the case this call is for, a rail train's popup.
+
+     Guarded because this function runs once at load, before the map exists. */
+  rebuildOpenPopupsForTheme();
 }
 
 applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
@@ -377,6 +396,36 @@ function inkColor() {
    it is resolved here beside paper and ink and handed to the registry with them. */
 function scheduledColor() {
   return rootToken("--scheduled", "#6d6e71");
+}
+
+/* MR5: THE FOURTH TOKEN A STRING-BUILDER HAS TO BE TOLD, and this one is not about a canvas.
+
+   Six popup heads print a route's colour as TEXT, through readableInk, which walks the colour
+   toward legibility until it clears 4.5:1 against the background it is given. That background
+   has always been readableInk's default, `#ffffff`, and until this stage the assumption behind
+   it was true: a Leaflet popup is white. Section 5 makes it --surface, so it is not, and in the
+   DARK theme it never was. (Section 5 asks for that surface at 94%; the erratum beside it records
+   why the popup ships opaque, and the arithmetic below is written for the surface either way.)
+
+   MEASURED, WHICH IS WHY THIS EXISTS AT ALL. layout.spec.js A4g renders the N train, whose
+   #e6b800 the helper walks to rgb(138, 110, 0): against white that clears, and against this popup's
+   surface it reads 4.02. (Against the composite the DESIGN asked for it would have read 4.05, which
+   is the comparison the next paragraph turns on; the popup ships opaque, so no composite is drawn
+   anywhere and the 4.02 is the number.) A4g caught it on the commit that changed the surface, which
+   is the gate doing its job.
+
+   --surface, WHICH IS NOW THE WHOLE ANSWER AND WAS ALWAYS THE PESSIMISTIC END. The popup ships
+   opaque, so the surface IS what the ink is printed on and there is no composite left to reason
+   about. It was the right background before that too: at the design's 94% the popup was
+   --surface over --bg, and --surface is the darker of the two in the light theme and the lighter
+   in the dark one, so in either case it gives dark ink and light ink respectively the least to
+   work with. Ink that clears 4.5 against it cleared the composite as well.
+
+   AND AN OPEN POPUP IS RE-RENDERED WHEN THE THEME CHANGES, in applyTheme below, for the same
+   reason the canvas families are repainted there: this resolves a token to a STRING at build
+   time, so a popup built under one theme keeps that theme's ink until something rebuilds it. */
+function popupSurfaceColor() {
+  return rootToken("--surface", "#eae9e9");
 }
 
 /* MR4 ROUND 1: THE BUS WHEEL'S LIGHTNESS AS A NUMBER, for the one bus colour a cascade cannot
@@ -1124,6 +1173,107 @@ function popupObstacles() {
     .filter((box) => box.width > 0 && box.height > 0);
 }
 
+/* MR5 (ruling S3): THE CHROME THE AUTOPAN RESERVES ROOM ABOVE, which is a SUBSET of the obstacle
+   list and not the same question. POPUP_OBSTACLE_IDS above answers "what paints over the popup
+   pane", and that includes the view preset stack at the BOTTOM right; a top padding derived from
+   that stack's bottom edge would reserve the entire map. So this list is the chrome the design's
+   recipe actually names, the header and the alert strip, and the control stack's share is the
+   recipe's own 110px right padding plus panPopupClearOfChrome, which reads the stack's real rect.
+   That is what "the two measurements compose" means.
+
+   Listed rather than derived for the same reason POPUP_OBSTACLE_IDS is: a third overlay across
+   the top of the page should be a deliberate edit here. */
+const POPUP_TOP_CHROME_IDS = ["panel", "alert-banner"];
+
+/* How far down the MAP the page's top chrome reaches, in the map's own pixels, which is the space
+   Leaflet's padding is measured in. Relative to the map's top rather than the viewport's, because
+   #map is not necessarily at y 0 and a padding that confused the two would be wrong by the
+   difference without ever looking wrong. A hidden or zero-size element reserves nothing, which is
+   the dismissed banner. */
+function pageChromeBottom() {
+  const container = document.getElementById("map");
+  if (!container) return 0;
+  const top = container.getBoundingClientRect().top;
+  let bottom = 0;
+  for (const id of POPUP_TOP_CHROME_IDS) {
+    const el = document.getElementById(id);
+    if (!el || el.hidden) continue;
+    const box = el.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) continue;
+    bottom = Math.max(bottom, box.bottom - top);
+  }
+  return Math.max(0, bottom);
+}
+
+/* THE PADDING LEAFLET IS GIVEN, AND THE STAND-DOWN, which are one decision and so are one
+   function. helpers.js's clampedAutoPanPadding holds the arithmetic and the reasoning; this is
+   the half that needs a rendered page: the header's measured bottom edge, the map's box, the
+   popup's box, and Leaflet's own point type.
+
+   IT IS A WRITE ON popup.options AND THAT IS THE WHOLE RISK. Those options are read again by
+   every popup.update(), which for an open vehicle popup is every fifteen seconds, so a padding
+   left behind keeps pulling the map long after the open that set it. That is why the rider's
+   ownership CLEARS the padding rather than merely skipping this call: skipping would leave the
+   last padding armed. standDownPopupAutoPan below is the other half of that.
+
+   Returns the padding it applied, or null when it applied none, which is what D6d through D6g
+   read. */
+function applyPopupAutoPan(popup) {
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const container = document.getElementById("map");
+  if (!root || !container) return null;
+  if (riderOwnsTheView) {
+    clearPopupAutoPan(popup);
+    return null;
+  }
+  const mapBox = container.getBoundingClientRect();
+  const popupBox = root.getBoundingClientRect();
+  const pad = clampedAutoPanPadding({
+    want: popupAutoPanWant(pageChromeBottom()),
+    map: { width: mapBox.width, height: mapBox.height },
+    popup: { width: popupBox.width, height: popupBox.height },
+  });
+  if (!pad.usable) {
+    clearPopupAutoPan(popup);
+    return null;
+  }
+  popup.options.autoPanPaddingTopLeft = L.point(pad.topLeft[0], pad.topLeft[1]);
+  popup.options.autoPanPaddingBottomRight = L.point(pad.bottomRight[0], pad.bottomRight[1]);
+  /* _adjustPan IS LEAFLET'S OWN AND IT IS PRIVATE FOR A REASON: there is no public way to run an
+     autopan after changing the padding, and the padding cannot be set before the open because it is
+     derived from the popup's rendered size. Guarded on the method existing, so a Leaflet upgrade
+     that renames it degrades to "no correction" rather than throwing inside a popupopen handler and
+     taking the rest of it with it.
+
+     AND autoPan IS FLIPPED ON FOR THE LENGTH OF THIS ONE CALL, because POPUP_OPTIONS turns it off.
+     _adjustPan's whole body is behind `this.options.autoPan &&`, so with the option off it does
+     nothing, including when we ask. Off at rest is what makes this the ONLY pan a popup gets: see
+     POPUP_OPTIONS in helpers.js for the two pans it replaces and the poll it stops. Restored in a
+     finally, so a throw inside Leaflet cannot leave the option on and hand the next poll an autopan
+     nobody asked for. */
+  if (typeof popup._adjustPan === "function") {
+    const wasAutoPan = popup.options.autoPan;
+    correctingNow = true;
+    popup.options.autoPan = true;
+    try {
+      popup._adjustPan();
+    } finally {
+      popup.options.autoPan = wasAutoPan;
+      correctingNow = false;
+    }
+  }
+  return pad;
+}
+
+// Back to Leaflet's own default, which is a 5px strip: the padding options are DELETED rather
+// than set to zero, so what is left is genuinely the library's behaviour and not a third setting
+// of ours that happens to look like it.
+function clearPopupAutoPan(popup) {
+  if (!popup || !popup.options) return;
+  delete popup.options.autoPanPaddingTopLeft;
+  delete popup.options.autoPanPaddingBottomRight;
+}
+
 function panPopupClearOfChrome(popup) {
   const root = popup && popup.getElement ? popup.getElement() : null;
   const container = document.getElementById("map");
@@ -1176,6 +1326,13 @@ let correctingNow = false;
 
 function noteRiderTookOver() {
   riderOwnsTheView = true;
+  /* MR5 (S3): AND THE PADDING IS DISARMED, not merely skipped from here on. The design's padding
+     lives on popup.options, and popup.update() re-runs Leaflet's autopan against it on every
+     fifteen-second poll for every open vehicle popup. Standing down by returning early from
+     applyPopupAutoPan would leave the last padding in place and the next poll would pull the map
+     anyway, which is the second break the README's erratum records: this app does not tidy a
+     position the rider chose, and Leaflet's autopan has no such rule. */
+  standDownPopupAutoPan();
 }
 map.on("dragstart", noteRiderTookOver);
 map.on("zoomstart", noteRiderTookOver);
@@ -1200,6 +1357,11 @@ map.on("popupopen", (event) => {
   if (popupClearObserver) popupClearObserver.disconnect();
   // A new popup is a new placement, so the rider's ownership of the last one does not carry.
   riderOwnsTheView = false;
+  // MR5 (S3): the design's padding first, clamped to what this map and popup can satisfy, and
+  // then the collision solver over the real boxes. That order IS the composition: the padding
+  // gets the popup out of the band the header occupies, and correctOnce answers for the
+  // obstacles' actual rects, including the control stack the padding only approximates.
+  applyPopupAutoPan(event.popup);
   correctOnce(event.popup);
   popupClearObserved = event.popup;
   if (!root || typeof ResizeObserver !== "function") return;
@@ -1209,6 +1371,10 @@ map.on("popupopen", (event) => {
     // rather than of map._popup, for the reason recorded at openPopupsOnMap below.
     if (!map.hasLayer(event.popup)) return;
     if (riderOwnsTheView) return;
+    // A popup that grew needs the padding recomputed against its new height before the solver
+    // runs, for the same reason the open does: the clamp is a function of the popup's size, and a
+    // station popup is 29px tall at popupopen and 300 once its arrivals land.
+    applyPopupAutoPan(event.popup);
     correctOnce(event.popup);
   });
   popupClearObserver.observe(root);
@@ -1239,6 +1405,42 @@ map.on("popupclose", (event) => openPopups.delete(event.popup));
 
 function openPopupsOnMap() {
   return [...openPopups].filter((popup) => map.hasLayer(popup));
+}
+
+// The stand-down, declared here because it needs the register above, and a function declaration
+// rather than a const so noteRiderTookOver (which is written before it) can call it. Every open
+// popup and not just the current one: two popups can be open at once, and a padding on the one
+// the rider is not standing in pulls the map just as hard.
+function standDownPopupAutoPan() {
+  for (const popup of openPopupsOnMap()) clearPopupAutoPan(popup);
+}
+
+/* Rebuild every open popup's content, which is what a theme swap owes the strings that resolved
+   a token when they were built. popup.update() rather than a close and reopen: it re-runs the
+   bound content function, keeps the popup open and keeps the rider's focus where it is, which
+   closePopupReturningFocus and updatePopupKeepingFocus exist to protect.
+
+   A FUNCTION DECLARATION, AND THE try IS THE TEMPORAL DEAD ZONE. applyTheme is written above
+   this and CALLS IT, and applyTheme itself runs once at module load to apply the stored
+   preference. `openPopups` is a module-scope const declared further down, which is in its
+   temporal dead zone until its own line runs, and `typeof` does not rescue a TDZ binding: it
+   throws for one too. So there is no cheap test for "has that line run yet", and an uncaught
+   throw here would take every script after this one with it. This file has already lost the
+   whole page that way once, which is the sentence written above namesToggleEl and again above
+   the canvas registry. The load-time call has no popup to rebuild by construction, so swallowing
+   that one ReferenceError costs nothing; anything else a popup's own update() throws is not this
+   function's to handle and is re-raised. */
+function rebuildOpenPopupsForTheme() {
+  let open;
+  try {
+    open = openPopupsOnMap();
+  } catch (err) {
+    if (err instanceof ReferenceError) return; // the load-time call, before the register exists
+    throw err;
+  }
+  for (const popup of open) {
+    if (typeof popup.update === "function") popup.update();
+  }
 }
 
 function popupContaining(node) {
@@ -1411,6 +1613,34 @@ const FEED_COUNTS = {
 function feedAge(feed) {
   if (feed.source == null) return null; // AirTrain: no feed behind it to be fresh or stale
   return feed.system ? systemAgeOf(feed.source, feed.system) : worstSystemFreshness(feed.source).age;
+}
+
+/* MR5 (ruling Q2): A VEHICLE POPUP'S FRESHNESS FOOTER, which is vehicleStaleLine restyled.
+
+   IT TAKES THE AGE THE POPUP ALREADY HAS rather than looking one up, and that is the whole design
+   of this function. The first draft resolved the feed out of FEEDS and used feedAge, which is what
+   the strip's dot does; measured against the call sites, that would have LOST precision on the
+   subway. A subway train's stale line is its own FEED GROUP's age (subwaySystemAge reads the groups
+   whose coverage lists its route), while the feed's age is the worst group in the whole source, so a
+   train on a healthy group would have reported a different group's outage. Every other caller has
+   the same shape: it already computes the age it means, and passing it keeps this a restyle rather
+   than a re-derivation.
+
+   THE STATE COMES FROM THAT AGE, through the same feedDotState the strip uses, so the two surfaces
+   cannot disagree about what an age means. A NULL age is "stale" and says "Not reporting", which is
+   feedDotState's own judgment and its comment's own reasoning: a feed that has never decoded has no
+   freshness to report and "live" would be the one answer that is a lie. That is a change from
+   vehicleStaleLine, which rendered nothing for a null age; the strip has always said it, and saying
+   it here is the ruling's "said one way on both surfaces".
+
+   NOT ON STATION POPUPS, and that is scope rather than oversight. A station board already carries
+   its own freshness line, boardLineHtml over boardSystemLine, which answers a different question
+   that building 6.2 owns: how old the ARRIVALS are, per board and per row. The ruling is that this
+   footer is vehicleStaleLine restyled, and vehicleStaleLine is a vehicle popup's line, so this goes
+   exactly where that went. Putting one on a station popup as well would be the third voice this
+   ruling exists to prevent. */
+function popupFreshLine(age, position = null) {
+  return popupFreshHtml({ state: feedDotState({ age }), age, position });
 }
 
 // The eight buttons live in their own wrapper, because the wrapper is what folds below
@@ -2082,6 +2312,31 @@ function busMarkIcon(color, bearing) {
   });
 }
 
+/* ---------------- MR5: the mark a popup's title wears ----------------
+
+   THE MARKER'S OWN ICON, NOT A SECOND CALL TO THE BUILDER THAT MADE IT. Section 5 draws a
+   route mark before a popup's title, and the strongest form of "the popup shows what the rider
+   clicked" is the markup that marker is wearing right now: the tag with the branch code this
+   train actually has, the chevron at the bearing it is actually drawn at, the hull in the
+   colour its route resolved to. Rebuilding it here would mean reassembling each family's
+   arguments a second time (railroadIcon alone takes a train, its previous row and a clock) and
+   the two would disagree exactly where it matters, on the trains whose state is interesting.
+
+   ONE HELPER FOR SIX FAMILIES, and it is short because every vehicle in this app is an
+   L.divIcon whose html is a string from helpers.js. That is the seam MR3 and MR4 built: the
+   markup is pure, the wrapper is here.
+
+   AND THE THREE CANVAS FAMILIES GET NOTHING, which is the rule rather than an omission: a
+   subway station, a PATH station and a ferry dock are circleMarkers drawn on a shared canvas,
+   they have no element and no icon, and there is no string to borrow. getIcon() on one throws
+   nothing and returns undefined, so those popups print a title with no mark, which is what
+   "the popup's mark is the map's mark" means when the map's mark is a painted circle. */
+function markerMarkHtml(marker) {
+  const icon = marker && typeof marker.getIcon === "function" ? marker.getIcon() : null;
+  const html = icon && icon.options ? icon.options.html : null;
+  return typeof html === "string" ? html : "";
+}
+
 /* A FERRY DOCK'S NAME, which the design asks for ("Docks: ... names shown") and which no
    dock has ever had.
 
@@ -2258,7 +2513,11 @@ function applyMarkerName(marker) {
 // worse than no cross-link at all: a rider who follows it gets confidently incorrect
 // arrivals, and nothing on screen tells them so. A vehicle that does not name a
 // station gets no link.
-const CROSSLINK_CLASS = "popup-crosslink";
+// MR5: SECTION 5's OWN NAME FOR THIS BUTTON. It was `popup-crosslink` from A2 until here, and the
+// class is the one vocabulary item this stage could adopt by renaming alone: the rules already
+// matched section 5's `.xlink` (600 11px, a --divider border, a transparent ground) after the
+// chrome commit tokenised them, and the class is written once, here.
+const CROSSLINK_CLASS = "xlink";
 
 // The link's markup, or "" when this vehicle names no station. `stationKey` must be a
 // SYSTEM-QUALIFIED registry key: station ids collide across systems (see the
@@ -2271,12 +2530,22 @@ function crossLinkHtml(stationKey) {
   // station we know. Either way there is nothing to link to, and inventing a
   // destination is the failure this whole comment is about.
   if (!entry) return "";
-  // A real button, not a styled span: it is keyboard reachable, it activates on Enter
-  // and Space without any handler of ours, and it announces as a button. The station
-  // name is IN the accessible name, so "Also here" is never announced on its own.
+  /* A real button, not a styled span: it is keyboard reachable, it activates on Enter
+     and Space without any handler of ours, and it announces as a button. The station
+     name is IN the accessible name, so "Also here" is never announced on its own.
+
+     MR5: SECTION 5's ARROW IS NOT DRAWN, AND IT WAS MEASURED BEFORE IT WAS DROPPED. The design
+     draws this button as "Also here: Jamaica →". Added as an aria-hidden span (so a screen
+     reader would not read "right arrow" after the station's name), axe reported a NEW
+     undecidable finding on it at every width and in both themes: "Element content contains
+     only non-text characters", on `button.xlink span`. The operator's ruling on this stage's
+     surface is that the undecidable inventory does not grow, and a decorative glyph is the
+     weakest possible reason to grow it: the button already says where it goes, and its own
+     border already says it is pressable. So the arrow is recorded as a deviation beside the
+     README's list rather than drawn, and the words are unchanged. */
   return (
     `<button type="button" class="${CROSSLINK_CLASS}" data-station-key="${esc(entry.key)}">` +
-    `Also here: ${esc(entry.name)}</button>`
+    `Also here: ${esc(entry.name)}</button>\n`
   );
 }
 
@@ -2531,10 +2800,25 @@ function renderStation() {
 }
 
 
+/* MR5: THE TWO STATES A BOARD PASSES THROUGH ARE IN THE SAME GRAMMAR AS THE BOARD.
+
+   A station popup has three states, not one: loading, loaded and failed. The loaded one is section
+   5's (a kicker, a title, a board); these two were still MR4's bold name over a muted line, so the
+   first thing a rider saw on every station click was a 13px bold name that then jumped to a 17px
+   title, and a board whose fetch failed kept the old head for as long as the popup stayed open.
+
+   IT IS ALSO WHAT MAKES THE COVERAGE CLAIM TRUE OF STATES AND NOT ONLY OF FAMILIES. pins.spec.js
+   P5d asserts that every word a rider reads in a popup belongs to a named slot, and it opens every
+   surface in its LOADED state; a bare `<b>` belongs to no slot, so the claim held over popup
+   families and would have failed over popup states. Now both states are a title and a note.
+
+   NO KICKER, because these states do not know the system word: `openStation`'s descriptor carries
+   the station and the renderer, and the system word is the renderer's. A title and a note is what
+   this surface can say honestly. */
 function stationError(station, message) {
   return (
-    `<b>${esc(station.name ?? station.id)}</b>` +
-    `<br><span class="popup-sub">${esc(message)}</span>`
+    popupTitleHtml({ text: station.name ?? station.id }) +
+    `<div class="popup-sub">${esc(message)}</div>\n`
   );
 }
 
@@ -2553,7 +2837,8 @@ async function openStationArrivals({ refresh = false } = {}) {
     // Stop the previous tick up front so it cannot fire during this fetch.
     clearInterval(stationTimer);
     stationTimer = null;
-    marker.setPopupContent(`<b>${esc(station.name ?? station.id)}</b><br>Loading arrivals…`);
+    // The loading state in the same grammar as the board it becomes (stationError says why).
+    marker.setPopupContent(stationError(station, "Loading arrivals…"));
   }
   let body;
   try {
@@ -2613,7 +2898,7 @@ async function openStationArrivals({ refresh = false } = {}) {
 // kinds, so they live here once.
 function bindStationPopup(marker, makeDescriptor) {
   return marker
-    .bindPopup("", { minWidth: 170 })
+    .bindPopup("", POPUP_OPTIONS)
     .on("popupopen", function () {
       openStation = makeDescriptor(this);
       openStationArrivals();

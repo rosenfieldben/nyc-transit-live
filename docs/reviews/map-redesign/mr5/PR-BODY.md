@@ -107,7 +107,7 @@ popup.
 | the auto-pan recipe at 375 with the Key open | `top 592` on a 667px map: the popup lands 51px off the bottom | clamped per axis to what the measured map and popup can satisfy |
 | A4j's second growth | a 40px growth needs an 88px clearing move that lands 2px inside the control stack, so no move exists | re-staged at 4px, where the move exists at 52, with the geometry written down |
 | the alpha branch (M47) | reverting it moved no number, because `bestPerFamily` reports a family's strongest paint | P4d pins every non-opaque paint, composited and not, on both surfaces, from map, popup and chrome, at three decimals |
-| the kicker at twelve routes | not measured | a 158px span that wraps to two rows inside a 220px popup, `scrollWidth === clientWidth` |
+| the kicker at twelve routes | first measured as a 158px span wrapping to two rows inside a 220px popup, which was WRONG | 204px on ONE row, pushing the popup to 267px, because Leaflet sizes a popup to its own nowrap content up to maxWidth 320. Ruling R3 re-measured it, since a cap cannot be sized from a wrap that does not happen |
 
 ## The mutation table, re-run whole at the tip
 
@@ -232,7 +232,7 @@ side of the pair.
 
 | tier | what is new |
 | --- | --- |
-| node, `frontend/popupvocab.test.js` | the vocabulary asked one builder at a time: the mark's body byte-for-byte across six builders, the size clamp as arithmetic, the escaping happening once, the silence rule, the three-cell row, and the six kicker words asserted against the surfaces they came from |
+| node, `frontend/popupvocab.test.js` | the vocabulary asked one builder at a time: the mark's body byte-for-byte across seven builders, the size clamp as arithmetic, the escaping happening once, the silence rule, the three-cell row, and the six kicker words asserted against the surfaces they came from |
 | node, `frontend/tokens.test.js` | the popup's surface is the token at full strength, the translucency cannot come back by either spelling, the blur went with it, the ink edge is on the wrapper alone |
 | node, `frontend/boards.test.js` | the six board pins rewritten in section 5's grammar, with one spelled out in full so the grammar itself is pinned with no shared template in the way |
 | browser, `tests/e2e/popups.spec.js` | D6a to D6j: the surface and the edge per theme, the width cap and the 220 floor at every bind site, fourteen surfaces at two widths in two themes, the theme swap re-inking the head, every inline colour a popup prints measured against its own fill or the surface, the auto-pan's cap, edge, stand-down and desktop recipe, and (round 2) that a popup's title mark is its own marker's markup rather than any mark at all |

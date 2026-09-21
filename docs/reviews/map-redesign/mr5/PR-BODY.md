@@ -41,6 +41,14 @@ added lines.
 | `da27c3a` | round 1: the three defects the drawn page had and the string did not |
 | `9edca7e` | round 2: the guards the reviewers proved could not fail, and the prose that had stopped being true |
 | `8fb99b5` | round 2: this round's own seven mutation rows, so the repaired guards can be re-run |
+| `21343a4` | round 2: the round in the ledger and in the PR body |
+| `aab3e57` | round 2: the sha the table was last run at |
+| `99f56cd` | round 2: P5d's flake diagnosed and fixed |
+| `8bcb1fe` | round 2: the table's shas |
+| `5b51f76` | R1 and R2: N6 paid on every surface a rider can see, and the footer speaks the state rather than the repeat |
+| `1f065e4` | R3: all five station boards carry the routes calling there, through one helper with one measured cap |
+| `6e6d8c0` | R1 to R3: the eight mutation rows the three rulings owe |
+| `65b7af3` | R1 to R3: two anchors re-anchored and one mutation that could not fail |
 
 ## What a popup said before, and what it says now
 
@@ -102,10 +110,10 @@ popup.
 
 ## The mutation table, re-run whole at the tip
 
-**Twenty-five rows at `8fb99b5`: twenty-four died, one survived, none failed to run, and every
-anchor matched exactly once**, and again at `21343a4` and at `99f56cd`, the last commit to touch a
-file any row anchors in. Every commit after that one is documentation, so the numbers above are this
-branch's numbers rather than a snapshot of an older sha. Two rows had gone stale since they were written (M64 named the
+**Thirty-three rows at `65b7af3`: thirty-two died, one survived, none failed to run, and every anchor
+matched exactly once.** M85 to M92 are the three rulings' own. The run also found two stale anchors and
+one mutation that could not fail, none of which is a result about the code, which is what standing rule
+6 exists to make visible; the ledger records all three. Two rows had gone stale since they were written (M64 named the
 `backdrop-filter` the footer commit dropped, M66 named an argument list the vocabulary commit added
 to) and standing rule 6 is what turned that into a re-anchoring rather than into two survivors: an
 ANCHOR MISS is a failure of the run. The table is `docs/reviews/map-redesign/mr5/mutations.sh`, so it
@@ -129,6 +137,14 @@ can be re-run rather than re-read.
 | M82 | the rail popup's title loses the mark A1z4's scope closure now counts | died, A1z4 |
 | M83 | a second surface adopts a mark class the census records in both places | died, P4a |
 | M84 | the countdown that reads "now" takes `--accent`, at 3.47 on the light surface | died, node |
+| M85 | the footer's `live` beats `said` again, so a screen reader hears two ages | died, node (both tiers) |
+| M86 | the NJ Transit board resolver back to the second neutral | died, node |
+| M87 | the railroad's paint resolver back to the published fill, unmoved | died, node |
+| M88 | the panel's railroad chip resolves a colour of its own again | died, P3a |
+| M89 | the route tag's viewBox origin shifted, which empties every kicker silently | died, node and P5a |
+| M90 | the kicker's cap removed, so a dozen routes draw a dozen marks | died, node and P5e |
+| M91 | the routes stop being spoken, so an aria-hidden mark is all a reader gets | died, node and the pins |
+| M92 | the mark token takes the first `<text>` again, losing every branch code | died, node |
 
 ## The adversarial round, and what it cost
 
@@ -150,6 +166,42 @@ callers' words, the freshness contract's section 3.2 anchors and two of its rows
 deviation count and its Position row, this ledger's alpha table and its three popup widths, the stage
 table's `planned`, and `IMPLEMENTATION.md`'s five names that do not exist. The ledger's round 2
 section has the full table, including what the reviewers checked and found sound.
+
+## The three rulings the adversarial round produced
+
+Round 2 brought three findings to the operator rather than fixing them. All three came back as rulings,
+and unlike round 2 all three change what a rider gets.
+
+**R1, N6 paid on every surface a rider can see.** MR5 round 1 paid finding N6 ("two answers for one
+judgment: what colour is this route") on the NJ Transit popup head and called it structurally closed;
+three more readers went on answering elsewhere. The NJ Transit station board's badge and the panel's
+chip resolved `njtRouteColor` (fallback `#4a4e69`) beside a map tag resolving `railBranchColor`
+(`#6d6e71`). The railroad's board badge, popup title ink and panel chip resolved `railroadColor`, a HASH
+of the route id that never saw the system, so the LIRR's Babylon Branch and Metro-North's Hudson Line
+both drew `#5d4037` for two different published greens. All six readers now resolve the published paint
+through the one lookup the tag uses, `railroadColor` is deleted, and the badge takes railBranchPaint's
+PAIR because `EE0034` (four of Metro-North's six routes) clears with neither ink and its fill has to
+move. Six values move, and the ledger records each before and after.
+
+**R2, the footer speaks the state rather than the repeat.** The suppressed words went into the same
+visually-hidden span the live state uses, so a screen reader heard the Position row's age and then the
+footer's: two ages about one train, which the rule's own comment forbids. `said` beats `live` now, in one
+line, pinned in two tiers with both channels denied rather than the hidden span alone.
+
+**R3, all five station boards carry the routes calling there.** One helper, each family's own mark at the
+popup's row size, a body-only rail tag whose class is deliberately not the map tag's, and one overflow
+rule: three marks, a `+n` count, every route's name spoken. Three is measured, not chosen: an NJ Transit
+tag is 66.69 units where a subway plate is 17, and at four of them the kicker wraps at phone widths.
+Twelve plates do not wrap at all, they make the popup 267px wide, which corrected a measurement this
+phase's own ledger had recorded the other way round.
+
+**Four defects the three rulings turned up on their own**, each recorded in the ledger with its
+measurement: P5b's call-graph crawler deduplicated by name and source LENGTH, so two of the app's seven
+vehicle popups were never walked and nine literals were invisible to the coverage test; a `const` in a
+vm context is not a property of that context, so a fixture-side fallback in `boards.test.js` was
+`undefined` and drew `fill="undefined"`; `withoutMarks` could see neither a rail tag's branch code nor a
+fill declared in a `style` attribute; and D6j compared the first `.pmark` in a popup against the
+marker's own icon, which a kicker's marks precede.
 
 ## The captures
 
@@ -185,13 +237,17 @@ side of the pair.
 | browser, `tests/e2e/popups.spec.js` | D6a to D6j: the surface and the edge per theme, the width cap and the 220 floor at every bind site, fourteen surfaces at two widths in two themes, the theme swap re-inking the head, every inline colour a popup prints measured against its own fill or the surface, the auto-pan's cap, edge, stand-down and desktop recipe, and (round 2) that a popup's title mark is its own marker's markup rather than any mark at all |
 | browser, `tests/e2e/pins.spec.js` | P5d (direction A, the residue assertion) and P4d (every non-opaque paint, composited and not), plus P5b's extractor rewritten as a mode-aware scanner with its own self-tests and a per-system coverage haystack, and P4a's census widened to the six mark classes in both places they are drawn |
 | browser, `tests/e2e/a11y.spec.js` | A1z4 opens a rail train popup, both tag bodies, so the scope closure its axe exception depends on covers the surface this stage added |
+| node, `frontend/popupvocab.test.js` (R3) | the seventh mark builder in the roster, and the kicker's overflow rule asked one case at a time: the cap, the count, the spoken list, a route that cannot be drawn skipped BEFORE the cap, an empty list, and a mark whose viewBox the re-wrap cannot read |
+| browser, `tests/e2e/pins.spec.js` (R3) | P5e, the only world that reaches the overflow rule: Times Sq's real dozen routes, at 1280 and 375, three drawn, nine counted, twelve spoken, one row, inside the cap. And P5a asserts a mark count per station board outside `pin()`, so an empty kicker cannot be written into a golden |
 
 ## Gates
 
-`ruff check`, `ruff format --check`, `mypy` and `pytest` in `backend/` (1738 passed); the
-contract-tier lint; `node --test "frontend/*.test.js" "tests/*.test.js"` (392 passed); the hermetic
-Playwright suite (317 passed); and `docs/reviews/audit-2026-09-05/run_all.sh` (fifteen records, all
-still matching, two of which learned this stage's markup).
+`ruff check`, `ruff format --check`, `mypy` and `pytest` in `backend/` (1738 passed); BOTH contract-tier
+jobs, run locally as CI runs them (the lint and format check, 38 `pytest tests/contract`, and 5 contract
+specs driving the real backend and the simulator); `node --test "frontend/*.test.js" "tests/*.test.js"`
+(394 passed); the hermetic Playwright suite (318 passed); and
+`docs/reviews/audit-2026-09-05/run_all.sh` (fifteen records, all still matching, two of which learned
+this stage's markup and one of which learned its new argument).
 
 One flake appeared in this stage's own spec and was fixed rather than recorded: `pins.spec.js` P5d
 failed twice in four full parallel runs with the injected-string proof reporting an empty residue,

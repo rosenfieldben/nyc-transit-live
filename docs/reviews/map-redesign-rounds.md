@@ -2546,3 +2546,214 @@ reason is recorded above and whose defect dies at M77.
 
 Gates at the same tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; the contract-tier lint; 392 node
 tests; 317 playwright; 15 audit records. One flake is in the list above with a gap in it.
+
+### The three rulings round 2 produced, and what paying them cost
+
+Round 2 brought three findings to the operator rather than fixing them, because each was a decision
+rather than a repair. All three came back as rulings, and this is what they moved. **Nothing a rider
+sees changed in round 2; all three of these do.**
+
+#### R1: N6 paid on every surface a rider can see
+
+**The finding.** MR5 round 1 paid finding N6 ("two answers for one judgment: what colour is this
+route") on the NJ Transit popup head and declared it structurally closed. Three more readers went on
+answering from somewhere else: the NJ Transit station board's badge and the panel registry's chip both
+resolved `njtRouteColor`, whose fallback is `#4a4e69`, beside a map tag resolving `railBranchColor`'s
+`#6d6e71`; and the railroad's board badge, popup title ink and panel chip resolved `railroadColor`, a
+HASH of the route id that never saw the system, so LIRR 1 (the Babylon Branch) and MNR 1 (the Hudson
+Line) drew one brown for two published greens.
+
+**The ruling.** Pay it now. Both NJ Transit board resolvers move to the published paint; the railroad
+popup's title ink becomes `readableInk` over the branch's published colour as the tag already does;
+`railroadColor()` loses its popup readers and is deleted if none remain. New pins, before recorded.
+
+**What shipped, and the one interpretation this round made.** `njtBranch` is re-keyed from a train to a
+ROUTE ID, so the two boards reach the published pair through the lookup the tag uses instead of opening
+a third reader inside the fix. The railroad's board badge takes `railBranchPaint`'s PAIR through a new
+`railroadBranchPaint`, the title takes `railBranchColor` through `readableInk`, and the PANEL joins the
+`colorFor` branch the way its own comment said NJ Transit had. That panel move is the interpretation:
+the ruling named the popup readers, and `stationChipStyle`'s own first sentence claims its chips come
+"from the SAME color authorities the map markers and popups use", so a chip still hashing a route id
+once the map and both popups resolved the published colour would have broken the function's stated
+contract and re-opened N6 between the panel and the popup. With the panel moved, nothing read
+`railroadColor` and it is deleted with its palette, its export and its unit test.
+
+**Its note is carried, not deleted with it.** Two comments cited that function as the authority for "a
+fill that has to move rather than an ink that has to be chosen" (v2's `#607d8b`: white 4.37, dark 3.98,
+nothing clears). The measurement now lives at `railBranchPaint`, which implements the remedy.
+
+**The badge takes a PAIR and not a colour, and that is where the money is.** `EE0034`, Metro-North's
+New Haven red, takes white at 4.48 and dark at 3.88: neither ink clears, so the fill has to move, and
+it is FOUR of that railroad's six routes. A badge resolving the published colour through
+`readableTextOn` would have shipped an AA failure on the common case at Grand Central with every gate
+green, because the hermetic feeds publish `00985F` and `009B3A` and both clear either way. Held now in
+three places: `helpers.test.js` asks the board to render the moved pair, the A3 sweep includes `EE0034`,
+and `railtag.test.js` asserts as a source fact that the resolver is `railBranchPaint`'s.
+
+**Before and after, by value**, which is what "new pins, before recorded" asks for:
+
+| Surface | before | after |
+| --- | --- | --- |
+| LIRR Jamaica board badge | `#5d4037` on `#ffffff` | `#00985F` on `#1a1a1a` (the agency's own pair) |
+| MNR Grand Central board badge | `#5d4037` on `#ffffff` | `#009B3A` on `#1a1a1a` |
+| LIRR train popup title ink | `#5d4037` light, `#a69691` dark | `#007247` (4.95) light, `#26a777` (4.61) dark |
+| MNR train popup title ink | the same two, because the hash ignored the system | `#00742b` (4.91) light, `#26aa58` (4.67) dark |
+| NJ Transit route-less board badge | `#4a4e69` | `#6d6e71`, the rail families' own neutral |
+| Hoboken's route-17 panel chip | `rgb(74, 78, 105)` | `rgb(109, 110, 113)`, which is what the tag beside it draws |
+
+**The one reader left anywhere** is the NJ Transit route LINE, so a route published with a blank colour
+would still draw a `#4a4e69` line beside a `#6d6e71` tag. Latent (all twelve live routes publish a
+colour, and route 17 has no polylines at all), and held by a COUNT in `railtag.test.js` so a third
+reader cannot open quietly.
+
+**And the audit driver was edited with the signature it copies.** F12 reproduces the railroad station
+descriptor verbatim and CI runs it. With a paint resolver added in slot 4 and that copy left alone, its
+`nameFor` lambda lands in the paint slot, every badge renders `background:undefined`, and arm 3's only
+board measurement is a count of `arr-badge` substrings, so the record would have kept printing PASS
+over corrupted markup. Its narrow-copy note now says that in as many words, and R3 proved the point
+again two rulings later.
+
+#### R2: the footer speaks the state, not the repeat
+
+**The finding.** `popupFreshHtml` put the SUPPRESSED words in the same `.visually-hidden` span the live
+state uses, so a screen reader heard the Position row's age and then the footer's: two ages about one
+train, which is exactly what the rule in that function's own comment forbids. This document had stated
+the total-suppression rule since round 1; the code stated the visual-only rule; and both test tiers
+pinned the code. A record and its code disagreeing with the tests holding the code is the fifth defect
+shape one level up.
+
+**The ruling.** `live` speaks the state; `said` speaks nothing. Invert the pin, and the spoken golden
+moves for suppressed rows only.
+
+**What shipped.** One line: `said` is tested first and yields nothing, so a suppressed footer is the
+square alone in both channels. `said` beating `live` is not a free choice: the loop in
+`positions.test.js` includes a LIVE feed under an older stated fix, so only that order satisfies it, and
+only that order moves a golden. Both assertions deny BOTH channels rather than the hidden span alone,
+because a footer that printed the suppressed words visibly would satisfy a bare absence and nothing
+else in the repo would notice. Two spoken goldens lose " Live · {n}s" and no `seen` value moves.
+`smoke.spec.js` C2e moved with it: PATH's position states the same 3m as its feed, so that footer is
+the square alone, and the spec now asserts the age is stated once, by the row, and that the footer's
+capitalised form is NOT beside it. (`toContainText` reads visually-hidden text, which is why it passed
+while the words were merely hidden from an eye.)
+
+**One widening accepted rather than hidden.** `said` is true when the FEED's age is null, which is the
+feed that has never decoded and whose words are "Not reporting", a claim about the feed rather than an
+age. Suppressing it is what the rule as written does; no rider reaches it today and the comment says so.
+The narrower rule would be `position.age != null && age != null && position.age >= age`, which moves no
+golden either way.
+
+**The ruling's line number was off by one**, recorded because a record's citations are its evidence:
+`positions.test.js:504` is the assertion that the SQUARE survives suppression, which ruling Q2 forbids
+inverting; the pin on the spoken words is `:503`.
+
+#### R3: all five station boards carry the routes calling there
+
+**The finding.** Only the subway station's kicker carried route marks. The other four boards showed a
+rider nothing about which routes call where, documented by omission from a table rather than by a
+reason, while PATH stations register their routes and both rail families have a mark builder that needs
+no marker.
+
+**The ruling.** All five boards, through one helper, with the map's own marks at popup scale (rail tag
+body only) and one shared overflow rule: first N marks then a `+n` count, the full list in the
+accessible name; add the rule to the subway kicker if it has none. New pins for the four boards.
+
+**The rail families' mark is a new builder and not a copy.** `railRouteTagSvg` is the tag with nothing
+but its body, in a 13-unit box: the 30-unit box's stem and its chevron-or-dot state where one TRAIN is
+and whether its heading is trusted, and a route calling at a station has neither. The body itself is
+EXTRACTED from `railTagSvg` rather than written again, because the Key panel already hand-writes two
+bodies and a third would be a third answer to "what is a rail tag body", which is N6 inside the stage
+that just paid it. Its class is `rail-route-tag` and not `rail-tag`: A1z4 asserts where every
+`svg.rail-tag` on the page is, and the axe gate's exception for that class's 8px type rests on A1z4
+measuring every place it appears, so a kicker full of them would be a third place excused by a decider
+that never looks at it. That is the reviewer finding round 2 recorded, and `key-rail-tag` is the Key
+panel's own precedent for avoiding it. The solid body's paper backing is dropped for this form: a
+popup's surface is opaque, and that rect is one of only two non-opaque paints on the map.
+
+**THE CAP IS THREE, AND THE LEDGER'S OWN EARLIER MEASUREMENT IS WHY IT HAD TO BE RE-MEASURED.** This
+document said twelve plates wrap the kicker to two rows inside the popup's 220px floor. They do not:
+Leaflet sizes a popup to its own nowrap content up to maxWidth 320, so twelve plates make the popup
+267px WIDE on one row. A cap cannot be sized from a wrap that does not happen. Re-measured in the app
+at 1280, 375 and 320, the count at which each family's kicker first wraps is 16 for the subway, 13 for
+the LIRR and PATH, and FOUR for NJ Transit at both phone widths, whose tags run to 66.69 units where a
+subway plate is 17. Three is the largest shared count that never wraps anywhere. The ruling asked for a
+count, so a count is what ships; a shared WIDTH budget would let the subway show nine and would be a
+second rule.
+
+**The full list is spoken, and Leaflet gives a popup no accessible NAME to put it in.** No role, no
+aria-label; the only aria-label in a popup is the close button's. What a screen reader can be given is
+the words in document order, through A1's `.visually-hidden` class, which is what the station panel
+already does for its own route chips and its access glyph. Every mark is aria-hidden, so without that
+span a rider who cannot see the marks would learn nothing about the routes at all; the `+n` count is
+aria-hidden for the reason ruling Q2 gave the freshness square, since the words beside it already say
+what it means.
+
+**Two fixtures were behind the endpoints they stand in for**, which is the half of this ruling that was
+not about code. `railroadStops()` and `pathStops()` carried no `routes` field at all, though
+`backend/models.py` declares it on both and both routers fill it, so three of the four new pins would
+have been pins of an empty span: trap T4 in `pins.spec.js`'s own words. The fixture now serves what the
+endpoint serves, and P5a asserts a mark count PER BOARD outside `pin()` so an empty kicker cannot be
+written into a golden and matched forever.
+
+**And that fixture fixed a rider-facing sentence nobody had noticed.** Selecting Jamaica used to make
+the panel say "New service alert for this station." on arrival, because the station's static route list
+was empty on the first render, so the route-level alert only matched once the arrivals came back, which
+is a transition rather than a seed. With the routes served, both alerts are there on the first paint and
+seed silently, which is what that announcement's own comment says it is for. P3c's pin records it.
+
+**P5e is the world the rule needed.** No hermetic station serves more than three routes, so the cap, the
+count and the withheld list were unreachable from every pinned world, and a rule no world runs is a rule
+that ships broken and green. P5e overrides Times Sq's payload with the dozen the real station serves and
+measures, at 1280 and 375: three marks drawn, nine counted, twelve spoken, the marks on ONE row, and the
+popup inside its cap.
+
+#### Four defects these three rulings turned up on their own
+
+**The coverage test was partial over the families it claims to be total over.** R1 put `njtBranch` into
+a station root, its literal appeared, and P5b reported it uncovered in a change that touched no string.
+The crawler deduplicated a walked function by NAME AND SOURCE LENGTH, and every root is named
+`<root>`: `() => njtTrainPopup(newRecord)` and `() => railroadPopup(newRecord)` are both 30 characters,
+`() => pathTrainPopup(record)` and `() => ferryBoatPopup(record)` are both 28, so of the app's seven
+vehicle popups two were never walked at all. The key is the whole source now. Nine literals the test had
+been silent about since it was written are declared, each naming the spec that DOES draw it, and the
+dead-waiver check is what fails if the length key ever comes back.
+
+**A `const` in a vm context is not a property of that context.** `boards.test.js` read
+`S.FERRY_FALLBACK_COLOR` off the loaded sandbox, where only function declarations land, so the value
+was `undefined` and R3's ferry kicker drew `fill="undefined"` for the one route the fixture's route
+table does not carry. Constants come from the required module now and functions from the sandbox, with
+the difference stated where it is made. Latent since the file was written; it took a new fallback
+reaching a pin to show it.
+
+**`withoutMarks` could not see a branch code or a style fill.** Its `<text>` capture was `exec`, so a
+rail tag read as its agency glyph alone and the code, the one thing a route mark exists to say, was
+unpinnable; and its fill capture read only the `fill` attribute, so the PATH diamond and the ferry hull,
+which declare theirs in `style`, carried no colour in their tokens at all. A board drawing every diamond
+in the fallback slate would have pinned identically to one drawing the published reds. Both widened,
+which adds each plate's own backing to the existing tokens.
+
+**D6j compared the wrong mark.** It read the FIRST `.pmark` in a popup, and a kicker's marks precede the
+title, so its "the popup's mark is the marker's own markup" claim broke for three station boards the
+moment they had kickers. Scoped to `.pt .pmark svg`, which is how its own WITHOUT branch has always been
+scoped: that asymmetry is what showed the subway station had been exempt from the claim for a whole
+stage.
+
+#### The table, re-run whole with the rulings' own rows
+
+**Thirty-three rows at `65b7af3`: thirty-two died, one survived, none failed to run, every anchor
+matched exactly once.** M85 to M92 are the rulings': the footer's precedence reverted; the NJ Transit
+board resolver and the panel chip back to a colour of their own; the railroad's paint resolver back to
+the published fill unmoved; the route tag's viewBox origin shifted, which is the silent way to empty
+every kicker; the cap removed; the routes no longer spoken; and the mark token back to its first
+`<text>`.
+
+**And the run found three things that were not results about the code**, which is the whole reason
+standing rule 6 exists. M78 anchored on the fill capture R3 widened and matched zero times. M92's anchor
+carried a literal middle dot where the source has the escape that writes one; both anchors are taken
+from the file now rather than retyped. And M87 SURVIVED because the mutation was a no-op: it re-resolved
+a fill the resolver had already moved, so no output could change. It is re-aimed at
+`railroadBranchPaint`, where the choice actually lives, and the source assertion it needed is in
+`railtag.test.js`.
+
+Gates at that tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; both contract-tier jobs (38 pytest and
+5 contract specs against the real backend and the simulator); 394 node tests; 318 playwright; 15 audit
+records.

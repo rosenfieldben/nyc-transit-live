@@ -49,7 +49,9 @@ added lines.
 | `1f065e4` | R3: all five station boards carry the routes calling there, through one helper with one measured cap |
 | `6e6d8c0` | R1 to R3: the eight mutation rows the three rulings owe |
 | `65b7af3` | R1 to R3: two anchors re-anchored and one mutation that could not fail |
-| `47e80e2` and after | the three rulings written into the ledger and this body, and the sha the table was last run at. Documentation only: `65b7af3` is the last commit on this branch to touch a file any mutation row anchors in, which is why the numbers in this body are the branch's rather than a snapshot |
+| `47e80e2` to `c7c873e` | the three rulings written into the ledger and this body, and the sha the table was last run at |
+| `665186b` | round 3: the mark normaliser moves to a file the node tier can reach, and the tier's package rule becomes a test |
+| after `665186b` | round 3 written into the ledger and this body. Documentation only: `665186b` is the last commit on this branch to touch a file any mutation row anchors in, which is why the numbers in this body are the branch's rather than a snapshot |
 
 ## What a popup said before, and what it says now
 
@@ -204,6 +206,40 @@ vm context is not a property of that context, so a fixture-side fallback in `boa
 fill declared in a `style` attribute; and D6j compared the first `.pmark` in a popup against the
 marker's own icon, which a kicker's marks precede.
 
+## Round 3: the gate only CI could run
+
+CI found one thing this checkout could not, and it is worth stating plainly because every gate below
+was green while it was true. Round 2 de-duplicated the mark normaliser `withoutMarks` into
+`tests/e2e/popup.js` and had `frontend/boards.test.js` require it, on the written claim that
+**"`tests/e2e/popup.js` requires nothing"**. It requires `@playwright/test`, for `expect`. A local
+`node --test` resolves that from `node_modules` and passes. The `frontend-tests` job installs nothing,
+by design: the app is buildless and the unit tier needs no packages, so the job checks out the repo and
+runs `node --test` against the runner's own node. The require threw at load, and node's reporting is
+what made it quiet: **a file that dies at load counts as one failing test**, so the job said
+`# tests 382 / # fail 1` where the truth was that thirteen tests had stopped existing. 394 here, 382
+there, and a twelve-test gap was the only visible trace.
+
+The reader moved to `tests/e2e/marktoken.js`, which requires nothing, is re-exported by `popup.js` so no
+spec's import moves, and is required directly by the node tier. One copy still, which was round 2's
+ruling; the premise under it is the part that got fixed.
+
+And the hole got a gate, because a claim about what a tier may require is a claim a test should hold:
+`tests/nodetier.test.js` asks node rather than a regex. It reads the job's own globs out of
+`.github/workflows/ci.yml`, spawns a child node with `Module._load` hooked and `node:test` stubbed to a
+no-op so nothing RUNS, requires each seed file for real, and fails on any specifier that is not a node
+builtin. A source scan was the obvious version and would have gone blind: this closure deliberately
+names `@playwright/test` in prose and carries regex literals full of double quotes, and a mis-lexed
+quote does not fail loudly, it swallows the rest of the file and reports a clean tier. The hook is
+tested on the exact shape that got past round 2, a seed whose only require is a local file with the
+package one hop away, and a recorded package is answered with a stub rather than resolved so one run
+names every offender and the check needs nothing installed itself.
+
+Verified by putting the defect back: with `boards.test.js` pointed at `popup.js` again the new test
+fails and names `tests/e2e/popup.js requires @playwright/test`. And with `node_modules` moved aside,
+which is what the job has, the tier reports **397 pass, 0 fail** where before it could not load at all.
+Two mutation rows moved with the file, M78 and M92, both anchors taken from the file programmatically;
+the whole table re-run at `665186b` puts both of them in `tests/e2e/marktoken.js`, where both died.
+
 ## The captures
 
 One frame per surface, clipped to the popup at 1:1, in both themes, plus two full frames at 375
@@ -240,15 +276,20 @@ side of the pair.
 | browser, `tests/e2e/a11y.spec.js` | A1z4 opens a rail train popup, both tag bodies, so the scope closure its axe exception depends on covers the surface this stage added |
 | node, `frontend/popupvocab.test.js` (R3) | the seventh mark builder in the roster, and the kicker's overflow rule asked one case at a time: the cap, the count, the spoken list, a route that cannot be drawn skipped BEFORE the cap, an empty list, and a mark whose viewBox the re-wrap cannot read |
 | browser, `tests/e2e/pins.spec.js` (R3) | P5e, the only world that reaches the overflow rule: Times Sq's real dozen routes, at 1280 and 375, three drawn, nine counted, twelve spoken, one row, inside the cap. And P5a asserts a mark count per station board outside `pin()`, so an empty kicker cannot be written into a golden |
+| node, `tests/nodetier.test.js` (round 3) | the node unit tier runs with no `node_modules`, so nothing it loads may require a package: the seeds are read from the workflow's own globs, the closure is walked by hooking a child node's module loader rather than by scraping source, and the hook is self-tested on a package one hop behind a local file |
 
 ## Gates
 
 `ruff check`, `ruff format --check`, `mypy` and `pytest` in `backend/` (1738 passed); BOTH contract-tier
 jobs, run locally as CI runs them (the lint and format check, 38 `pytest tests/contract`, and 5 contract
 specs driving the real backend and the simulator); `node --test "frontend/*.test.js" "tests/*.test.js"`
-(394 passed); the hermetic Playwright suite (318 passed); and
+(397 passed, and 397 again with `node_modules` moved aside, which is the condition the CI job actually
+runs in); the hermetic Playwright suite (318 passed); and
 `docs/reviews/audit-2026-09-05/run_all.sh` (fifteen records, all still matching, two of which learned
 this stage's markup and one of which learned its new argument).
+
+**The table, re-run whole at `665186b`: thirty-three rows, thirty-two died, M75 survived as recorded,
+none failed to run, every anchor matched exactly once, and every row printed that sha.**
 
 One flake appeared in this stage's own spec and was fixed rather than recorded: `pins.spec.js` P5d
 failed twice in four full parallel runs with the injected-string proof reporting an empty residue,

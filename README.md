@@ -228,6 +228,7 @@ nyc-transit-live/
 │   ├── playwright.config.js # chromium only, starts the static server
 │   └── fixtures/            # handcrafted payloads, plus one board the backend served
 ├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
+├── tests/nodetier.test.js   # the node unit tier loads with no node_modules, checked
 ├── docs/reviews/            # adversarial-review adjudication records, one per phase
 ├── data/
 │   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)

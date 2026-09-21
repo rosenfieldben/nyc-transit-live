@@ -2471,7 +2471,7 @@ rather than by reviewer, because four of the five found the same shape in differ
 | What was asserted | What could happen anyway | The repair, and the mutation that now kills it |
 | --- | --- | --- |
 | `withoutMarks` normalises a mark "and its geometry stays where marks live" | The token kept only the `<text>` label. Drawing the subway station kicker's plates at the TITLE's size, and then in flat black, left all 392 node tests green (the reviewer ran both). Nothing pinned `subwayArrivalsHtml`'s arguments: `markPin` writes `markers/<system>` for the TRAIN's mark, and `popupvocab.test.js` passes its own literals in. | The token carries the route, the drawn size and the declared fills: `[mark 1 17x17 #c0392b,#ffffff]`. Three pins moved (two in `boards.test.js`, one in `smoke.spec.js` C2i) and each now reads the kicker's own paints, which are the same pair the row badges below carry. **M78.** |
-| `withoutMarks` is "imported rather than copied" | It was two byte-identical copies, and the comment defending the duplication said this file "is not importable from a node unit test". It is: `tests/e2e/popup.js` requires nothing. This is the fifth defect shape re-created inside the commit that named it. | One copy, in `popup.js`, required by `boards.test.js`. |
+| `withoutMarks` is "imported rather than copied" | It was two byte-identical copies, and the comment defending the duplication said this file "is not importable from a node unit test". It is: `tests/e2e/popup.js` requires nothing. This is the fifth defect shape re-created inside the commit that named it. | One copy, in `popup.js`, required by `boards.test.js`. **The finding held and this cell's evidence did not: popup.js requires `@playwright/test`, and CI is the only place that shows. See round 3 below; the one copy lives in `tests/e2e/marktoken.js` now.** |
 | `tokens.test.js`: "the design's translucency cannot come back by either spelling" | It read ONE rule body. The reviewer appended a second `.leaflet-popup-content-wrapper` rule with `color-mix` and a blur: equal specificity, later in the file, so it wins, and all 386 node tests passed. `style.css`'s own comment records that exact trap costing a debugging round. | The scan is by SELECTOR over every rule that paints a popup (eight of them today, and a ninth the day it is written), with the count asserted only so a regex that stopped matching fails loudly. The background count is over the same set. **M79.** |
 | P5b: "attributed to the function it came from, so a phrase pinned in one system does not silently cover another's" | The attribution was in the failure message only. Coverage was `haystack.includes(lit)` over every world's text joined into one string, so a literal only one system can reach was covered by a coincidental occurrence in another's pinned text. | A per-system haystack, used when every function a literal came from is the same system's; shared builders still check against the whole golden, because their prose is legitimately pinned wherever it renders. A premise asserts the seven systems the surface keys resolve to, so a renamed world fails loudly instead of checking against an empty string. **M80.** |
 | P5b's scanner "reads all four constructs correctly" | A `/` after a KEYWORD was read as division, so `return /["]/.test(x) ? "ok now" : "not ok"` lost BOTH literals and reported a code fragment as prose. The reviewer extracted the function and ran it. Latent today (this app's two `return /.../` sites carry no quotes and no prose), and a silent loss in the direction that claims totality. | It reads the previous WORD as well as the previous character. And five constructs it has been wrong about once are now run through it as self-tests, in the page, compared here: the nested template, the regex with a quote after `(`, the two keyword cases, and an ordinary division. **M81.** |
@@ -2758,3 +2758,65 @@ a fill the resolver had already moved, so no output could change. It is re-aimed
 Gates at that tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; both contract-tier jobs (38 pytest and
 5 contract specs against the real backend and the simulator); 394 node tests; 318 playwright; 15 audit
 records.
+
+### Round 3: the gate only CI could run, and a premise measured in the wrong place
+
+Round 2's ruling on the mark normaliser was right and its evidence was not. The finding was the fifth
+defect shape, two implementations of one reader: `withoutMarks` existed twice, byte-identical, and the
+copy in `frontend/boards.test.js` sat under a comment claiming this repo's browser-tier helpers are not
+importable from a node unit test. The reviewer measured that claim and it was false, so the copy went
+and the node tier imported `tests/e2e/popup.js` instead. The sentence written down to justify the
+direction was **"`tests/e2e/popup.js` requires nothing"**, and that is the part nobody measured. It
+requires `@playwright/test`, on its twenty-second line, for `expect`.
+
+**Every gate here was green and the claim was still false**, because every gate here runs in a checkout
+that has `@playwright/test` installed. The job that does not is `frontend-tests`, which checks out the
+repo and runs `node --test` against the runner's own node with no `npm ci` at all. That is deliberate
+and it is written in the workflow: the app is buildless and the unit tier needs no packages. So the
+require threw while loading `boards.test.js`, and node's reporting is what made it quiet: **a file that
+dies at load counts as one failing test**, so the job said `# tests 382 / # fail 1` where the truth was
+that thirteen tests had stopped existing. 394 locally, 382 on CI, and the twelve-test gap was the only
+visible trace.
+
+| The claim | What was measured | Now |
+| --- | --- | --- |
+| "popup.js requires nothing itself" | It requires `@playwright/test` for `expect`. The local run resolved it from `node_modules` and passed; the one job that installs nothing is the only place the difference exists. | The reader moved to `tests/e2e/marktoken.js`, which requires nothing, is re-exported by popup.js so no spec's import moves, and is required directly by the node tier. One copy still. |
+| A green `node --test` here means a green `frontend-tests` there | It does not, and cannot, while the two runs resolve packages differently. With `node_modules` moved aside the same command reports 397 pass. | `tests/nodetier.test.js`. |
+
+#### The guard asks node, not a regex
+
+The obvious version of the new test greps the tier for `require("...")`, and the obvious version is the
+one that would have gone blind. This closure is deliberately full of prose naming `@playwright/test`
+(marktoken.js's header, boards.test.js's import comment, this ledger's own rows), and full of regex
+literals carrying double quotes, `/fill="([^"]+)"/` among them. A scraper has to lex to tell those
+apart, and a mis-lexed quote does not fail loudly: it swallows the rest of the file and reports a clean
+tier. So the test spawns a child node, hooks `Module._load`, stubs `node:test` to a no-op so nothing
+RUNS, and requires each seed file for real. What comes back is the list of specifiers node was actually
+asked for while loading the tier, which is the question CI asks.
+
+Three further choices, each because the alternative can pass over air:
+
+- **The seeds are read from `.github/workflows/ci.yml`**, not listed in the test. A literal would be a
+  second statement of which files the tier runs, and the one to go stale would be the test's. A glob
+  shape the expander does not understand throws rather than matching nothing.
+- **A recorded package is answered with a stub, not resolved.** One run then names every offender
+  instead of stopping at the first, and the check does not itself need the package installed, so it
+  asks its question the same way on a bare checkout.
+- **The hook is tested rather than trusted**, on the exact shape that got past round 2: a seed that
+  requires only a local file, with the package one hop away. Something that read only its seeds would
+  call that clean.
+
+Verified by putting the defect back: with `boards.test.js` pointed at popup.js again the new test fails
+and names the file and the specifier, `tests/e2e/popup.js requires @playwright/test`. And with
+`node_modules` moved aside, which is what the job has, the tier reports **397 pass, 0 fail** where
+before it could not load at all.
+
+Gates at the round-3 tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; both contract-tier jobs (the lint
+and format check, 38 pytest, and 5 contract specs against the real backend and the simulator); **397**
+node tests, and 397 again with `node_modules` moved aside, which is the condition `frontend-tests`
+actually runs in and the reason this round exists; 318 playwright; 15 audit records.
+
+**Thirty-three rows at `665186b`: thirty-two died, M75 survived as recorded, none failed to run, every
+anchor matched exactly once**, and every row printed that sha. M78 and M92 moved with the normaliser and
+both mutated `tests/e2e/marktoken.js` and died there; a row still naming popup.js would have matched
+nothing, which is standing rule 6's whole subject and the third time this stage has had to pay it.

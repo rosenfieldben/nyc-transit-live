@@ -294,22 +294,24 @@ if (stationsSearch) stationsSearch.addEventListener("input", renderStationResult
 
 /* ---------------- the result list ---------------- */
 
-// The chip background and text color for one route, from the SAME color
-// authorities the map markers and popups use, switched by system because the
-// systems genuinely differ: subway route colors come from a fixed table with a
-// known set of light backgrounds needing dark text, railroad has its own palette
-// (its route ids collide with the subway's), and PATH and ferry colors are served
-// per route by the backend and validated before use.
+/* The chip background and text color for one route, from the SAME color authorities the map markers
+   and popups use, switched by system because the systems genuinely differ: subway route colors come
+   from a fixed table with a known set of light backgrounds needing dark text, and every other
+   family's colours are served per route by the backend and validated before use.
+
+   RULING R1 IS WHY THERE IS NO RAILROAD BRANCH HERE ANY MORE. This function had one, hashing the
+   route id through helpers.js's `railroadColor` while the sentence above claimed to use the same
+   authority as the map and the popups: once MR3 drew the branch lines and the tags from
+   /api/railroad-routes and MR5 moved the popups, that claim was false of the one family whose chip
+   still hashed. So the railroad joins the colorFor branch the way NJ Transit did, and the first
+   clause of this comment is true again. The chips ARE the reason the registry carries `colorFor`. */
 function stationChipStyle(entry, routeId) {
-  if (entry.kind === "railroad") {
-    const bg = railroadColor(routeId);
-    return { bg, fg: readableTextOn(bg) };
-  }
-  // NJT joins the colorFor branch rather than getting its own: its route colours
-  // are served per route by the backend and validated (njtColor) exactly as PATH's
-  // and the ferry's are, and its fallback is the one njtRouteColor supplies, which
-  // is what a route with no line (17, the Meadowlands) lands on.
-  if (entry.kind === "path" || entry.kind === "ferry" || entry.kind === "njt") {
+  /* EVERY SERVED-COLOUR FAMILY ON ONE BRANCH, and stations.js deliberately resolves none of them
+     itself: a rail colour lives in systems/railroad.js's tables and a call into that file from here
+     would be undefined in frontend/boards.test.js's vm, which loads this file without it. The
+     registry's own closure is the seam, which is why NJ Transit was put on this branch and why the
+     railroad is now. */
+  if (entry.kind === "path" || entry.kind === "ferry" || entry.kind === "njt" || entry.kind === "railroad") {
     const colorFor = entry.colorFor || (() => null);
     const bg = colorFor(routeId) || "#546e7a";
     return { bg, fg: readableTextOn(bg) };

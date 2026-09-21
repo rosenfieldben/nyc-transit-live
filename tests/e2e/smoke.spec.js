@@ -1817,8 +1817,20 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
   // source words it exactly as it did pre-C2: no system name, because its one system
   // IS the source).
   await page.evaluate(() => pathTrainRecords.get("p-2").marker.openPopup());
-  // MR5 (Q2): the age is the footer's now, in the feed strip's own capitalisation.
-  await expect(popup(page)).toContainText("As of 3m ago");
+  /* THE AGE IS DISCLOSED ONCE, BY THE POSITION ROW, and ruling R2 is why this assertion changed.
+     MR5's Q2 moved the age into the footer and this line read "As of 3m ago", the footer's
+     capitalisation. R2 then ruled that a footer whose Position row has already stated an age at
+     least as old as the feed's says its words in NEITHER channel, and this popup is exactly that
+     case: PATH's position is placed from its trip update and states the same 3m, so the footer is
+     the square alone. `toContainText` reads visually-hidden text, which is why this passed while
+     the words were merely hidden from an eye and fails now that they are gone from the tree too.
+
+     So the assertion is the rider's: the age is on screen once, in the Position row's own words,
+     and the footer's capitalised form of it is NOT beside it. Both halves, because "the age is
+     disclosed" and "it is disclosed once" are different claims and R2 is about the second. */
+  await expect(popup(page)).toContainText("scheduled position (no GPS), as of 3m ago");
+  await expect(popup(page)).not.toContainText("As of 3m ago");
+  await expect(page.locator(".leaflet-popup-content .fresh-dot")).toHaveAttribute("data-state", "stale");
   await expect(page.locator("#status")).toContainText("PATH: as of 3m ago");
 
   // Recovery: a fresh poll un-dims and the glide resumes. Its trains are dated by that
@@ -1941,10 +1953,12 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
      solid one), so the stripe is where to read it, and it is the LAST rect in the svg.
 
      AND THE VALUE MOVED TOO, from #4a4e69 to #6d6e71, which is the README's stated neutral for
-     an unknown route. TWO NEUTRALS ARE ON SCREEN FOR ROUTE 17 UNTIL MR5: the tag and the line
-     take the design's #6d6e71 and the popup head still takes njtColor's older #4a4e69, because
-     the popups are stage MR5 and P1k pins this one byte for byte. The pin is what proves the
-     popup did not move here, and MR5 is where the two converge. */
+     an unknown route. TWO NEUTRALS WERE ON SCREEN FOR ROUTE 17 UNTIL MR5, which is finding N6: the
+     tag and the line took the design's #6d6e71 while the popup head took njtColor's older #4a4e69.
+     MR5 round 1 moved the head and ruling R1 moved the last two readers a rider can see, the station
+     board's badge and the panel's chip, so this value is now every NJ Transit surface's answer for a
+     route the routes endpoint does not carry. This spec opens route 17's popup, so it is also where
+     that convergence is visible: the head above and the stripe below are one colour. */
   expect(
     await page.evaluate(() => {
       const rects = njtTrainRecords.get("njt:9001").marker.getElement().querySelectorAll("rect");

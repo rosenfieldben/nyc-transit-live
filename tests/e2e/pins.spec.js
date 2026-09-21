@@ -1122,6 +1122,16 @@ const NOT_RIDER_TEXT = {
      back. A waiver with a reason is the honest form, and it is cheap: the rider's word "now" is
      formatCountdown's and IS pinned, on every board world that has a row under 30 seconds. */
   "n now": "the countdown cell's class attribute when a row reads now, not a string anyone reads",
+  /* RULING R1's SIDE EFFECT, and the honest way to read this block of five: they were always in the
+     popup call graph and the crawler could not see them, because it deduplicated a walked function
+     by its NAME AND SOURCE LENGTH while every root is named "<root>" (the note at the crawler has
+     the measurement). Two of the app's seven vehicle popups were therefore never walked. Nothing
+     below is new code; they are strings this test has been silent about since it was written. */
+  STOPPED_AT: "a GTFS current_status value the ferry code switches on. The rider reads ferryStatusText's answer",
+  IN_TRANSIT_TO: "the same enum, read by ferryStatusText and ferrySpeedKnots",
+  INCOMING_AT: "the same enum",
+  NJT: "railBranchCode's system key. The tag prints the branch CODE and the kicker prints POPUP_SYSTEM_WORDS' \"NJ Transit\"",
+  "NJT|": "the station registry's key prefix, which the cross-link resolves a station by",
 };
 
 const UNREACHED_STATES = {
@@ -1145,6 +1155,21 @@ const UNREACHED_STATES = {
   "Not reporting":
     "the footer's state for a feed with no age at all, which is a feed that has never decoded. " +
     "Every fixture feed decodes on its first poll, so no world here reaches it",
+  /* AND FOUR MORE FROM THE SAME REPAIR (see the five in NOT_RIDER_TEXT above): the ferry boat and
+     the NJ Transit train popups were the two roots the crawler's length-keyed dedup dropped, so
+     every state THEY have that no pinned surface renders was invisible here. Each names the spec
+     that does draw it, because "no world here reaches it" is only honest when something else does. */
+  "At dock":
+    "a STOPPED_AT boat. The pinned ferry surface is H1, under way; smoke.spec.js 20 opens H2 and " +
+    "asserts this string, and the contract tier's C6e5 measures the docked compound",
+  "Arriving at dock": "an INCOMING_AT boat. No fixture boat carries that status at all",
+  Unassigned:
+    "a boat whose route_id joins nothing. The pinned boat has a route; smoke.spec.js 20 renders " +
+    "this one and asserts the word",
+  "NJ Transit route":
+    "formatNjtHead's fallback for a route the route table cannot name. The pinned NJ Transit train " +
+    "is route 9, which has a name; markers.spec.js reads \"NJ Transit route 17\" off route 17's " +
+    "marker label, which is the same fallback on the surface that does render it",
   /* MR5: FOUND BY THE NEW SCANNER, not by a reviewer. The old extractor read a template's
      literal pieces and stopped at its interpolations, so a string inside one was invisible;
      this one scans an interpolation as code, and the first thing it found was a rider-visible
@@ -1180,8 +1205,9 @@ const UNREACHED_STATES = {
    has to notice.
 
    THE HIDDEN WORDS ARE OUT OF BOTH SIDES. `seen` drops `.visually-hidden` (ruling Q2's live footer
-   says "Live · 12s" to a screen reader and nothing to an eye), so the slots drop it too: this is
-   about what a rider READS. */
+   says "Live · 12s" to a screen reader and nothing to an eye, unless ruling R2's suppression has
+   taken the words out of the tree as well, which is what happens where the Position row already
+   stated an age that old), so the slots drop it too: this is about what a rider READS. */
 const SLOT_READER = `
   const norm = (s) =>
     String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim().replace(/\\b\\d+s\\b/g, "{n}s");
@@ -1454,15 +1480,27 @@ test("P5b. every rider-visible literal in the popup call graph is pinned, or has
     const seen = new Map();
     const queue = roots.map((src) => ["<root>", src]);
     const callees = (src) => [...src.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+    /* KEYED BY THE SOURCE AND NOT BY ITS LENGTH, which is a defect ruling R1 uncovered and worth
+       stating plainly: this map used `name + src.length`, and EVERY root is named "<root>", so two
+       roots whose sources happen to be the same number of characters collided and the second was
+       never walked. Measured: `() => njtTrainPopup(newRecord)` and `() => pathTrainPopup(record)`
+       are both 30 characters, so of the app's seven vehicle popups, one was crawled and the other
+       was silently absent from the graph this test calls total. It surfaced because R1 put
+       `njtBranch` into a STATION root as well, and its literal appeared for the first time in a
+       stage that changed no string.
+       A LENGTH IS NOT AN IDENTITY. The key is the whole source now, which is what "this function,
+       already walked" actually means; the cost is memory in a test that already holds every one of
+       these strings. */
+    const key = (name, src) => `${name}\u0000${src}`;
     while (queue.length) {
       const [name, src] = queue.shift();
-      if (seen.has(name + src.length)) continue;
-      seen.set(name + src.length, { name, src });
+      if (seen.has(key(name, src))) continue;
+      seen.set(key(name, src), { name, src });
       for (const id of callees(src)) {
         const fn = globalThis[id];
         if (typeof fn !== "function") continue;
         const s = String(fn);
-        if (!seen.has(id + s.length)) queue.push([id, s]);
+        if (!seen.has(key(id, s))) queue.push([id, s]);
       }
     }
     /* The literals: strip template interpolations, then tags and attribute values, keeping

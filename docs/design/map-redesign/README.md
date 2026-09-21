@@ -170,6 +170,9 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 > 3. **The footer's three sentences are not typed anywhere** (ruling Q2): "LIVE · UPDATED 12S AGO"
 >    is the sentence memo D9 forbids, so the live state shows its square and says its words only to
 >    a screen reader, and the stale state takes the feed strip's own string from `feedStateWords`.
+>    (Ruling R2, after the adversarial round: where the popup's Position row has already stated an age
+>    at least as old as the feed's, the footer says the words in NEITHER channel. A screen reader was
+>    hearing two ages about one train.)
 >    The square, the rule above it and the metrics are as drawn. **The schedule-only state is not a
 >    popup state at all**: the footer is a vehicle popup's line and the only schedule-only feed is
 >    AirTrain, which has no vehicles, so a rider reads that word on the feed strip's tooltip.

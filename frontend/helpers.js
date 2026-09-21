@@ -503,26 +503,19 @@ function stationLabelShown(zoom, routes, labelsOn, hasHubs = true) {
   return band === "hubs" && isTransferStation(routes);
 }
 
-// Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
-// ids and with each other, so they get their own palette rather than reusing
-// lineColor. Deterministic per id from a fixed palette, with a neutral default
-// for a missing id.
-const RAILROAD_COLORS = [
-  "#7b1fa2", "#00838f", "#c2185b", "#1565c0", "#ef6c00",
-  "#4527a0", "#2e7d32", "#ad1457", "#00695c", "#5d4037",
-];
+/* RAILROAD COLOURS ARE THE AGENCY'S, AND THE HASH THAT STOOD HERE IS GONE (ruling R1).
+   `railroadColor(routeId)` hashed a route id into a fixed ten-colour palette, which was never any
+   agency's palette and could not be: MR3 added `route_color` to /api/railroad-routes and drew the
+   branch lines and the tags from it, and this function stayed behind on three surfaces, so LIRR|1
+   and MNR|1 (two agencies, two published greens) both drew one brown. Finding N6 is that shape,
+   "two answers for one judgment", and R1 is the ruling that paid it: the board badge, the popup
+   title's ink and the panel chip all resolve `railroadBranch` now (systems/railroad.js), through
+   `railBranchColor` and `railBranchPaint` below, which is the same lookup the tag uses.
 
-// The no-id fallback is the same neutral PATH already uses, and it moved for a measured
-// reason: #607d8b carries white text at 4.37 and dark text at 3.98, so NEITHER ink can
-// make it readable. That is a fill that has to move rather than an ink that has to be
-// chosen, which is the one case readableTextOn cannot rescue and the reason the node
-// test asserts the chosen ink's ratio rather than merely that a choice was made.
-function railroadColor(routeId) {
-  if (!routeId) return "#546e7a";
-  let h = 0;
-  for (const c of routeId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
-}
+   ITS NOTE IS CARRIED, not deleted with it, because two comments cited this one as the authority
+   for "a fill that has to move rather than an ink that has to be chosen": v2's #607d8b carried
+   white at 4.37 and dark at 3.98, so neither ink could rescue it. That measurement and its
+   conclusion now live at railBranchPaint, which is the function that implements the remedy. */
 
 /* ----- A3: one breakpoint, named once ----------------------------------------
    700px is the mobile boundary, and it is declared here as well as in style.css because
@@ -699,11 +692,20 @@ function feedTooltip({ name, state, age = null, hidden = false } = {}) {
    means current"), and the README's "LIVE · UPDATED 12S AGO" is exactly the sentence that rule
    forbids. Stale and schedule-only get the app's own strings, from feedStateWords.
 
-   AND THE STATE IS SAID ONCE. The square repeats whatever the words say, so it is decorative and
-   carries aria-hidden; the WORDS are what the accessibility tree gets, visible where there is
-   something to show and visually hidden where there is not. Labelling the square as well would say
-   "As of 6m ago" twice to a screen reader and nothing at all to an eye. `.visually-hidden` is A1's
-   own class, so the live state's words are in the tree exactly as the stale state's are.
+   AND THE STATE IS SAID ONCE, IN WHICHEVER CHANNELS IT HAS NOT BEEN SAID IN. The square repeats
+   whatever the words say, so it is decorative and carries aria-hidden; labelling it as well would
+   say "As of 6m ago" twice to a screen reader and nothing at all to an eye. The WORDS have three
+   destinations rather than two, and an earlier draft of this paragraph named only two, which is the
+   defect ruling R2 corrects:
+
+     SHOWN AND SPOKEN, where this footer is the first thing to state the age: a stale or
+     schedule-only feed under a position whose words state no age.
+     SPOKEN ONLY, where there is nothing for an eye because the app has no visible word for live
+     (memo D9) and a screen reader still needs the state. `.visually-hidden` is A1's own class.
+     NEITHER, where the popup's Position row has ALREADY stated an age at least as old as the feed's.
+     The old expression put this case in the visually-hidden span with the live one, so a screen
+     reader heard two ages about one train: the row's and the footer's. `said` therefore wins over
+     `live`, and the four cases are pinned in positions.test.js and in helpers.test.js.
 
    NO POPUP RENDERS THE SCHEDULE-ONLY STATE, and an earlier draft of this comment said the opposite.
    It read "AirTrain gets one and it says Scheduled", which presumes AirTrain has a popup that calls
@@ -736,12 +738,27 @@ function feedTooltip({ name, state, age = null, hidden = false } = {}) {
    THE SQUARE IS NEVER WITHHELD, because the ruling is that it is present in all three states: a
    rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
    there. Only the words come and go. (A station popup would pass no position and suppress nothing,
-   but no station popup calls this at all: see above.) */
+   but no station popup calls this at all: see above.)
+
+   ONE WIDENING RULING R2 ACCEPTS RATHER THAN HIDES. `said` is true when the FEED's age is null,
+   which is the feed that has never decoded, whose words are "Not reporting": a claim about the feed
+   rather than an age, so a Position row's "as of 5m ago" has not actually said it. Suppressing it is
+   what the rule as written does, and it reaches no rider today (no fixture feed fails its first poll;
+   pins.spec.js waives the state as unreached). The narrower rule would be
+   `position.age != null && age != null && position.age >= age`, which moves no golden; R2 did not
+   ask for it, so the wider one ships and this is the sentence that says so.
+
+   WHAT SURVIVES SUPPRESSION is the square and the rule above it, which is what the footer has drawn
+   in that case since the words were only visually hidden: `.visually-hidden` is `position: absolute`,
+   so it was never a flex item and took no share of `.fresh`'s gap and no height. Measured before and
+   after, the suppressed footer's box is unchanged. */
 function popupFreshHtml({ state, age = null, position = null } = {}) {
   if (!state) return "";
   const words = feedStateWords({ state, age });
   const said = position && position.age != null && (age == null || position.age >= age);
-  const body = state === "live" || said ? `<span class="visually-hidden">${esc(words)}</span>` : esc(words);
+  // `said` FIRST, which is ruling R2 in one line: already stated beats nothing-to-show, so a
+  // suppressed footer's words are in neither channel rather than in the hidden one.
+  const body = said ? "" : state === "live" ? `<span class="visually-hidden">${esc(words)}</span>` : esc(words);
   return `<div class="fresh"><span class="fresh-dot" data-state="${esc(state)}" aria-hidden="true"></span>${body}</div>`;
 }
 
@@ -2568,9 +2585,14 @@ const RAIL_BRANCH_CODES = {
 };
 
 // The neutral a route nothing names or colours falls back to (README: "Unknown route ->
-// code = route id, colour #6d6e71"). It takes white ink at 4.83 and dark ink at 4.35, so
-// readableTextOn's answer on it clears 4.5, which is why this hue and not v2's #607d8b
-// (the note at railroadColor says what that one cost).
+// code = route id, colour #6d6e71"). It takes white ink at 5.10 and dark ink at 3.41, so
+// readableTextOn's answer on it clears 4.5 and the other does not, which is why this hue and not
+// v2's #607d8b (white 4.37, dark 3.98: nothing clears, and railBranchPaint's comment carries that
+// measurement now that the hash palette it used to sit beside is deleted).
+// RULING R1 MADE IT LOAD-BEARING ON TWO MORE SURFACES: it is the fallback for the NJ Transit board
+// badge and for the panel chip, both of which used to fall back to NJT_FALLBACK_COLOR's #4a4e69.
+// (The two ratios above read 4.83 and 4.35 until R1 re-measured them with this file's own
+// contrastRatio. The conclusion never moved; the numbers were simply wrong.)
 const RAIL_NEUTRAL_COLOR = "#6d6e71";
 
 // The agency glyph and its block width (README: 11px for "L" and "M", 16px for "NJ").
@@ -2610,7 +2632,7 @@ function railBranchCode(system, routeId, routeName = null, shortName = null) {
    agency does not use, drawn as if it did. */
 /* VALIDATED BEFORE PREFIXING, which njtColor's own guard does and which this dropped: the value
    is a FEED's, it is interpolated into marker markup that reaches innerHTML through L.divIcon,
-   and what it replaced (railroadColor, a hash) could only ever produce #rrggbb. A publication
+   and what it replaced (the hash palette ruling R1 deleted) could only ever produce #rrggbb. A publication
    whose route_color is empty, a word, or anything with a quote or an angle bracket in it now
    takes the neutral rather than becoming part of the tag's markup. */
 const RAIL_HEX = /^#?[0-9a-fA-F]{6}$/;
@@ -2642,10 +2664,11 @@ function railBranchColor(color) {
    common case on that railroad, not a corner. The other 25 colours clear, the worst of them
    at 4.69.
 
-   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class. The note
-   at railroadColor says it in as many words about v2's #607d8b: "That is a fill that has to
-   move rather than an ink that has to be chosen, which is the one case readableTextOn cannot
-   rescue". The move is the same scaling readableInk uses for text, so it preserves the hue,
+   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class, and this is
+   where that argument lives now. It was written against v2's #607d8b, beside the hash palette
+   ruling R1 deleted: that fill carried white at 4.37 and dark at 3.98, so NEITHER ink could make it
+   readable, which is a fill that has to move rather than an ink that has to be chosen, and it is
+   the one case readableTextOn cannot rescue. The move is the same scaling readableInk uses for text, so it preserves the hue,
    and it is taken in 1% steps and stopped at the first that clears: EE0034 becomes #ec0033,
    a two-unit change in one channel, and white goes from 4.48 to 4.55.
 
@@ -3708,10 +3731,19 @@ function orderedRailroadBuckets(directions) {
 // resolves a route's rider-facing name for this station's system (map.js closes
 // over the (system|route_id) name map), returning null when unknown. Header is
 // the station name plus a muted system tag; each present bucket renders its
-// heading and one row per train: a route badge (railroadColor, white text on the
-// dark palette), the route name where known, the train number when the feed
-// carries one, and the countdown. Every feed-derived string is escaped.
-function railroadArrivalsHtml(station, body, now, nameFor = () => null, markHtml = "") {
+// heading and one row per train: a route badge whose fill and ink are `paintFor(routeId)`'s
+// (systems/railroad.js closes that over the (system|route_id) colour table the way it already
+// closes `nameFor` over the name table), the route name where known, the train number when the
+// feed carries one, and the countdown. Every feed-derived string is escaped.
+//
+// `paintFor` IS IN SLOT 4 BECAUSE THE OTHER TWO BOARDS PUT THEIR RESOLVER THERE (njtArrivalsHtml
+// and pathArrivalsHtml), and ruling R1 is why it exists at all: this badge resolved the deleted
+// `railroadColor` hash, so LIRR|1 and MNR|1 drew one brown for two published greens. It returns
+// railBranchPaint's PAIR rather than a colour because the badge is 700-weight type on that fill and
+// owes 4.5, and one published colour clears with neither ink (EE0034, four of Metro-North's six
+// routes): the pair is the only resolver that can move such a fill, exactly as the tag's branch
+// block does. The default is the rail neutral rather than a second one.
+function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPaint(null), nameFor = () => null, markHtml = "") {
   // Every row qualified by its own served age, and the system line where the R1 age
   // line was (6.2; see arrivalQualifier and boardSystemLine).
   const board = boardFreshness("railroad", body, now);
@@ -3731,13 +3763,16 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null, markHtml
     html += popupArrRowsHtml(
       arrivals.map((a) => {
         const route = a.route_id ?? "";
-        const color = railroadColor(route);
+        const paint = paintFor(route);
         return {
-          // THE ROW'S MARK IS THE BOARD'S OWN CHIP, not the map's rail tag: a tag states a
-          // body and a heading, and an arrivals row has neither to state. The chip's two
-          // paints are measured in both themes by pins.spec.js P4c.
+          /* THE ROW'S MARK IS THE BOARD'S OWN CHIP, not the map's rail tag: a tag states a body and
+             a heading, and an arrivals row has neither to state. Its two paints come from
+             railBranchPaint through `paintFor`, so the fill can move where no ink clears, and
+             popups.spec.js D6i measures the drawn result in both themes. (That sentence used to
+             name pins.spec.js P4c, which was never true: P4c pins `contrast/marks`, the map's
+             marker families, and has no badge in it.) */
           markHtml:
-            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `<span class="arr-badge" style="background:${paint.fill};color:${paint.ink}">` +
             `${esc(route || "?")}</span>`,
           label: (a.route_id ? nameFor(a.route_id) : null) || "",
           extraHtml:
@@ -4242,8 +4277,13 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
        for this agency (the brief's section 6: NJ Transit publishes one and the railroads do
        not, so hand-tabling it would answer a question the feed answers).
 
-       `colors` STAYS AS IT WAS and is still what the popup head and the arrivals badge read,
-       so nothing that already worked is re-routed through the new pair. */
+       `colors` IS DOWN TO ONE READER, AND THAT IS RULING R1's DOING. It said "stays as it was and
+       is still what the popup head and the arrivals badge read" when MR3 built the pair; the popup
+       head moved to njtBranch in MR5 round 1 and R1 moved the station board's badge and the panel's
+       chip, so the only thing left reading `colors` is the route LINE (systems/njt.js). That is the
+       last residue of finding N6 on this layer: a route published with a blank colour would draw a
+       #4a4e69 line beside a #6d6e71 tag. No live route does (all twelve publish one) and route 17,
+       which publishes nothing, has no polylines at all, so nothing can draw it today. */
     if (route.short_name) shortNames.set(id, route.short_name);
     paints.set(id, { color: route.color ?? null, textColor: route.text_color ?? null });
     const polylines = route.polylines || [];
@@ -4399,7 +4439,7 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // never rendered; njtRowLabel is the authority and it returns one string.) A row with
 // neither still renders its countdown rather than being dropped: the train is real
 // and the time is the thing the rider came for.
-function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null, markHtml = "") {
+function njtArrivalsHtml(station, body, now, colorFor = () => RAIL_NEUTRAL_COLOR, nameFor = () => null, markHtml = "") {
   // Every row dated by the TripUpdates header and qualified by it (6.2).
   const board = boardFreshness("njt", body, now);
   const header =
@@ -5643,7 +5683,7 @@ if (typeof module !== "undefined" && module.exports) {
     vanishingFocusMessage,
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    computeRouteSlice, railroadColor, orderedRailroadBuckets,
+    computeRouteSlice, orderedRailroadBuckets,
     railroadArrivalsHtml, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,

@@ -10,10 +10,12 @@ const railroadRouteIndex = new Map();
 const railroadRouteNames = new Map();
 /* `system|route_id` -> { color, textColor }, the agency's own two colours as
    /api/railroad-routes serves them (hex with no leading "#", null when the feed leaves a
-   column blank). MR3 draws the branch lines and the train tags from these instead of from
-   railroadColor's hash, which was never the agency's palette and could not be: it was a hash
-   of the route id, so two branches sharing one published colour got two different ones and a
-   branch whose id moved changed colour.
+   column blank). MR3 draws the branch lines and the train tags from these instead of from the
+   hash palette that stood in helpers.js until ruling R1 deleted it, which was never the agency's
+   palette and could not be: it was a hash of the route id, so two branches sharing one published
+   colour got two different ones and a branch whose id moved changed colour. RULING R1 finished the
+   move: the station board's badge, the train popup's title ink and the panel's chip read these
+   too, so every surface that answers "what colour is this route" answers from here.
 
    SEPARATE FROM railroadRouteNames RATHER THAN A FIELD ON IT, because the two are filled
    under different conditions: a name is set only `if (route.name)` and a colour is set for
@@ -164,6 +166,23 @@ function railroadBranch(system, routeId) {
   };
 }
 
+/* THE BRANCH'S PAINT AS A PAIR, for the two surfaces that print TYPE on it: the station board's
+   badge and the panel's chip. One expression rather than two, for railroadBranch's own reason one
+   function up.
+
+   railBranchPaint AND NOT railBranchColor, which is the whole reason this exists rather than each
+   caller taking `.color`: a badge is 700-weight type on that fill and owes 4.5, and one published
+   colour clears with neither ink (EE0034, white 4.48 and dark 3.88), which is four of Metro-North's
+   six routes and so the common case on a Grand Central board rather than a corner. railBranchPaint
+   moves such a fill in 1% steps until the ink clears, exactly as the tag's branch block does, and
+   returns the published ink where the agency supplied a legible one. The TITLE's ink is a different
+   judgment and takes railBranchColor (words on the popup's surface, through readableInk), which is
+   the shape systems/njt.js uses for the same thing. */
+function railroadBranchPaint(system, routeId) {
+  const branch = railroadBranch(system, routeId);
+  return railBranchPaint(branch.color, branch.textColor);
+}
+
 
 async function loadRailroadStations() {
   let stations;
@@ -225,6 +244,8 @@ async function loadRailroadStations() {
           s,
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
+          // R1: the badge's fill and ink, the agency's own, from the one lookup the tag uses.
+          (routeId) => railroadBranchPaint(s.system, routeId),
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
           // MR5: the paper square this station is drawn as, at the title's size.
           popupMarkHtml(markerMarkHtml(m)),
@@ -251,6 +272,14 @@ async function loadRailroadStations() {
       // The railroad renderer resolves route names per system; the panel needs the
       // same resolution so its sentences say "Babylon" rather than "5".
       nameFor: (routeId) => railroadRouteNames.get(`${station.system}|${routeId}`) || null,
+      /* AND ITS COLOURS, WHICH IS RULING R1's PANEL HALF. stationChipStyle used to hash the route
+         id for a railroad chip while claiming to use "the SAME color authorities the map markers
+         and popups use"; now the railroad joins the colorFor branch the way NJ Transit did, and
+         stations.js stays free of any systems/* symbol (frontend/boards.test.js loads stations.js
+         without this file, so a chip that called in here would take all thirteen board pins down).
+         `.fill` and not `.color`: the chip computes its own ink with readableTextOn, and over all 26
+         published rail colours that answer equals the tag's on 23 and clears 4.5 on all of them. */
+      colorFor: (routeId) => railroadBranchPaint(station.system, routeId).fill,
     });
   }
   return true;
@@ -398,7 +427,10 @@ function railroadPopup(record) {
     popupTitleHtml({
       markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
       text: head.line || head.agency,
-      color: readableInk(railroadColor(t.route_id), popupSurfaceColor()),
+      // R1: the branch's PUBLISHED colour, walked to legibility on the popup's surface, which is
+      // the same judgment systems/njt.js resolves the same way. The hash this replaced ignored the
+      // system, so an LIRR 1 and an MNR 1 printed one brown for two published greens.
+      color: readableInk(railBranchColor(railroadBranch(t.system, t.route_id).color), popupSurfaceColor()),
     }) +
     popupRowsHtml([
       { k: "Train", v: t.train_num ?? "" },

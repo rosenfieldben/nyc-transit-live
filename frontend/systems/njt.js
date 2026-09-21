@@ -19,12 +19,21 @@
 // and the line that glides came from the same response" structural instead of a
 // promise in a comment.
 //
-// EVERY READ GOES THROUGH njtRouteColor / njtRouteName, never through a bare
+// EVERY READ GOES THROUGH njtBranch / njtRouteName, never through a bare
 // .get(): both tables are empty until loadNjtRoutes resolves (several seconds
 // after the first /api/njt-trains poll has already painted markers on a cold
 // start), and route 17, the event-only Meadowlands Rail Line, has no trips in an
 // ordinary publication and so never appears here at all. A missing route is the
 // normal case on this layer, not an error state.
+//
+// RULING R1 MOVED THE COLOUR HALF OF THAT SENTENCE. `njtRouteColor` was the read for the tag, the
+// popup head, the station board's badge and the panel's chip, and the tag and the head had already
+// moved to the PUBLISHED pair through njtBranch (finding N6, "two answers for one judgment": the two
+// resolvers disagree on a route the routes endpoint never carries, #6d6e71 against #4a4e69). R1
+// moved the other two, so the colour read is njtBranch's everywhere except the route LINE below,
+// which is the last residue of N6 on this layer and is recorded as such in the ledger. The
+// cold-start and route-17 argument above applies unchanged: njtBranch's own
+// `?? { color: null, textColor: null }` is the same empty-table guard njtRouteColor was.
 let njtRouteColors = new Map();
 let njtRouteNames = new Map();
 let njtRouteIndex = new Map();
@@ -192,7 +201,8 @@ async function loadNjtStops() {
           s,
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
-          (routeId) => njtRouteColor(routeId, njtRouteColors),
+          // R1: the badge's fill is the published colour the tag and the head already draw with.
+          (routeId) => railBranchColor(njtBranch(routeId).color),
           (routeId) => njtRouteName(routeId, njtRouteNames),
           // MR5: the paper square this station is drawn as, at the title's size.
           popupMarkHtml(markerMarkHtml(m)),
@@ -220,7 +230,8 @@ async function loadNjtStops() {
       marker,
       layer: njtStations,
       nameFor: (routeId) => njtRouteName(routeId, njtRouteNames),
-      colorFor: (routeId) => njtRouteColor(routeId, njtRouteColors),
+      // R1: and the panel's chip, the second of the two board resolvers that ruling moved.
+      colorFor: (routeId) => railBranchColor(njtBranch(routeId).color),
     });
   }
   return true;
@@ -264,19 +275,23 @@ function njtTagState(train, now = correctedNow()) {
   return railTagState(train, null, position.kind);
 }
 
-function njtBranch(train) {
+/* KEYED BY ROUTE ID AND NOT BY A TRAIN, which is ruling R1's doing: the station board's badge and
+   the panel's chip resolve a colour for a route with no train in hand, and giving them their own
+   `.get()` would be finding N6 reproduced inside its own fix. One lookup, the way
+   systems/railroad.js's railroadBranch has always been keyed. */
+function njtBranch(routeId) {
   return {
     // route_short_name where the feed publishes one, which is all twelve routes, and the route
     // id otherwise: route 17, the event-only Meadowlands line, never reaches /api/njt-routes
     // at all, so a code from its id is the normal fallback on this layer and not an error.
-    code: railBranchCode("NJT", train.route_id, njtRouteNames.get(train.route_id) ?? null,
-      njtRouteShortNames.get(train.route_id) ?? null),
-    ...(njtRoutePaints.get(train.route_id) ?? { color: null, textColor: null }),
+    code: railBranchCode("NJT", routeId, njtRouteNames.get(routeId) ?? null,
+      njtRouteShortNames.get(routeId) ?? null),
+    ...(njtRoutePaints.get(routeId) ?? { color: null, textColor: null }),
   };
 }
 
 function njtIcon(train, now = correctedNow()) {
-  const branch = njtBranch(train);
+  const branch = njtBranch(train.route_id);
   return railTagIcon({
     system: "NJT",
     code: branch.code,
@@ -293,7 +308,7 @@ function njtIcon(train, now = correctedNow()) {
    neutral before its colour arrives is the likely case rather than the corner, and the old
    gate was right about that one thing and blind to the other five. */
 function njtSkinKey(train, state, bearing) {
-  const branch = njtBranch(train);
+  const branch = njtBranch(train.route_id);
   return [
     train.route_id,
     branch.code,
@@ -322,7 +337,7 @@ function njtTrainPopup(record) {
          STRUCTURALLY, through njtBranch: the head now reads the same published paint the tag
          reads and falls back through the same function, so the two cannot drift again. Two
          constants agreeing would have been a coincidence waiting to be broken. */
-      railBranchColor(njtBranch(t).color),
+      railBranchColor(njtBranch(t.route_id).color),
       position,
       // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
       // against it rather than against the white a Leaflet popup used to be.

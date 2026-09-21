@@ -313,10 +313,12 @@ test("A2j. an NJT train's label picks up its route name late, and its delay ever
      neutral fallback rather than losing its colour. The tag prints the ID as its code for the
      same reason, which is the design's stated fallback.
 
-     THE NEUTRAL IS #6d6e71 HERE AND #4a4e69 IN THE POPUP UNTIL MR5. The tag and the line take
-     the README's stated neutral for an unknown route; njtColor's older one still reaches the
-     popup head, which is stage MR5's to align and which P1k pins byte for byte in the
-     meantime. */
+     ONE NEUTRAL REACHES ROUTE 17 ON EVERY SURFACE THAT PRINTS IT, since ruling R1: this tag, the
+     popup head (MR5 round 1), the station board's badge and the panel's chip (R1) all draw the
+     README's stated #6d6e71. Two of them used to draw njtColor's older #4a4e69, which is finding
+     N6, and the panel chip is where a rider could see both at once (stations.spec.js A1t pins the
+     chip's rgb, and it is this same value now). The route LINE is the one reader left on the other
+     resolver, and route 17 has no polylines, so nothing draws it. */
   const added = (await labelOf(page, "njt", "njt:9001")).aria;
   expect(added).toContain("NJ Transit route 17");
   expect(added).not.toContain("undefined");

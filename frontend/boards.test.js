@@ -137,6 +137,16 @@ function panelLines(node, depth = 0, out = []) {
 function boards(S) {
   const railroadNames = new Map(fx.railroadRoutes().map((r) => [`${r.system}|${r.route}`, r.name]));
   const railroadName = (system) => (r) => railroadNames.get(`${system}|${r}`) || null;
+  /* R1: THE BADGE'S PAINT, KEYED THE WAY THE LOADER KEYS IT. systems/railroad.js closes
+     railroadBranchPaint over the (system|route_id) colour table; this is the fixture's own copy of
+     that closure, built from the same served rows, because this file's contract is that each board
+     is called with the arguments its loader passes. Defaulting it instead would render the rail
+     neutral and the two pins below would fail for the wrong reason. */
+  const railroadPaints = new Map(fx.railroadRoutes().map((r) => [`${r.system}|${r.route}`, r]));
+  const railroadPaint = (system) => (r) => {
+    const row = railroadPaints.get(`${system}|${r}`);
+    return S.railBranchPaint(row?.color ?? null, row?.text_color ?? null);
+  };
   const pathColors = new Map(fx.pathRoutes().map((r) => [r.id, S.pathColor(r.color)]));
   const pathNames = new Map(fx.pathRoutes().map((r) => [r.id, r.name]));
   const njt = S.njtRouteTables(fx.njtRoutes());
@@ -162,22 +172,30 @@ function boards(S) {
     },
     lirr: {
       body: fx.railroadArrivalsLirr(),
-      popup: (b) => S.railroadArrivalsHtml(lirr, b, now, railroadName(lirr.system)),
+      popup: (b) => S.railroadArrivalsHtml(lirr, b, now, railroadPaint(lirr.system), railroadName(lirr.system)),
       entry: {
         key: `${lirr.system}|${lirr.id}`, kind: "railroad", systemLabel: "LIRR", noun: "train",
         id: lirr.id, system: lirr.system, name: lirr.name, routes: [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${lirr.system}/${lirr.id}`,
         nameFor: railroadName(lirr.system),
+        // R1: the panel's chip resolver, which registerStation carries now. It renders nothing in
+        // any fixture world (the stops endpoint serves no `routes`), and it is here because this
+        // entry's contract is to carry the fields its loader gives it.
+        colorFor: (r) => railroadPaint(lirr.system)(r).fill,
       },
     },
     mnr: {
       body: fx.railroadArrivals(),
-      popup: (b) => S.railroadArrivalsHtml(mnr, b, now, railroadName(mnr.system)),
+      popup: (b) => S.railroadArrivalsHtml(mnr, b, now, railroadPaint(mnr.system), railroadName(mnr.system)),
       entry: {
         key: `${mnr.system}|${mnr.id}`, kind: "railroad", systemLabel: "Metro-North", noun: "train",
         id: mnr.id, system: mnr.system, name: mnr.name, routes: [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${mnr.system}/${mnr.id}`,
         nameFor: railroadName(mnr.system),
+        // R1: the panel's chip resolver, which registerStation carries now. It renders nothing in
+        // any fixture world (the stops endpoint serves no `routes`), and it is here because this
+        // entry's contract is to carry the fields its loader gives it.
+        colorFor: (r) => railroadPaint(mnr.system)(r).fill,
       },
     },
     path: {
@@ -203,7 +221,8 @@ function boards(S) {
           penn,
           b,
           now,
-          (r) => S.njtRouteColor(r, njt.colors),
+          // R1: the published colour the tag draws with, mirroring systems/njt.js's board resolver.
+          (r) => S.railBranchColor(njt.paints.get(r)?.color ?? null),
           (r) => S.njtRouteName(r, njt.names),
         ),
       entry: {
@@ -259,7 +278,16 @@ const { withoutMarks } = require("../tests/e2e/popup.js");
 
 // The subway badge colors, spelled once so the popup literals stay readable.
 const RED = 'style="background:#c0392b;color:#ffffff"';
-const BROWN = 'style="background:#5d4037;color:#ffffff"';
+
+/* AND THE TWO RAILROADS' OWN, WHICH IS ONE CONSTANT SPLIT INTO TWO AND IS RULING R1 STATED AS A
+   DIFF. Both boards' badges used to read `background:#5d4037;color:#ffffff`, one brown from one
+   shared constant, because the resolver behind them hashed the ROUTE ID and never saw the system:
+   LIRR route 1 is the Babylon Branch and MNR route 1 is the Hudson Line, two agencies publishing
+   two different greens, and the app drew them the same. The two literals below cannot be folded
+   back into one without re-creating that defect, and their inks are the published ones (both
+   agencies serve route_text_color, and railBranchPaint prefers it where it is legible). */
+const BABYLON = 'style="background:#00985F;color:#1a1a1a"';
+const HUDSON = 'style="background:#009B3A;color:#1a1a1a"';
 
 /* ONE OF Times Sq's KICKER PLATES, as withoutMarks prints it: the route the plate carries, the size
    the popup drew it at, and the fills the plate declares, in the order the SVG lists them (the
@@ -276,7 +304,7 @@ const TIMES_SQ_PLATES = [1, 2, 3].map(plate).join("");
 
 /* MR5: SECTION 5's GRAMMAR, AS FOUR TEMPLATES, so six board pins stay readable after the popup
    became a kicker, a title and a three-cell grid. These are literal templates written HERE, in the
-   same spirit as RED and BROWN above: a production builder that stopped emitting `class="n"`, or
+   same spirit as RED and the two rail greens above: a production builder that stopped emitting `class="n"`, or
    that put its cells in another order, still fails every pin below, because the expected string is
    assembled from these literals and compared whole.
 
@@ -337,9 +365,9 @@ test("PIN LIRR: Jamaica, each prediction dated by its own trip", () => {
     kicker("LIRR") +
       title("Jamaica") +
       dir("Inbound") +
-      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Babylon Branch <span class="popup-sub">#8412</span>', "4 min")) +
+      arr(row(`<span class="arr-badge" ${BABYLON}>1</span>`, 'Babylon Branch <span class="popup-sub">#8412</span>', "4 min")) +
       dir("Outbound") +
-      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Babylon Branch <span class="popup-sub">#8413</span>', "7 min")),
+      arr(row(`<span class="arr-badge" ${BABYLON}>1</span>`, 'Babylon Branch <span class="popup-sub">#8413</span>', "7 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Jamaica (LIRR)",
@@ -371,9 +399,9 @@ test("PIN Metro-North: Grand Central, whose predictions carry no clock at all", 
     kicker("MNR") +
       title("Grand Central") +
       dir("Inbound") +
-      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Hudson <span class="popup-sub">#795</span>', "4 min")) +
+      arr(row(`<span class="arr-badge" ${HUDSON}>1</span>`, 'Hudson <span class="popup-sub">#795</span>', "4 min")) +
       dir("Outbound") +
-      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Hudson <span class="popup-sub">#812</span>', "6 min")),
+      arr(row(`<span class="arr-badge" ${HUDSON}>1</span>`, 'Hudson <span class="popup-sub">#812</span>', "6 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Grand Central (Metro-North)",
@@ -428,7 +456,11 @@ test("PIN NJ Transit: New York Penn, a flat board dated by the TripUpdates heade
       arr(
         row('<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span>', 'Trenton <span class="popup-sub">3800</span>', "2 min"),
         row('<span class="arr-badge" style="background:#E66859;color:#1a1a1a">2</span>', 'Dover <span class="popup-sub">6634</span>', "5 min"),
-        row('<span class="arr-badge" style="background:#4a4e69;color:#ffffff">?</span>', "Bay Head", "8 min"),
+        // THE ROUTE-LESS ROW, WHICH IS WHERE R1's SECOND NEUTRAL LEAVES BY VALUE. This arrival
+        // carries no route_id, so its badge draws the fallback: #4a4e69 (njtColor's, phase 15c's)
+        // until ruling R1, and the rail families' own #6d6e71 now, which is what the tag beside it
+        // on the map has always drawn for a route the routes endpoint does not carry.
+        row('<span class="arr-badge" style="background:#6d6e71;color:#ffffff">?</span>', "Bay Head", "8 min"),
       ),
   );
   assert.deepEqual(out.panel, [

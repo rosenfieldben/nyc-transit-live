@@ -627,22 +627,35 @@ test("MR3 bearing: the served bearing wins, the anchors are next, and nothing le
   assert.equal(railTrainBearing({ _route: { points: [[40.7, -74.0], [40.6, -74.0]] }, ...anchored }), 0);
 });
 
-/* MR5, finding N6: ONE NEUTRAL REACHES THE NJ TRANSIT POPUP HEAD, and it is the rail
-   family's.
+/* MR5, finding N6: ONE NEUTRAL REACHES EVERY NJ TRANSIT SURFACE BUT THE ROUTE LINE, and it is the
+   rail family's.
 
    MR3 left two on screen for one unknown route and said so: the tag reaches
    `railBranchColor` and draws the design's `#6d6e71`; the popup head reached
    `njtRouteColor` and drew phase 15c's older `#4a4e69`. Route 17, the event-only
    Meadowlands line, never appears on `/api/njt-routes` at all, so it is the live example
    and it wore both at once. MR3 named it and left it because `P1k` pinned that popup byte
-   for byte; MR5 owns the popup and converges the two here.
+   for byte; MR5 owns the popup and converged the two here in round 1.
 
-   ASSERTED AS A SOURCE FACT, and that is the point rather than laziness: no fixture world
-   has an unknown NJ Transit route, so the drawn page cannot tell the two neutrals apart and
-   every browser gate stays green either way. What is checkable is that the head reads the
-   SAME RESOLVER the tag does. Two constants that happen to be equal would be a coincidence
-   waiting for someone to change one of them; one function is a fact. */
-test("MR5 N6: the NJ Transit popup head resolves its colour the way the tag does", () => {
+   AND RULING R1 CONVERGED THE OTHER TWO, which is why this test now reads the whole file rather
+   than the popup head alone. The station board's badge and the panel registry's chip were still
+   resolving `njtRouteColor`, so N6's own sentence ("two neutrals are on screen for an unknown
+   route") stayed literally true one surface out: at Hoboken, whose served routes include 17, the
+   panel chip drew #4a4e69 beside a map tag drawing #6d6e71. Those two are pinned BY VALUE now
+   (stations.spec.js A1t and frontend/boards.test.js's NJ Transit board), which is what R1's "new
+   pins" asks for; this file's job is the SOURCE fact underneath them.
+
+   THE ROUTE LINE IS THE ONE READER LEFT, deliberately: `njtRouteColor` still paints the polyline at
+   the load site, so a route published with a blank colour would draw a #4a4e69 line beside a
+   #6d6e71 tag. No live route does (all twelve publish a colour) and route 17 has no polylines at
+   all, so nothing can draw it today. It is the last residue of N6 on this layer, it is recorded in
+   the ledger, and the assertion below is written to allow exactly that one site and nothing else.
+
+   ASSERTED AS A SOURCE FACT, and that is the point rather than laziness: what is checkable without
+   a world that serves an unknown route is that every surface reads the SAME RESOLVER the tag does.
+   Two constants that happen to be equal would be a coincidence waiting for someone to change one of
+   them; one function is a fact. */
+test("MR5 N6: every NJ Transit surface but the route line resolves its colour the way the tag does", () => {
   const njt = readFileSync(join(__dirname, "systems", "njt.js"), "utf8");
   const body = njt.slice(njt.indexOf("function njtTrainPopup("));
   const call = body.slice(0, body.indexOf("\n}"));
@@ -655,6 +668,23 @@ test("MR5 N6: the NJ Transit popup head resolves its colour the way the tag does
   assert.ok(
     !/njtRouteColor\(/.test(call),
     "the NJ Transit popup head still reaches njtRouteColor, which falls back to the second neutral",
+  );
+
+  /* AND THE WHOLE FILE, MINUS COMMENTS, HAS EXACTLY ONE njtRouteColor CALL LEFT: the route line's.
+     Ruling R1 moved the station board's badge and the panel's chip, and a count is what keeps a
+     later stage from quietly opening a third reader, which is the shape N6 is. The comments are
+     stripped first because this file's own prose names the function repeatedly. */
+  const code = njt.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  const calls = code.match(/njtRouteColor\(/g) ?? [];
+  assert.equal(
+    calls.length,
+    1,
+    `exactly one njtRouteColor call may remain (the route line); found ${calls.length}`,
+  );
+  assert.match(
+    code,
+    /const color = njtRouteColor\(route\.route, njtRouteColors\);/,
+    "and the one that remains is the polyline's, at the load site",
   );
 
   // And the two ends of the claim, so the test says what the colours ARE and not only which

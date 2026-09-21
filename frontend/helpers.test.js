@@ -58,7 +58,6 @@ const {
   pointAtArcLength,
   projectOntoRoute,
   computeRouteSlice,
-  railroadColor,
   positionQualifier,
   orderedRailroadBuckets,
   railroadArrivalsHtml,
@@ -213,11 +212,14 @@ test("railroadArrivalsHtml shows the route name from nameFor and escapes it", ()
     directions: { Inbound: [{ route_id: "1", trip_id: "t1", arrival: 100, train_num: null }] },
   };
   // Hostile route name via the resolver: it must appear escaped, never raw.
-  const html = railroadArrivalsHtml(station, body, 40, () => "Bab<script>Branch");
+  // SLOT 5 SINCE RULING R1, because slot 4 is the paint resolver now. Passed as `undefined` rather
+  // than omitted: a hostile name in the paint slot would render no label at all and this test would
+  // keep passing while testing nothing, which is the shape the phase's fifth defect is named for.
+  const html = railroadArrivalsHtml(station, body, 40, undefined, () => "Bab<script>Branch");
   assert.ok(html.includes("Bab&lt;script&gt;Branch"));
   assert.ok(!html.includes("<script>"));
   // Absent name (resolver returns null) just omits the label, no crash.
-  const plain = railroadArrivalsHtml(station, body, 40, () => null);
+  const plain = railroadArrivalsHtml(station, body, 40, undefined, () => null);
   assert.ok(plain.includes("arr-badge") && plain.includes("1 min"));
 });
 
@@ -369,15 +371,6 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
   assert.equal(lineColor("6X"), lineColor("6")); // express variant by first char
   assert.equal(lineColor(null), "#555555");
   assert.equal(lineColor("X9"), "#555555"); // unknown line
-});
-
-test("railroadColor is deterministic, from the palette, and null-safe", () => {
-  assert.equal(railroadColor("3"), railroadColor("3")); // deterministic
-  assert.match(railroadColor("3"), /^#[0-9a-f]{6}$/);
-  assert.equal(railroadColor(null), "#546e7a"); // neutral default, readable with white ink
-  assert.equal(railroadColor(""), "#546e7a");
-  // A railroad route id is colored on its own scale, not the subway's.
-  assert.notEqual(railroadColor("1"), lineColor("1"));
 });
 
 // isPlacedRailroad's test went with it in 6.3: the railroad glyph, glide, words and
@@ -906,6 +899,8 @@ const {
   statusLineText, MOBILE_MAX_WIDTH_PX, narrowViewport,
   // MR5: the background a popup head's ink is walked against now that a popup is not white.
   POPUP_SURFACE_FALLBACK,
+  // R1: the rail families' neutral and the pair resolver that replaced the hash palette.
+  RAIL_NEUTRAL_COLOR, railBranchPaint,
 } = require("./helpers.js");
 
 // The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
@@ -3241,17 +3236,28 @@ test("A3: readableTextOn replaces the hand-curated dark-text set, and is never w
   }
   // FALLBACK FILLS INCLUDED ON PURPOSE. Each is what a rider sees when a feed omits a
   // route id, which is a degraded state and therefore when the label matters most.
-  // railroadColor's #607d8b failed when this test was written: 4.37 with white ink and
-  // 3.98 with dark, so NEITHER choice could rescue it and the fill itself had to move.
+  // The rail families' #607d8b failed when this test was written: 4.37 with white ink and
+  // 3.98 with dark, so NEITHER choice could rescue it and the fill itself had to move. That is
+  // railBranchPaint's whole argument, and its comment carries the measurement now.
   // routeColor is absent from this list for the reason given above.
-  for (const bg of [railroadColor(null), lineColor(null), PATH_FALLBACK_COLOR, FERRY_FALLBACK_COLOR]) {
+  for (const bg of [RAIL_NEUTRAL_COLOR, lineColor(null), PATH_FALLBACK_COLOR, FERRY_FALLBACK_COLOR]) {
     const ratio = contrastRatio(readableTextOn(bg), bg);
     assert.ok(ratio >= 4.5, `fallback fill ${bg} ink is only ${ratio.toFixed(2)}`);
   }
-  for (const id of ["", "1", "2", "3", "BABYLON", "HARLEM", "PORT JEFFERSON", "NEW HAVEN"]) {
-    const bg = railroadColor(id);
-    const ratio = contrastRatio(readableTextOn(bg), bg);
-    assert.ok(ratio >= 4.5, `railroad "${id}" (${bg}) ink is only ${ratio.toFixed(2)}`);
+  /* AND THE RAIL FAMILIES' PUBLISHED PAIRS, which is ruling R1's substitution for a sweep over a
+     hash palette that no longer exists. The ids are gone because a rail colour is not a function of
+     its id any more; what a rider reads is the agency's own fill with the agency's own ink, and
+     railBranchPaint is what decides that pair.
+
+     EE0034 IS IN THE LIST ON PURPOSE. It is Metro-North's New Haven red, four of that railroad's six
+     routes, and readableTextOn gives it 4.48 with white: a badge that took the published colour
+     through readableTextOn rather than through railBranchPaint would ship an AA failure on the
+     common case at Grand Central, and no fixture serves that colour so no gate would say so.
+     railtag.test.js sweeps all 26 published colours; this is the four that decide the shape. */
+  for (const [hex, textColor] of [["", ""], ["00985F", "FFFFFF"], ["EE0034", "FFFFFF"], ["FFD411", ""]]) {
+    const paint = railBranchPaint(hex, textColor);
+    const ratio = contrastRatio(paint.ink, paint.fill);
+    assert.ok(ratio >= 4.5, `rail paint "${hex}" (${paint.fill} on ${paint.ink}) is only ${ratio.toFixed(2)}`);
   }
   // DELIBERATELY NOT THE BUS WHEEL. hsl(h, 75%, 40%) has hues where neither ink clears
   // 4.5 (hue 30 tops out at 4.36), and the first draft of this test swept it and failed.
@@ -4352,7 +4358,8 @@ test("MR5 Q2: the popup's footer is the strip's dot, with no word for live", () 
   /* NO TEXT WHEN LIVE, because this app has no word for "live" on any surface (memo D9, silence
      means current), and the README's "LIVE · UPDATED 12S AGO" is the sentence that rule forbids. It
      is still SAID, through A1's visually-hidden class, so a screen reader gets the state exactly
-     where an eye gets the square. */
+     where an eye gets the square, WHERE NOTHING HAS SAID IT YET: the suppression case below takes
+     it out of that channel too, and ruling R2's precedence is asserted at the end of this test. */
   const live = popupFreshHtml({ state: "live", age: 9 });
   assert.match(live, /<span class="visually-hidden">Live · 9s<\/span>/);
   assert.ok(!/>Live/.test(live.replace(/<span class="visually-hidden">[^<]*<\/span>/, "")), "no visible live text");
@@ -4366,12 +4373,22 @@ test("MR5 Q2: the popup's footer is the strip's dot, with no word for live", () 
      line, which prints the system's age and withholds itself when the vehicle's own position has
      already stated an age at least as old: an observation's age and a feed's differ by the
      provider's lag, so saying both is saying two ages about one train. The footer inherits that,
-     with one difference the ruling requires: the SQUARE is never withheld, only the words. */
+     with one difference the ruling requires: the SQUARE is never withheld, only the words.
+
+     AND RULING R2 MADE THAT LITERALLY TRUE. Until R2 the withheld words went into the same
+     visually-hidden span the live state uses, so they were withheld from an EYE and a screen reader
+     heard the age twice, which is the thing the paragraph above forbids. Asserted as the whole
+     markup rather than as an absence, because a footer that printed the suppressed words visibly
+     would satisfy a bare absence and nothing else here would notice. */
   const older = { kind: "aged", words: "live GPS, as of 7m ago", age: 420 };
   const younger = { kind: "aged", words: "live GPS, as of 1m ago", age: 60 };
   const suppressed = popupFreshHtml({ state: "stale", age: 370, position: older });
   assert.ok(suppressed.includes(square("stale")), "the square survives suppression");
-  assert.match(suppressed, /visually-hidden">As of 6m ago</, "and the words are said once, not shown twice");
+  assert.equal(
+    suppressed,
+    `<div class="fresh">${square("stale")}</div>`,
+    "the position said the age, so the footer says it in neither channel",
+  );
   assert.ok(
     popupFreshHtml({ state: "stale", age: 370, position: younger }).endsWith("As of 6m ago</div>"),
     "a position that stated a YOUNGER age does not suppress the feed's older one",
@@ -4384,6 +4401,17 @@ test("MR5 Q2: the popup's footer is the strip's dot, with no word for live", () 
   assert.equal(popupFreshHtml({ state: null }), "");
   assert.equal(popupFreshHtml({}), "");
   assert.equal(feedDotState({ scheduled: true }), "scheduled");
+
+  /* THE PRECEDENCE, WHICH IS RULING R2 ITSELF AND HAS ONE OTHER PIN IN THE REPO. A LIVE feed under a
+     position that already stated an older age is the case that distinguishes `said` winning from
+     `live` winning: written the other way round, the footer puts "Live · 9s" in the tree beside a
+     Position row that has just said "as of 7m ago", which is two ages about one train and is what
+     the ruling closed. positions.test.js's loop holds the same case; each tier holds it alone. */
+  assert.equal(
+    popupFreshHtml({ state: "live", age: 9, position: older }),
+    `<div class="fresh">${square("live")}</div>`,
+    "a live feed whose position already stated an older age says nothing in either channel",
+  );
 
   // Escaped, like every other builder in this file: the state reaches a data attribute.
   assert.ok(!popupFreshHtml({ state: 'x"><img>', age: null }).includes('"><img>'));

@@ -483,10 +483,22 @@ test("6.3 a popup's position row and a name's clause are one answer, and silent 
    being rewritten into something easier.
 
    WHAT "SAID ONCE" LOOKS LIKE NOW is the one difference, and it is the ruling's: the line returned
-   the empty string, the footer returns its SQUARE with the words in a visually-hidden span. A rider
-   cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always there.
-   So `spoken` below is the footer's form of "said once", and `shown` is its form of "says its own",
-   and both are asserted against the words the state actually has rather than against a literal. */
+   the empty string, the footer returns its SQUARE AND NOTHING ELSE. A rider cannot tell "this feed is
+   live" from "this popup forgot to say" unless the mark is always there, so the square stays; the
+   words leave the screen AND the accessibility tree, because the Position row above has already said
+   them. `shown` is the footer's form of "says its own" and `spoken` is the LIVE state's form of it
+   (the one state with nothing for an eye, which a screen reader still needs), and both are asserted
+   against the words the state actually has rather than against a literal.
+
+   RULING R2 IS WHY THAT SENTENCE CHANGED, and the assertion under it changed with it. Until R2 the
+   suppressed words went into the same visually-hidden span the live state uses, so a screen reader
+   heard the Position row's age and then the footer's: two ages about one train, which is the defect
+   the rule in popupFreshHtml's own comment forbids in as many words. `said` now beats `live`.
+
+   AND THE LOOP BELOW IS THE ONLY PLACE THAT PRECEDENCE IS PINNED in this file, which is worth
+   knowing before anyone trims it: its second row is a LIVE feed under an older stated fix, so an
+   implementation that tested `live` first would pass every other assertion here. helpers.test.js
+   holds the same case, so the two tiers hold it independently. */
 test("6.3 / MR5 Q2: a vehicle's footer speaks only for what its position's words did not say", () => {
   const footer = (age, position) => popupFreshHtml({ state: feedDotState({ age }), age, position });
   const words = (age) => feedStateWords({ state: feedDotState({ age }), age });
@@ -497,10 +509,14 @@ test("6.3 / MR5 Q2: a vehicle's footer speaks only for what its position's words
   const undated = q(row(null, "reported"), mnr);
   // Metro-North's undated fix states no age, so a stale MNR's footer is the only age there is.
   assert.ok(footer(400, undated).endsWith(`${words(400)}</div>`), "an undated fix leaves the footer to speak");
-  // A fix whose words state an age at least as old as the feed's: said once, and still marked.
+  /* A fix whose words state an age at least as old as the feed's: said once BY THE ROW ABOVE, so the
+     footer adds nothing to either channel, and still marked. The absence is asserted over the whole
+     string rather than as `!spoken(...)`, and that is not belt and braces: a footer that printed the
+     suppressed words VISIBLY would satisfy `!spoken` and nothing else in this repo would notice,
+     which is the "a test that cannot fail" shape appearing inside the fix for it. */
   for (const [age, pos] of [[400, q(row(NOW - 420, "reported"))], [30, q(row(NOW - 300, "reported"))], [null, q(row(NOW - 300, "reported"))]]) {
     const out = footer(age, pos);
-    assert.ok(spoken(out, age), `age ${age}: the words are said once, not shown twice`);
+    assert.ok(!out.includes(words(age)), `age ${age}: the position said it, so the footer says it nowhere`);
     assert.ok(out.includes(square(age)), `age ${age}: the square is never withheld`);
   }
   // Words younger than the feed's age leave the footer to say its own.

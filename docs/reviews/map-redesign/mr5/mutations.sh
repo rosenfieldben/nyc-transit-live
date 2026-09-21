@@ -36,8 +36,9 @@ run() { # run <label> <file> <gate...>   (anchor in $WORK/a, replacement in $WOR
   echo
 }
 
-# ROWS M60 TO M77 ARE THE STAGE's OWN CLAIMS, one per decision; M78 to M84 at the foot of the file
-# are round 2's, one per guard the adversarial round proved could not fail.
+# ROWS M60 TO M77 ARE THE STAGE's OWN CLAIMS, one per decision; M78 to M84 are round 2's, one per
+# guard the adversarial round proved could not fail; M85 to M92 are the three rulings that round
+# produced (R1 the colour resolvers, R2 the footer's spoken words, R3 the station kickers).
 #
 # ---- M60: the autopan padding not derived from the rendered header (the brief's own) ----
 cat > "$WORK/a" <<'A'
@@ -338,6 +339,87 @@ cat > "$WORK/r" <<'R'
 }
 R
 run M84 frontend/style.css "$NODE_ALL"
+
+# ================================================================================================
+# THE THREE RULINGS FROM THE ROUND-2 REPORT (M85 onward), one row per claim they make. R1 paid
+# finding N6 on the colour resolvers, R2 took the footer's repeated words out of the accessibility
+# tree, and R3 gave all five station kickers their routes under one measured cap.
+# ================================================================================================
+
+# ---- M85: the footer's `live` beats `said` again, so a screen reader hears two ages (R2) ----
+cat > "$WORK/a" <<'A'
+  const body = said ? "" : state === "live" ? `<span class="visually-hidden">${esc(words)}</span>` : esc(words);
+A
+cat > "$WORK/r" <<'R'
+  const body = state === "live" ? `<span class="visually-hidden">${esc(words)}</span>` : said ? "" : esc(words);
+R
+run M85 frontend/helpers.js "$NODE_ALL"
+
+# ---- M86: the NJ Transit board resolver back to the second neutral (R1) ----
+cat > "$WORK/a" <<'A'
+          (routeId) => railBranchColor(njtBranch(routeId).color),
+A
+cat > "$WORK/r" <<'R'
+          (routeId) => njtRouteColor(routeId, njtRouteColors),
+R
+run M86 frontend/systems/njt.js "$NODE_ALL"
+
+# ---- M87: the railroad badge takes the published fill and computes an ink (R1) ----
+# The EE0034 case: white reads 4.48 on it and dark 3.88, so the fill has to move. No fixture serves
+# that colour, which is why this needs a node assertion of its own rather than a rendered world.
+cat > "$WORK/a" <<'A'
+            `<span class="arr-badge" style="background:${paint.fill};color:${paint.ink}">` +
+A
+cat > "$WORK/r" <<'R'
+            `<span class="arr-badge" style="background:${railBranchColor(paint.fill)};color:${readableTextOn(paint.fill)}">` +
+R
+run M87 frontend/helpers.js "$NODE_ALL"
+
+# ---- M88: the panel's railroad chip resolves a colour of its own again (R1) ----
+cat > "$WORK/a" <<'A'
+      colorFor: (routeId) => railroadBranchPaint(station.system, routeId).fill,
+A
+cat > "$WORK/r" <<'R'
+      colorFor: () => "#5d4037",
+R
+run M88 frontend/systems/railroad.js "$PW pins.spec.js --grep P3a"
+
+# ---- M89: the route tag's viewBox origin shifted, which makes every kicker silently mark-free (R3) ----
+cat > "$WORK/a" <<'A'
+    `<svg viewBox="0 0 ${w} ${RAIL_TAG_HEIGHT}" class="rail-route-tag" aria-hidden="true"` +
+A
+cat > "$WORK/r" <<'R'
+    `<svg viewBox="-0.5 -0.5 ${w} ${RAIL_TAG_HEIGHT}" class="rail-route-tag" aria-hidden="true"` +
+R
+run M89 frontend/helpers.js "$NODE_ALL" "$PW pins.spec.js --grep P5a"
+
+# ---- M90: the kicker's cap removed, so a dozen routes draw a dozen marks (R3) ----
+cat > "$WORK/a" <<'A'
+  const shown = marks.slice(0, Math.max(0, cap));
+A
+cat > "$WORK/r" <<'R'
+  const shown = marks;
+R
+run M90 frontend/helpers.js "$NODE_ALL" "$PW pins.spec.js --grep P5e"
+
+# ---- M91: the routes stop being spoken, so an aria-hidden mark is all a reader gets (R3) ----
+cat > "$WORK/a" <<'A'
+    `<span class="visually-hidden">${esc(marks.map((m) => m.name).join(", "))}</span>`
+A
+cat > "$WORK/r" <<'R'
+    ""
+R
+run M91 frontend/helpers.js "$NODE_ALL" "$PW pins.spec.js --grep 'P5a|P5e'"
+
+# ---- M92: the mark token takes the first <text> again, losing every branch code (R3) ----
+cat > "$WORK/a" <<'A'
+    const label = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).filter(Boolean).join("·");
+A
+cat > "$WORK/r" <<'R'
+    const first = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
+    const label = first ? first[1] : "";
+R
+run M92 tests/e2e/popup.js "$NODE_ALL"
 
 echo "================================================================"
 echo "died: $died   survived: $survived   run failed: $broke"

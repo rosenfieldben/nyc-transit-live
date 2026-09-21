@@ -199,6 +199,24 @@ test("railroadArrivalsHtml escapes a hostile station name and train_num", () => 
   assert.ok(html.includes("1 min")); // (100 - 40)s -> "1 min" countdown
 });
 
+/* RULING R1's SHARPEST CASE, ASKED OF THE BOARD ITSELF: the badge must resolve its pair through
+   railBranchPaint, not through the published colour plus readableTextOn.
+
+   WHY IT NEEDS ITS OWN TEST. EE0034 is Metro-North's New Haven red and it takes white at 4.48 and
+   dark at 3.88, so NEITHER ink clears on it; railBranchPaint answers that by MOVING the fill two
+   units to #ec0033, which is the remedy this repo already applies to the tag's branch block. No
+   fixture serves that colour, so a board that took the published fill and computed an ink would ship
+   an AA failure on four of Metro-North's six routes with every gate green. The A3 sweep measures
+   railBranchPaint's own pairs; this measures that the BOARD asks it. */
+test("MR5 R1: a board badge takes the moved fill where no ink clears the published one", () => {
+  const station = { id: "1", system: "MNR", name: "Grand Central" };
+  const body = { directions: { Inbound: [{ route_id: "6", trip_id: "t1", arrival: 100, train_num: null }] } };
+  const html = railroadArrivalsHtml(station, body, 40, () => railBranchPaint("EE0034", "FFFFFF"));
+  assert.match(html, /background:#ec0033;color:#ffffff/, "the fill moved so its ink clears");
+  assert.ok(!html.includes("background:#EE0034"), "the published fill would be 4.48 with white");
+  assert.ok(contrastRatio("#ffffff", "#ec0033") >= 4.5, "and the moved pair is what clears");
+});
+
 test("railroadArrivalsHtml renders a No trains state for empty directions", () => {
   const html = railroadArrivalsHtml({ id: "1", system: "MNR", name: "Grand Central" }, { directions: {} }, 0);
   assert.ok(html.includes("Grand Central"));

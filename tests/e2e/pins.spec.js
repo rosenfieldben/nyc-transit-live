@@ -2034,6 +2034,9 @@ test("P4c. every marker family's contrast in BOTH themes, paint by paint", async
      the theme's `--paper` (a tile is an image and no mark clears 3:1 against every possible
      pixel), and a family is reported at its WORST mark rather than its average. */
   await boot(page);
+  // Follow-up 1: at City, where the bus family is drawn. contrast.js measures only drawn marks now,
+  // so at the opening zoom the bus family would be missing and "every family is measured" says so.
+  await busZoomViews.placeView(page, "view-city");
   const measured = {};
   for (const theme of ["light", "dark"]) {
     await page.evaluate((want) => applyTheme(want), theme);
@@ -2086,6 +2089,9 @@ test("P4d. every non-opaque paint on the page, composited and not, on the map an
      empty, and the loop below fails on the first place with nothing in it. Recorded here because a
      premise that is not the one doing the work should not be read as if it were. */
   await boot(page);
+  // Follow-up 1: at City, where every family is drawn, since contrast.js now measures only drawn
+  // marks and this pin asserts no family count that would say one had gone missing.
+  await busZoomViews.placeView(page, "view-city");
   // A rail train's popup, because its tag carries the 0.9 backing: this is the mark section 5 moved
   // onto a new surface, and a popup has to be open for the measurement to see it.
   await page.evaluate(() => {
@@ -2168,8 +2174,15 @@ test("P6a. the bus count in the strip, the registry and the document, at the ope
    `pointerEvents` and `ariaHidden` are the three things the rule changes for a bus and must not
    change for anything else, read from the computed style and the element rather than from the
    root attribute or the stylesheet, because a markup read where the drawn page is what matters
-   is the first of this phase's defect shapes. The inline opacity is the freshness contract's
-   dimming, and it rides along so a rule that faded rather than hid would show here too. */
+   is the first of this phase's defect shapes.
+
+   THE OPACITY IS THE COMPUTED ONE. The first version read el.style.opacity, the inline value the
+   freshness contract's setOpacity writes, and said a rule that faded rather than hid "would show
+   here too". It would not have: a stylesheet fade never touches the inline style, and the review of
+   the bus rule measured a rule widened to every marker as `opacity: 0` passing this pin and D7a
+   both. getComputedStyle's opacity carries the inline dimming AND any stylesheet's, so the dimmed
+   ferry still reads 0.55 and a fade reads 0. Regenerated at the base, 8e30014, so the golden is
+   still the world before the rule. */
 const readMarkersExceptBuses = (page) =>
   page.evaluate(() =>
     [...document.querySelectorAll(".leaflet-marker-icon:not(.bus-marker)")]
@@ -2182,7 +2195,7 @@ const readMarkersExceptBuses = (page) =>
           ariaHidden: el.getAttribute("aria-hidden"),
           drawn: style.display !== "none" && style.visibility === "visible",
           pointerEvents: style.pointerEvents,
-          opacity: el.style.opacity,
+          opacity: getComputedStyle(el).opacity,
           html: el.innerHTML,
         };
       })

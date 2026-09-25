@@ -31,9 +31,14 @@ test("Follow-up 1: a bus marker is drawn from zoom 13 and hidden at 12", () => {
   assert.equal(busMarkerBand(11), "hidden");
   assert.equal(busMarkerBand(18), "drawn");
   assert.equal(busMarkerBand(0), "hidden");
-  // A threshold and not a list: a zoom the page never writes still has an answer.
-  assert.equal(busMarkerBand(12.5), "hidden");
+  // A threshold and not a list: an integer zoom the map never reaches still has an answer.
   assert.equal(busMarkerBand(20), "drawn");
+  /* NO FRACTIONAL CASE, AND THAT IS THE CONTRACT RATHER THAN A GAP. The page asks this function
+     one question only: the zoom paintZoomBand has already ROUNDED, the same integer it writes as
+     data-zoom and hands every other band. The first draft of this test asserted 12.5 is hidden,
+     which is true of the function and false of the page, where a map resting at 12.6 rounds to
+     13 and draws; the review of the bus rule called that two readers of one zoom disagreeing at
+     the band's edge. The page's answer for a resting fractional zoom is buszoom.spec.js D7h's. */
 });
 
 test("Follow-up 1: a zoom that is not a finite number is hidden", () => {

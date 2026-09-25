@@ -836,6 +836,18 @@ function paintZoomBand() {
   }
 }
 map.on("zoomend", paintZoomBand);
+/* FOLLOW-UP 1: AND WHEN A MOVE ENDS AT A ZOOM THE ROOT DOES NOT SAY, which is a fly cut short.
+   A drag or a touch during a preset's 0.8s fly stops it through Leaflet's _stop(), which fires
+   no zoomend, so the map rests at a fractional zoom while every band keeps the zoom the fly left
+   from. The review of the bus rule measured it: City, press Rail, drag 300ms in, and the map
+   settled at 11.817 with data-zoom still "13" and every bus drawn, the 2136-arrow picture the
+   rule exists to remove, until the rider next zoomed. The drag that interrupted it ends in a
+   moveend, so this repaints then, and only when the integer zoom actually moved: an ordinary pan
+   costs one attribute read. Rounded the way paintZoomBand rounds, so the root's data-zoom and
+   every band on it stay one answer to one number. */
+map.on("moveend", () => {
+  if (document.documentElement.getAttribute("data-zoom") !== String(Math.round(map.getZoom()))) paintZoomBand();
+});
 
 if (namesToggleEl) {
   namesToggleEl.addEventListener("click", () => {

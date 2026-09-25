@@ -99,16 +99,25 @@ function busMarkerName(bus, now = correctedNow()) {
    disagree about which zoom counts, and a page whose script never wrote it leaves every bus
    drawn and reachable, which is the failure policy helpers.js gives.
 
+   WHAT THIS HALF IS, SAID EXACTLY, because the first two drafts of this comment overstated it.
+   While the stylesheet applies, display:none has already taken an undrawn bus out of the
+   accessibility tree and out of hit testing, so these two attributes change nothing a rider or a
+   screen reader meets. They are the brief's instruction ("the same treatment MR2 gave off-focus
+   markers"), and they are what keeps a bus out of reach if the display rule is ever softened to a
+   fade, where MR2's off-focus trains already live. And there is one state where they are not
+   redundant, recorded for the operator in the ledger: a page whose stylesheet failed to load
+   draws every bus, and below 13 these would leave them drawn but silent and unclickable.
+
    WRITTEN ON THE ELEMENT, SO IT IS WRITTEN WHEREVER AN ELEMENT CAN APPEAR BETWEEN ZOOMENDS. The
-   zoomend sweep (paintBusBand) reaches every bus that exists when it runs, and so does the feed
-   toggle, whose applyFeedVisibility calls paintZoomBand after putting the layer back. What
-   neither reaches is a bus the POLL adds while the map sits below City zoom: its element is
-   built by addTo and no zoomend follows, so without the `add` hook registered in applyBuses it
-   would be invisible and still read out and clickable until the rider next zoomed. Measured, not
-   assumed: with the hook removed, the feed-toggle half of buszoom.spec.js D7c still passes and
-   the new-arrival half fails (mutation M6). labeledMarker's own `add` hook is the same repair
-   for the accessible name. A setIcon today reuses the element it is handed and so keeps both
-   attributes, and D7c asserts that rather than leaving it to a Leaflet detail. */
+   sweep (paintBusBand) reaches every bus that exists when paintZoomBand runs, which is on a
+   zoomend, on a move that ends at a new integer zoom, and after a feed toggle puts the layer
+   back. What none of those reaches is a bus the POLL adds while the map sits below City zoom, so
+   the `add` hook registered in applyBuses writes it at birth. Measured: with the hook removed,
+   the feed-toggle half of buszoom.spec.js D7c still passes and the new-arrival half fails
+   (mutation M6), on the attributes; the stylesheet has that bus off the screen either way.
+   labeledMarker's own `add` hook is the same repair for the accessible name. A setIcon today
+   reuses the element it is handed and so keeps both attributes, and D7c asserts that rather than
+   leaving it to a Leaflet detail. */
 function busesDrawn() {
   return document.documentElement.getAttribute("data-bus-band") !== "hidden";
 }

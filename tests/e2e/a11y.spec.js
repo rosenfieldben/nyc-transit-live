@@ -645,20 +645,48 @@ const STATES = [
     // popup rule reaches for a token.
     themes: ["light", "dark"],
   },
-  /* FOLLOW-UP 1: THE BUS BAND, SCANNED FROM BOTH SIDES. Below City zoom every bus marker is
-     display:none and also aria-hidden with its pointer-events off; at City all of that comes
-     back. The first is the page a rider now opens onto (the map opens at 12), and the second is
-     the only state in which a bus is in the accessibility tree at all, so each is scanned at
-     every width this suite uses and in both themes.
+  /* FOLLOW-UP 1: THE BUS BAND, SCANNED FROM BOTH SIDES AND AT THE DOOR. Below City zoom every bus
+     marker is display:none and also aria-hidden with its pointer-events off; at City all of that
+     comes back. Three states, each at every width this suite uses and in both themes: the OPENING
+     view, untouched, which is the page a rider now lands on (zoom 12) and the only one reached
+     without moving the map, so the buses' reach there comes from their birth (the add hook) and
+     the station load's repaint rather than from any zoomend; Rail, after a move;
+     and City, the only state in which a bus is in the accessibility tree at all. The first draft
+     had only the last two and said the Rail state was the opening page, which it is not: the
+     review of this follow-up removed the add hook and both passed, because the move to Rail
+     repainted what the hook would have written.
 
      EACH reach() PROVES ITS STATE OFF THE DRAWN PAGE BEFORE THE SCAN, which is the round 4 lesson
      "map alone" records: a state whose name nothing asserts can quietly become a copy of another.
-     And the City state names `bus-marker` as a target, so the anti-vacuity check fails if axe
-     stops examining a bus in the one state where there is one to examine.
+     AND WHICH AXE RULES SAW A BUS IS ASKED PER RULE (examinedBy, at assertScanned), not by naming
+     `bus-marker` as a target: axe names a marker by its accessible name, so no target ever
+     contains the class, and a target list cannot say "examined as hidden" from "examined as an
+     image". At City it is `role-img-alt` that must have seen one, and that half is the only guard
+     against a drawn bus that has lost its role and its name (mutation M18).
 
      placeView AND NOT THE BUTTON, because this file fixes the clock rather than pausing it and a
      fly cannot finish under a fixed clock (views.js says why). The scan is of the destination;
      that the buttons reach it is buszoom.spec.js D7a's. */
+  {
+    key: "buses undrawn at the opening view",
+    alerts: 0,
+    viewports: [DESKTOP, PHONE, NARROW],
+    themes: ["light", "dark"],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      expect(await page.evaluate(() => map.getZoom()), "the map is still where it opened").toBe(12);
+      await expect(page.locator(".bus-marker")).toHaveCount(2);
+      await expect(page.locator(".bus-marker").filter({ visible: true })).toHaveCount(0);
+      await expect(page.locator(".bus-marker[aria-hidden='true']")).toHaveCount(2);
+    },
+    targets: ["#view-stack", "leaflet-control-zoom"],
+    examinedBy: [
+      { rule: "aria-hidden-focus", node: BUS_MARKER_NODE, want: true },
+      { rule: "role-img-alt", node: BUS_MARKER_NODE, want: false },
+    ],
+  },
   {
     key: "buses undrawn at Rail",
     alerts: 0,

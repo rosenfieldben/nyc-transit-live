@@ -22,7 +22,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
-const { pressView } = require("./views");
+const { pressView, placeView } = require("./views");
 
 /* The frozen-clock boot the rest of the suite uses, so a poll happens only when a spec runs the
    clock to one. That is what lets D7d say a zoom drew the buses WITHOUT a poll.
@@ -133,6 +133,17 @@ test("D7a. no bus is drawn at Region or Rail and every bus is at City, while the
   expect(others).toBeGreaterThan(0);
   await expect(page.locator(".leaflet-marker-icon:not(.bus-marker):not(.rail-stn-marker)").filter({ visible: true }))
     .toHaveCount(others);
+  /* AND NOT FADED. Playwright's visibility ignores opacity, so a rule widened as a fade rather than a
+     hide passed the line above; the review of this follow-up measured it with every other vehicle at
+     opacity 0 below 13. The COMPUTED opacity is read, because a stylesheet fade never touches the
+     inline one the freshness contract writes, and the floor is the contract's own lowest dimming
+     (a docked boat on a stale feed, 0.2475, which P4b2 holds), not zero. */
+  const faded = await page.evaluate(() =>
+    [...document.querySelectorAll(".leaflet-marker-icon:not(.bus-marker):not(.rail-stn-marker)")]
+      .map((el) => Number(getComputedStyle(el).opacity))
+      .filter((opacity) => !(opacity >= 0.2)),
+  );
+  expect(faded, "every other vehicle is drawn at an opacity a rider can see").toEqual([]);
 });
 
 test("D7b. an undrawn bus is out of the accessibility tree and the click path, and comes back with the band", async ({
@@ -249,12 +260,16 @@ test("D7e. the Buses button's tooltip and the Key's bus row both say the buses a
     .evaluateAll((els, w) => els.filter((el) => el.title.includes(w)).map((el) => el.id), words);
   expect(others).toEqual([]);
 
-  // THE KEY, AS A RIDER READS IT: the row's own text, whitespace collapsed, and the phrase inside
-  // it is the constant the tooltip is built from.
+  /* THE KEY, AS A RIDER READS IT: the open panel's RENDERED text (innerText), whitespace collapsed.
+     textContent was the first draft, and the review of this follow-up showed it was a markup read:
+     wrapping the clause in <span hidden> left it in textContent, took it away from every rider and
+     every screen reader, and passed. innerText drops what is not rendered, and the panel is asserted
+     open first because innerText of a hidden panel is its textContent again. */
   await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
   const rows = await page
     .locator("#legend .legend-row")
-    .evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, " ").trim()));
+    .evaluateAll((els) => els.map((el) => el.innerText.replace(/\s+/g, " ").trim()));
   const busRows = rows.filter((row) => row.startsWith("Bus"));
   expect(busRows).toEqual(["Bus (arrow points where it's heading); shown from City zoom", "Bus, heading unknown"]);
   expect(busRows[0]).toContain(words);
@@ -301,6 +316,19 @@ test("D7f. what the rule does not govern: the clicked bus's route line, its popu
   await bullet.click();
   await expect(bullet).toHaveAttribute("aria-pressed", "false");
   expectEveryBus(await busReach(page), HIDDEN, "Rail, the focus cleared");
+
+  /* AND AT CITY, WHICH IS THE HALF THAT CAN TELL THEM APART. At Rail the band already has every bus
+     hidden, so a focus that hid buses too would pass the two lines above; the review of this
+     follow-up measured exactly that, with a focus that wrote aria-hidden and pointer-events on every
+     bus element, drawn on screen and unreachable, and the suite green. At City a focus pressed must
+     leave every bus drawn and reachable, and so must clearing it. */
+  await pressView(page, "view-city");
+  await bullet.click();
+  await expect(bullet).toHaveAttribute("aria-pressed", "true");
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `City, a route focused: ${id}`).toEqual(DRAWN);
+  await bullet.click();
+  await expect(bullet).toHaveAttribute("aria-pressed", "false");
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `City, the focus cleared: ${id}`).toEqual(DRAWN);
 });
 
 /* THE FAILURE POLICY, WHICH THREE COMMENTS STATED AND NOTHING TESTED until the mutation table
@@ -320,4 +348,50 @@ test("D7g. a root with no band on it draws every bus and leaves every one reacha
   });
   expect(await drawnBuses(page)).toBe(2);
   for (const { id, hit, ...state } of await busReach(page)) expect(state, `no band: ${id}`).toEqual(DRAWN);
+});
+
+/* A FLY CUT SHORT, which the review of this rule found and measured: a drag during a preset's fly
+   stops it through Leaflet's _stop(), which fires no zoomend, so the map rests at a fractional zoom
+   while the root keeps the zoom the fly left from. From City to Rail that left every bus drawn at
+   11.8; from Rail to City, every bus hidden at 12.6. The drag that interrupted it ends in a moveend,
+   and that is what repaints the band now (shared.js).
+
+   SIMULATED THE WAY THE DRAG DOES IT: map.stop() is the public face of the _stop() a drag calls, and
+   an unanimated panBy is the moveend the drag's end fires. Each direction first asserts its own
+   premise, that the map really is resting between two integers on the far side of the band from
+   where it started, because a fly stopped before it had moved would make this pass over nothing. */
+test("D7h. a fly cut short leaves the band on the zoom the map actually rests at", async ({ page }) => {
+  await boot(page);
+  /* EACH DIRECTION STARTS FROM placeView, NOT A PRESS, because of something this spec found at the
+     base and does not own: after a fly is cut short, the NEXT preset press fires a stray zoomend and
+     moveend at zoom 12 before it lands, which clears the pressed state, and the button stays dark
+     at the preset it named (measured at d49e9a7 as well as here; the ledger records it for the
+     operator). pressView asserts that pressed state, so it cannot be the way into the second cut. */
+  const cutShort = async (from, to, ms) => {
+    await placeView(page, from);
+    await page.locator(`#${to}`).click();
+    await page.clock.runFor(ms);
+    return page.evaluate(() => {
+      map.stop();
+      map.panBy([60, 0], { animate: false });
+      const zoom = map.getZoom();
+      return { zoom, rounded: Math.round(zoom), dataZoom: document.documentElement.getAttribute("data-zoom") };
+    });
+  };
+
+  // City to Rail: stopped below 12.5, so the band must say hidden where it said drawn.
+  const down = await cutShort("view-city", "view-rail", 300);
+  expect(Number.isInteger(down.zoom), `the fly was stopped between two zooms (${down.zoom})`).toBe(false);
+  expect(down.rounded, "and on the hidden side of the band").toBeLessThan(13);
+  expect(down.dataZoom).toBe(String(down.rounded));
+  expect(await drawnBuses(page)).toBe(0);
+  expectEveryBus(await busReach(page), HIDDEN, `City to Rail, stopped at ${down.zoom}`);
+
+  // Rail to City: stopped at or above 12.5, so the band must say drawn where it said hidden.
+  const up = await cutShort("view-rail", "view-city", 650);
+  expect(Number.isInteger(up.zoom), `the fly was stopped between two zooms (${up.zoom})`).toBe(false);
+  expect(up.rounded, "and on the drawn side of the band").toBeGreaterThanOrEqual(13);
+  expect(up.dataZoom).toBe(String(up.rounded));
+  expect(await drawnBuses(page)).toBe(2);
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `Rail to City, stopped at ${up.zoom}: ${id}`).toEqual(DRAWN);
 });

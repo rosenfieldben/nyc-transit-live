@@ -11,6 +11,21 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const { expectPopupState } = require("./popup");
+const { pressView } = require("./views");
+
+/* FOLLOW-UP 1: A CLICK ON A BUS HAPPENS AT CITY, because below City zoom a bus is display:none,
+   out of the accessibility tree and out of the click path, and the map opens at 12. A7c and A7f
+   dispatch a click on the marker's element, which skips hit testing, so at the opening zoom they
+   went on passing by clicking a bus no mouse could reach, after smoke 7 had already moved to City
+   for exactly this reason; the review of that follow-up found the two readers of "click a bus"
+   and only one of them had learned. So both go to City first, and the dispatch refuses an
+   undrawn target rather than trusting the view. */
+const clickBus = (page, id) =>
+  page.evaluate((busId) => {
+    const el = buses.get(busId).marker.getElement();
+    if (getComputedStyle(el).display === "none") throw new Error(`bus ${busId} is not drawn at zoom ${map.getZoom()}`);
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  }, id);
 const fx = require("./fixtures/api");
 
 async function open(page) {
@@ -88,14 +103,13 @@ test("A7c. a mouse open draws the line exactly once, and does not draw then clea
   const ctx = await installMocks(page);
   await open(page);
 
+  await pressView(page, "view-city");
   const id = await firstBusId(page);
   const before = ctx.counts.busRoute ?? 0;
 
-  // A real click on the marker element, which is the mouse path end to end.
-  await page.evaluate((busId) => {
-    const el = buses.get(busId).marker.getElement();
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-  }, id);
+  // A click event on the marker element, at the zoom where a mouse could make it: Leaflet's own
+  // click handling end to end, though not the hit test, which D7b and smoke 7 hold.
+  await clickBus(page, id);
   await expectPopupState(page, { registry: "buses", key: id }, true);
   await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);
 
@@ -195,12 +209,10 @@ test("A7f. hiding the Buses layer preserves the route line, and showing it bring
   // fetch would restore it. On the pre-A3 tree the line survived both ways.
   await installMocks(page);
   await open(page);
+  await pressView(page, "view-city");
 
   const id = await firstBusId(page);
-  await page.evaluate((busId) => {
-    const el = buses.get(busId).marker.getElement();
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-  }, id);
+  await clickBus(page, id);
   await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);
   const drawn = await drawnLines(page);
 

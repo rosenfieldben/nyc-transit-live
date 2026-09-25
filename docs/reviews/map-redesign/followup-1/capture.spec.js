@@ -14,9 +14,12 @@
    capture's poll lands on the suite's frozen clock, which keeps each bus's own age relative to
    that poll exactly what it was. A bus that was stale in the capture is drawn stale here.
 
-   RAIL IS THE PAIR, AND CITY RIDES ALONG. The Rail frames are the before and after the finding
+   RAIL IS THE PAIR, AND TWO MORE RIDE ALONG. The Rail frames are the before and after the finding
    is about. The City frames should be the same picture twice, because City is where the rule
-   draws every bus, and taking them is how that is shown rather than said. */
+   draws every bus, and taking them is how that is shown rather than said. The OPENING frames are
+   the view every rider meets first, zoom 12 with no preset pressed, where the rule now draws no
+   bus at all; the review asked for them, because without them no picture showed the change a
+   rider sees soonest. */
 const fs = require("node:fs");
 const path = require("node:path");
 const { test, expect } = require("@playwright/test");
@@ -39,7 +42,7 @@ function busEnvelope() {
   };
 }
 
-for (const preset of ["view-rail", "view-city"]) {
+for (const preset of ["open", "view-rail", "view-city"]) {
   test(`capture ${TAG} ${preset}`, async ({ page }) => {
     expect(CAPTURE, "F1_BUSES must name the decoded capture (see MEASURING.md)").toBeTruthy();
     const body = busEnvelope();
@@ -63,8 +66,12 @@ for (const preset of ["view-rail", "view-city"]) {
       body.data.length,
       { timeout: 30_000 },
     );
-    await page.locator(`#${preset}`).click();
-    await expect(page.locator(`#${preset}`)).toHaveAttribute("aria-pressed", "true");
+    if (preset === "open") {
+      expect(await page.evaluate(() => map.getZoom()), "the map opens at 12").toBe(12);
+    } else {
+      await page.locator(`#${preset}`).click();
+      await expect(page.locator(`#${preset}`)).toHaveAttribute("aria-pressed", "true");
+    }
     await page.waitForTimeout(1500);
     const drawn = await page.locator(".bus-marker").filter({ visible: true }).count();
     // Recorded beside the frame, so MEASURING.md can say what each picture holds.

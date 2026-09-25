@@ -126,7 +126,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -135,7 +135,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -153,7 +153,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon path-marker",
@@ -162,7 +162,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -171,7 +171,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -180,7 +180,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -189,7 +189,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
@@ -198,7 +198,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
@@ -207,7 +207,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
@@ -216,7 +216,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
@@ -225,7 +225,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -234,7 +234,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -243,7 +243,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -252,7 +252,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -261,7 +261,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -270,7 +270,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -279,7 +279,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -288,7 +288,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -297,7 +297,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -306,7 +306,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     }
    ],
    "view-city": [
@@ -317,7 +317,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -326,7 +326,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -344,7 +344,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon path-marker",
@@ -353,7 +353,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -362,7 +362,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -371,7 +371,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -380,7 +380,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
@@ -389,7 +389,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
@@ -398,7 +398,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
@@ -407,7 +407,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
@@ -416,7 +416,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -425,7 +425,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -434,7 +434,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -443,7 +443,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -452,7 +452,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -461,7 +461,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -470,7 +470,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -479,7 +479,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -488,7 +488,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -497,7 +497,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     }
    ],
    "view-rail": [
@@ -508,7 +508,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -517,7 +517,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -535,7 +535,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon path-marker",
@@ -544,7 +544,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -553,7 +553,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -562,7 +562,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -571,7 +571,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
@@ -580,7 +580,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
@@ -589,7 +589,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
@@ -598,7 +598,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
@@ -607,7 +607,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -616,7 +616,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -625,7 +625,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -634,7 +634,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -643,7 +643,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -652,7 +652,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -661,7 +661,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -670,7 +670,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -679,7 +679,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -688,7 +688,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     }
    ],
    "view-region": [
@@ -699,7 +699,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -708,7 +708,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
@@ -726,7 +726,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon path-marker",
@@ -735,7 +735,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -744,7 +744,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -753,7 +753,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
@@ -762,7 +762,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
@@ -771,7 +771,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
@@ -780,7 +780,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
@@ -789,7 +789,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
@@ -798,7 +798,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -807,7 +807,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -816,7 +816,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -825,7 +825,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
@@ -834,7 +834,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -843,7 +843,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -852,7 +852,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
@@ -861,7 +861,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -870,7 +870,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     },
     {
      "cls": "leaflet-interactive leaflet-marker-icon train-marker",
@@ -879,7 +879,7 @@
      "ariaHidden": null,
      "drawn": true,
      "pointerEvents": "auto",
-     "opacity": ""
+     "opacity": "1"
     }
    ]
   },

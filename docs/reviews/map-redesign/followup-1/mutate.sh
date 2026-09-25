@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # One mutation, run in a worktree detached at a named commit. MR5's runner (map-redesign/mr5/
-# mutate.sh), carried forward with three changes this follow-up needed, each for a measured reason.
+# mutate.sh), carried forward with four changes this follow-up needed, each for a measured reason.
 #
-#   1. THE PORT IS FREED WITH lsof, falling back to fuser. MR5's runner ran in a Linux container
-#      where `fuser -n tcp` was the reader that worked; on macOS that flag does not exist, and a
-#      server left on the port would be REUSED by a gate outside CI mode, which tests the
-#      unmutated tree. The gate also runs with CI=1 so Playwright never reuses one at all.
+#   1. THE PORT IS CHECKED, NEVER FREED. MR5's runner killed whatever held the suite's port with
+#      `fuser -n tcp`, which does not exist on macOS, and on a machine shared with other sessions
+#      "whatever holds the port" can be someone else's run: this runner's first version killed
+#      without asking, and its review said so (the ledger's F1j). So a held port before a gate is
+#      a RUN FAILED naming the holder, every gate runs with CI=1 so Playwright never reuses a
+#      server, and Playwright stops the server it started itself.
 #   2. THE NODE TIER GETS A REAL-PATH TMPDIR. tests/nodetier.test.js compares a module path it
 #      resolved against one it built from os.tmpdir(), and on macOS the default TMPDIR is a
 #      symlink (/var -> /private/var), so that test fails on an unmutated tree here and would
@@ -13,10 +15,15 @@
 #   3. A GATE THAT FAILED ONLY ON THE SUITE'S CLOCK RACE IS RUN AGAIN, NOT COUNTED. The frozen-clock
 #      boots install the clock at the frozen time and then pause at it, and under load pauseAt
 #      throws "Cannot fast-forward to the past" before the page loads (the ledger's flake list has
-#      it). A failure with that signature says nothing about the mutation, so the gate is re-run,
-#      up to three attempts, and a gate still racing after three is a RUN FAILED rather than a
-#      verdict. Any other failure is a death, and its first lines are printed so the table can
-#      say which assertion killed it.
+#      it). A failure with only that signature says nothing about the mutation, so the gate is
+#      re-run, up to three attempts, and a gate still racing after three is a RUN FAILED.
+#   4. A DEATH IS A FAILING TEST, NOT A FAILING COMMAND. A gate that exits non-zero with no failing
+#      test in its log (a webServer that could not bind, a config that did not load, an npx that
+#      could not find Playwright) said nothing about the mutation, so it is a RUN FAILED. Only
+#      Playwright's "N failed" summary, or node's "fail N" with N above zero, is a kill, and its
+#      first error lines are printed so the table can say which assertion did it. The runner also
+#      refuses to start without the invoking checkout's node_modules, because a dangling link let
+#      npx reach for the network instead, and npm is told to stay offline besides (F1j again).
 #
 # Usage:
 #   mutate.sh <sha> <label> <file> <anchor-file> <replacement-file> <gate...>
@@ -31,18 +38,16 @@ SHA="${1:?sha}"; LABEL="${2:?label}"; TARGET="${3:?file}"; ANCHOR="${4:?anchor f
 shift 5
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 BASE_TMP="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-TREE="$(mktemp -d "$BASE_TMP/f1mut.XXXXXX")"
-NODE_TMP="$(mktemp -d "$BASE_TMP/f1node.XXXXXX")"
 PORT=5173
 
-killserve() {
-  local pids
-  pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || fuser -n tcp "$PORT" 2>/dev/null || true)"
-  if [ -n "${pids// /}" ]; then kill $pids 2>/dev/null; sleep 2; fi
-  return 0
-}
+# Who holds the port, as "pid command", or nothing.
+holder() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $2, $1; exit }'; }
 
-cleanup() { cd "$ROOT" || true; killserve; git worktree remove --force "$TREE" >/dev/null 2>&1 || true; rm -rf "$TREE" "$NODE_TMP"; }
+[ -x "$ROOT/node_modules/.bin/playwright" ] || { echo "RUN FAILED $LABEL: no node_modules/.bin/playwright in $ROOT"; exit 2; }
+
+TREE="$(mktemp -d "$BASE_TMP/f1mut.XXXXXX")"
+NODE_TMP="$(mktemp -d "$BASE_TMP/f1node.XXXXXX")"
+cleanup() { cd "$ROOT" || true; git worktree remove --force "$TREE" >/dev/null 2>&1 || true; rm -rf "$TREE" "$NODE_TMP"; }
 trap cleanup EXIT
 
 cd "$ROOT"
@@ -75,12 +80,16 @@ for gate in "$@"; do
   echo "  gate: $gate"
   attempt=1
   while :; do
-    killserve
-    if CI=1 TMPDIR="$NODE_TMP/" bash -c "$gate" > "$TREE/gate.log" 2>&1; then
+    held="$(holder)"
+    if [ -n "$held" ]; then
+      echo "RUN FAILED $LABEL: port $PORT is held by $held, and this runner does not kill what it did not start"
+      exit 2
+    fi
+    if CI=1 npm_config_offline=true TMPDIR="$NODE_TMP/" bash -c "$gate" > "$TREE/gate.log" 2>&1; then
       break
     fi
     if grep -q "Cannot fast-forward to the past" "$TREE/gate.log" \
-      && ! grep -E "^\s+Error: " "$TREE/gate.log" | grep -vq "Cannot fast-forward to the past"; then
+      && ! grep -E "^\s*Error: " "$TREE/gate.log" | grep -vq "Cannot fast-forward to the past"; then
       if [ "$attempt" -ge 3 ]; then
         echo "RUN FAILED $LABEL: the gate raced its clock on all three attempts"
         exit 2
@@ -89,8 +98,13 @@ for gate in "$@"; do
       attempt=$((attempt + 1))
       continue
     fi
+    if ! grep -Eq "^\s+[0-9]+ failed|^ℹ fail [1-9]" "$TREE/gate.log"; then
+      echo "RUN FAILED $LABEL: the gate failed with no failing test, so it said nothing about the mutation"
+      grep -E "^\s*Error" "$TREE/gate.log" | head -4 | sed 's/^/    | /'
+      exit 2
+    fi
     echo "DIED $LABEL on: $gate"
-    grep -E "^\s+Error: |^\s+Expected|^\s+Received|^\s+[0-9]+ (passed|failed)|^not ok|^✖ " "$TREE/gate.log" \
+    grep -E "^\s*Error|^\s+Expected|^\s+Received|^\s+[0-9]+ (passed|failed)|^not ok|^✖ " "$TREE/gate.log" \
       | grep -v "^✖ failing tests" | head -8 | sed 's/^/    | /'
     exit 0
   done

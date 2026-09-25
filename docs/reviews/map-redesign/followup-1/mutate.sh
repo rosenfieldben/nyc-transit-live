@@ -5,7 +5,7 @@
 #   1. THE PORT IS CHECKED, NEVER FREED. MR5's runner killed whatever held the suite's port with
 #      `fuser -n tcp`, which does not exist on macOS, and on a machine shared with other sessions
 #      "whatever holds the port" can be someone else's run: this runner's first version killed
-#      without asking, and its review said so (the ledger's F1j). So a held port before a gate is
+#      without asking, and its review said so (the ledger's V5). So a held port before a gate is
 #      a RUN FAILED naming the holder, every gate runs with CI=1 so Playwright never reuses a
 #      server, and Playwright stops the server it started itself.
 #   2. THE NODE TIER GETS A REAL-PATH TMPDIR. tests/nodetier.test.js compares a module path it
@@ -23,7 +23,8 @@
 #      Playwright's "N failed" summary, or node's "fail N" with N above zero, is a kill, and its
 #      first error lines are printed so the table can say which assertion did it. The runner also
 #      refuses to start without the invoking checkout's node_modules, because a dangling link let
-#      npx reach for the network instead, and npm is told to stay offline besides (F1j again).
+#      npx reach for the network instead, and npm is told to stay offline besides (V6, which the
+#      verifier refuted for this checkout and which is kept as hardening).
 #
 # Usage:
 #   mutate.sh <sha> <label> <file> <anchor-file> <replacement-file> <gate...>

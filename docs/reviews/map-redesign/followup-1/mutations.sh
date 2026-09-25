@@ -16,7 +16,7 @@
 # partway through the table is invisible to a control that ran only at the start.
 #
 # THE EXIT STATUS SAYS ALL OF IT, which the first version did not: it exited 0 with a dead control
-# or a surviving row, printing the same summary a healthy run prints (the review's F1j). Now:
+# or a surviving row, printing the same summary a healthy run prints (the review's V1). Now:
 # 2 if any row failed to run, 1 if a control died or any other row survived, 0 only for the table
 # this file claims.
 set -uo pipefail

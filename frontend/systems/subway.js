@@ -547,7 +547,10 @@ async function loadStations() {
       const el = event.tooltip?.getElement?.();
       if (el) el.setAttribute("aria-hidden", "true");
     });
-    marker.bindTooltip(station.name ?? station.id, {
+    /* ONE NAME PER COMPLEX (helpers.js, stationNamesItself): the other stops of a complex keep
+       their ring and their popup and draw no name, so Times Square is named once, as "Times
+       Sq-42 St" on 127, rather than four times a few metres apart. */
+    if (stationNamesItself(station.id, complex)) marker.bindTooltip(station.name ?? station.id, {
       permanent: true,
       direction: "right",
       offset: [7, 0],

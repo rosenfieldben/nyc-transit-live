@@ -44,6 +44,7 @@ const {
   HUB_TRUNKS_ACROSS_STOPS,
   subwayComplexIndex,
   stationKickerRoutes,
+  stationNamesItself,
   LABEL_HUB_ZOOM,
   LABEL_ALL_ZOOM,
   labelZoomBand,
@@ -381,6 +382,27 @@ test("hub definition: a stop nothing calls at does not make a complex two stops 
     { id: "M18", routes: ["J", "M", "Z"], complex_id: "F15" },
   ]);
   assert.equal(isTransferStation(open.get("M18")), true);
+});
+
+test("hub definition: one name per complex, on the stop whose id is the complex id", () => {
+  /* THE OPERATOR'S RULING. A name per stop repeated 32 of the 100 hub names within their own
+     complexes; the ring stays on every stop and the name is drawn once. Over the real payload,
+     every complex has exactly one stop that names itself, and it is the complex's own id. */
+  const named = REAL_STOPS.filter((s) => stationNamesItself(s.id, REAL_COMPLEXES.get(s.id)));
+  assert.equal(named.length, 444, "one name per complex, 444 complexes");
+  assert.equal(new Set(named.map((s) => REAL_COMPLEXES.get(s.id))).size, 444, "none twice");
+  for (const s of named) assert.equal(REAL_COMPLEXES.get(s.id).id, s.id, s.id);
+  // Times Square is named by 127, and its other four stops are not.
+  assert.equal(stationNamesItself("127", REAL_COMPLEXES.get("127")), true);
+  for (const id of ["725", "902", "A27", "R16"]) {
+    assert.equal(stationNamesItself(id, REAL_COMPLEXES.get(id)), false, id);
+  }
+  // The hub names are the census's 48: one per hub complex.
+  assert.equal(named.filter((s) => realHub(s.id)).length, 48);
+  // With no complex known, every stop names itself, which is the pre-complex payload's map.
+  assert.equal(stationNamesItself("725", null), true);
+  assert.equal(stationNamesItself("725", ["7", "7X"]), true);
+  assert.equal(stationNamesItself(725, { id: "725", routes: [], stops: 1 }), true, "ids off the wire may be numbers");
 });
 
 test("hub definition: the kicker lists the complex's routes, the stop's own first", () => {

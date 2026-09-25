@@ -1631,7 +1631,7 @@ test("D2i. a transfer ring where three trunks call at one stop, a local dot wher
 
 /* ---------------- the station complex (claude/subway-hub-definition) ----------------
 
-   A HUB IS A STATION COMPLEX NOW, and these five read the real network to say so. The world is
+   A HUB IS A STATION COMPLEX NOW, and these six read the real network to say so. The world is
    tests/e2e/fixtures/subway_stops_real.json: production's /api/subway-stops payload of 2026-09-25,
    496 stations with their routes, plus the complex_id the branch serves (the backend's
    test_the_e2e_census_fixture_agrees_with_this_archive holds it to the committed transfers.txt).
@@ -1700,7 +1700,7 @@ const HUB_COMPLEXES = [
   "L17: Myrtle-Wyckoff Avs",
 ];
 
-test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in 48 complexes", async ({
+test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in 48 complexes, named once each", async ({
   page,
 }) => {
   /* THE MUTATION THIS KILLS is the predicate counting per stop again, and "before" is measured in
@@ -1710,7 +1710,7 @@ test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in
   const census = await page.evaluate(() => {
     const subway = stationRegistry.filter((entry) => entry.kind === "subway");
     const ringed = subway.filter((entry) => entry.marker.options.stroke === true);
-    const labelled = subway.filter((entry) => entry.marker.getTooltip().getElement().classList.contains("hub"));
+    const labelled = subway.filter((entry) => entry.marker.getTooltip()?.getElement()?.classList.contains("hub"));
     const complexes = new Map();
     for (const entry of ringed) {
       if (!complexes.has(entry.complex.id)) complexes.set(entry.complex.id, []);
@@ -1733,8 +1733,12 @@ test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in
   expect(census.before, "F9's per-stop count on this payload, the diagnosis's number").toBe(124);
   expect(census.rings).toBe(100);
   expect(census.complexes).toEqual(HUB_COMPLEXES);
-  // One predicate behind the ring and the name, so the two sets are the same stations.
-  expect(census.labelKeys).toEqual(census.ringKeys);
+  /* ONE PREDICATE BEHIND THE RING AND THE NAME, and ONE NAME PER COMPLEX (the operator's ruling):
+     every hub name is on a ringed stop, it is the stop whose id is the complex id, and there are
+     exactly as many as there are hub complexes. The census stays at 48. */
+  expect(census.labelKeys.length, "one hub name per hub complex").toBe(48);
+  expect(census.labelKeys.every((key) => census.ringKeys.includes(key))).toBe(true);
+  expect([...census.labelKeys].sort()).toEqual(census.complexes.map((row) => `subway|${row.split(":")[0]}`).sort());
   // And every one of Times Square's five stops is ringed, none of which F9 rang.
   expect(census.timesSquare).toEqual([true, true, true, true, true]);
 
@@ -1807,15 +1811,15 @@ test("D2i2. at zoom 13 over the Upper West Side the band draws no local", async 
     return stationRegistry
       .filter((entry) => entry.kind === "subway")
       .map((entry) => {
-        const el = entry.marker.getTooltip().getElement();
-        const r = el.getBoundingClientRect();
+        const el = entry.marker.getTooltip()?.getElement() ?? null;
+        const r = el ? el.getBoundingClientRect() : { left: 0, right: 0, top: 0, bottom: 0 };
         const dot = map.latLngToContainerPoint([entry.lat, entry.lon]);
         const size = map.getSize();
         return {
           id: entry.id,
           name: entry.name,
-          drawn: getComputedStyle(el).display !== "none",
-          hub: el.classList.contains("hub"),
+          drawn: !!el && getComputedStyle(el).display !== "none",
+          hub: !!el && el.classList.contains("hub"),
           // A hidden label has no box, so whether a STATION is in view is asked of its dot.
           inView: dot.x >= 0 && dot.y >= 0 && dot.x <= size.x && dot.y <= size.y,
           labelInView: r.right > box.left && r.left < box.right && r.bottom > box.top && r.top < box.bottom,
@@ -1825,7 +1829,7 @@ test("D2i2. at zoom 13 over the Upper West Side the band draws no local", async 
   });
   const drawn = labels.filter((l) => l.drawn);
   expect(drawn.filter((l) => !l.hub), "no local name in the hubs band, anywhere").toEqual([]);
-  expect(drawn.length, "and the hub names are the census's hundred").toBe(100);
+  expect(drawn.length, "and the hub names are the census's 48, one per complex").toBe(48);
   const drawnInView = drawn.filter((l) => l.labelInView).map((l) => l.name);
   expect(drawnInView.length, "the premise: this view has hub names to draw").toBeGreaterThan(0);
   expect(drawnInView).toContain("59 St-Columbus Circle");
@@ -1836,6 +1840,53 @@ test("D2i2. at zoom 13 over the Upper West Side the band draws no local", async 
     expect(label.inView, `${label.name} (${id}) is in this view`).toBe(true);
     expect(label.drawn, `${label.name} (${id}) is not drawn at 13`).toBe(false);
   }
+});
+
+test("D2i6. no complex draws two names, at any zoom, and each draws its named stop's own", async ({ page }) => {
+  /* THE OPERATOR'S RULING ON THE REPEATED NAMES. With a name per stop, 32 of the 100 hub names
+     repeated another stop of their complex and overprinted at zooms 12 and 13. The ring stays on
+     every stop; the name is drawn once, on the stop whose id is the complex id, in its own words.
+     Asked at 14, where the band draws every name there is, so a second name anywhere would show. */
+  await open(page, withRealStops, REAL_WORLD);
+  await page.evaluate(() => {
+    map.setView([40.7295, -73.99], 14, { animate: false });
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "all");
+  const labels = await page.evaluate(() =>
+    stationRegistry
+      .filter((entry) => entry.kind === "subway")
+      .map((entry) => {
+        const el = entry.marker.getTooltip()?.getElement() ?? null;
+        return {
+          id: entry.id,
+          complex: entry.complex.id,
+          drawn: !!el && getComputedStyle(el).display !== "none",
+          text: el ? el.textContent : null,
+          name: entry.name,
+          ringed: entry.marker.options.stroke === true,
+        };
+      }),
+  );
+  const perComplex = new Map();
+  for (const label of labels.filter((l) => l.drawn)) {
+    perComplex.set(label.complex, [...(perComplex.get(label.complex) ?? []), label.id]);
+  }
+  const doubled = [...perComplex.entries()].filter(([, ids]) => ids.length > 1);
+  expect(doubled, "no complex draws two names").toEqual([]);
+  // Every complex draws exactly one, so nothing went unnamed either: 444 complexes, 444 names.
+  expect(perComplex.size).toBe(new Set(labels.map((l) => l.complex)).size);
+  expect(perComplex.size).toBe(444);
+  // Each name is its own stop's, on the stop whose id is the complex id.
+  for (const [complex, [id]] of perComplex) {
+    expect(id, `complex ${complex} is named by its own stop`).toBe(complex);
+    const label = labels.find((l) => l.id === id);
+    expect(label.text).toBe(label.name);
+  }
+  // Times Square: 127 named "Times Sq-42 St"; the Port Authority stop keeps its ring, and no name.
+  const portAuthority = labels.find((l) => l.id === "A27");
+  expect(portAuthority.ringed).toBe(true);
+  expect(portAuthority.drawn).toBe(false);
+  expect(labels.find((l) => l.id === "127").text).toBe("Times Sq-42 St");
 });
 
 // One subway stop's popup, opened on its marker and read THROUGH that marker. A closed popup

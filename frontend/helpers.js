@@ -442,10 +442,22 @@ function stationMarkStyle(complex, ink, paper) {
     : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
 }
 
+/* ONE NAME PER COMPLEX (the operator's ruling after this branch's first review). The ring is on
+   every stop of a complex, because each stop is a place on the map a rider can tap; the NAME is
+   drawn once, on the stop whose id is the complex id, in that stop's own words. Measured before
+   the ruling: with a name per stop, 32 of the 100 hub names repeated another stop of the same
+   complex ("Times Sq-42 St" four times, "Canal St" four) and overprinted each other at zooms 12
+   and 13. A station whose complex is not known (a bare routes list, or no complex at all) names
+   itself, which is every station on a payload from before complexes, and every stop alone. */
+function stationNamesItself(stationId, complex) {
+  if (!complex || Array.isArray(complex) || typeof complex !== "object") return true;
+  return String(complex.id) === String(stationId);
+}
+
 /* The tooltip class one station's name is drawn with. A hub is the same station a transfer
    ring is, so the two read one predicate rather than two, and since claude/subway-hub-definition
-   the one predicate is asked about the station's complex: every stop of Times Square carries
-   the class, and none of the shared-track locals does.
+   the one predicate is asked about the station's complex: the one stop of Times Square that is
+   named carries the class, and none of the shared-track locals does.
 
    `subway` IS A POSITIVE CLASS AND MR4 ADDED IT, which is the carry-forward paid at the
    source. `.stn-label` began as the subway's alone, so a count of it meant "subway station
@@ -5929,6 +5941,7 @@ if (typeof module !== "undefined" && module.exports) {
     STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
     isTransferStation, stationTrunks, stationMarkStyle, stationLabelClass,
     HUB_TRUNKS_AT_ONE_STOP, HUB_TRUNKS_ACROSS_STOPS, subwayComplexIndex, stationKickerRoutes,
+    stationNamesItself,
     LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, LABEL_NO_HUB_ZOOM, labelZoomBand, stationLabelShown,
     namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.

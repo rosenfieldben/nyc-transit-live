@@ -182,12 +182,12 @@ run M12 frontend/style.css "$PW buszoom.spec.js --grep D7f"
 cat > "$WORK/a" <<'A'
   await placeView(page, "view-city");
 
-  // Markers are sampled by system rather than exhaustively
+  // Markers are sampled by system rather than exhaustively: they share one rule, and
 A
 cat > "$WORK/r" <<'R'
   await placeView(page, "view-rail");
 
-  // Markers are sampled by system rather than exhaustively
+  // Markers are sampled by system rather than exhaustively: they share one rule, and
 R
 run M13 tests/e2e/layout.spec.js "$PW layout.spec.js --grep A4b"
 cat > "$WORK/a" <<'A'

@@ -59,6 +59,7 @@ _ROUTES_COLS = ["route_id", "route_short_name", "route_long_name", "route_color"
 _TRIPS_COLS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id"]
 _SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
 _STOP_TIMES_COLS = ["trip_id", "stop_id", "stop_sequence"]
+_TRANSFERS_COLS = ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"]
 
 _STOP_ROWS = [
     {
@@ -113,6 +114,12 @@ def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS, trips=None) -> b
         "trips.txt": _csv(_TRIPS_COLS, _TRIP_ROWS) if trips is None else trips,
         "shapes.txt": _csv(_SHAPES_COLS, _SHAPE_ROWS),
         "stop_times.txt": _csv(_STOP_TIMES_COLS, _STOP_TIME_ROWS),
+        # One pair: the subway requires the member AND one cross-stop row (the operator's
+        # ruling on review finding H2), and no other loader reads it.
+        "transfers.txt": _csv(
+            _TRANSFERS_COLS,
+            [{"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2"}],
+        ),
     }
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -760,7 +767,14 @@ EXPECTED_REQUIRED = {
     # comment carries the argument; this is the declaration it is held to.
     # PATH and ferry have wanted stop_times.txt all along, where it drives advance
     # matching (13d) and the dock/route alert join (H5) rather than an enrichment.
-    "subway": ("shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
+    #
+    # AND transfers.txt, BY THE SAME RULE (claude/subway-hub-definition). A hub is a
+    # station complex now, and the complexes are transfers.txt's cross-stop rows. Three
+    # consumers read them and all three are rider-visible (the transfer ring, the hub
+    # label class, MR5's kicker listing the complex's routes), so an archive without it
+    # draws Times Square as five lone stops with no ring and no name at zoom 12 or 13,
+    # while the status says "ready".
+    "subway": ("shapes.txt", "stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"),
     "railroad": ("routes.txt", "shapes.txt", "stops.txt", "trips.txt"),
     "path": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
     "ferry": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),

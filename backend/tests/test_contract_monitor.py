@@ -719,8 +719,21 @@ def test_ferry_static_sends_courteous_user_agent():
 # ---------------------------------------------------------------------------
 
 
+def _subway_members(n_stops):
+    """A synthetic subway archive carrying every member the app requires, header-only
+    except stops.txt (and one transfers row, which the app's own validator would want;
+    the monitor checks presence and parses stops, shapes and stations)."""
+    return {
+        "stops.txt": _subway_stops_csv(n_stops),
+        "shapes.txt": b"shape_id\n",
+        "trips.txt": b"route_id,service_id,trip_id\n",
+        "stop_times.txt": b"trip_id,stop_id,stop_sequence\n",
+        "transfers.txt": b"from_stop_id,to_stop_id,transfer_type\nS1,S2,2\n",
+    }
+
+
 def test_subway_static_healthy_synthetic_passes():
-    members = {"stops.txt": _subway_stops_csv(120), "shapes.txt": b"shape_id\n"}
+    members = _subway_members(120)
     fetch = FakeFetcher({"u": _zip_bytes(members)})
     result, parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
     assert result.status == cm.PASS
@@ -728,25 +741,42 @@ def test_subway_static_healthy_synthetic_passes():
 
 
 def test_subway_static_too_few_stops_is_fail():
-    members = {"stops.txt": _subway_stops_csv(5), "shapes.txt": b"shape_id\n"}
+    members = _subway_members(5)
     fetch = FakeFetcher({"u": _zip_bytes(members)})
     result, _parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
     assert result.status == cm.FAIL
 
 
-def test_subway_static_missing_shapes_member_is_fail():
-    members = {"stops.txt": _subway_stops_csv(120)}
+# THE APP'S REQUIRED MEMBERS, WRITTEN OUT BY HAND, for the reason test_static_shared's
+# EXPECTED_REQUIRED is: a parametrization read from the module under test cannot notice the
+# module doing less. Each one missing is a FAIL naming it.
+SUBWAY_REQUIRED = ["shapes.txt", "stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"]
+
+
+@pytest.mark.parametrize("missing", SUBWAY_REQUIRED)
+def test_subway_static_missing_required_member_is_fail(missing):
+    members = _subway_members(120)
+    del members[missing]
     fetch = FakeFetcher({"u": _zip_bytes(members)})
     result, _parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
     assert result.status == cm.FAIL
-    assert "shapes.txt" in result.detail
+    assert missing in result.detail
+
+
+def test_the_monitor_requires_what_the_app_requires():
+    """Review finding H8, closed on the operator's ruling: the monitor's subway list
+    stayed ("stops.txt", "shapes.txt") while the app's grew to five, so a publication
+    production refuses passed the drift check. The two are held equal here, and each is
+    held to the hand-written list, so neither can move without a test moving."""
+    assert sorted(cm.SUBWAY_REQUIRED_MEMBERS) == SUBWAY_REQUIRED
+    assert sorted(cm.static_data._REQUIRED_MEMBERS) == SUBWAY_REQUIRED
 
 
 def test_subway_static_parse_does_not_leak_module_path():
     # _parse_subway_bytes swaps a module constant during the parse; it must be
     # restored afterward so nothing else in the process sees the temp path.
     original = cm.static_data.SUBWAY_GTFS_ZIP
-    members = {"stops.txt": _subway_stops_csv(120), "shapes.txt": b"shape_id\n"}
+    members = _subway_members(120)
     fetch = FakeFetcher({"u": _zip_bytes(members)})
     cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
     assert cm.static_data.SUBWAY_GTFS_ZIP == original
@@ -951,8 +981,7 @@ def test_check_path_static_acknowledged_expired_plus_structural_fail_is_fail():
 def _subway_zip_with_feed_info(end_date):
     return _zip_bytes(
         {
-            "stops.txt": _subway_stops_csv(120),
-            "shapes.txt": b"shape_id\n",
+            **_subway_members(120),
             "feed_info.txt": f"feed_end_date\n{end_date}\n".encode(),
         }
     )

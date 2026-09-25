@@ -797,7 +797,9 @@ function paintZoomBand() {
     subwayStations = [];
   }
   const labels = subwayStations.length;
-  const hubs = subwayStations.filter((entry) => isTransferStation(entry.routes ?? [])).length;
+  // The COMPLEX, the same object the ring and the hub class were drawn from (subway.js), so a
+  // hub here is a hub on the map (claude/subway-hub-definition).
+  const hubs = subwayStations.filter((entry) => isTransferStation(entry.complex ?? entry.routes ?? [])).length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
   // MR3's rail names, on their own attribute because the two bands overlap and one attribute

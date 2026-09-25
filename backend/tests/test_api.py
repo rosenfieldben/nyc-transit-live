@@ -623,6 +623,7 @@ def subway_state(cache):
         "A01": {"name": "Alpha", "lat": 40.7, "lon": -74.0},
     }
     app_module.app.state.subway_station_routes = {"A01": ["1", "2"]}  # H5
+    app_module.app.state.subway_station_complexes = {"A01": "A01"}  # a complex of one
     app_module.app.state.subway_arrivals = {
         "A01": {"Northbound": [{"route_id": "1", "trip_id": "t1", "arrival": 1000.0}]}
     }
@@ -632,9 +633,16 @@ def subway_state(cache):
 async def test_subway_stops_lists_stations(client, subway_state):
     res = await client.get("/api/subway-stops")
     assert res.status_code == 200
-    # routes serving the station ride along (H5).
+    # routes serving the station ride along (H5), and so does its complex.
     assert res.json() == [
-        {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}
+        {
+            "id": "A01",
+            "name": "Alpha",
+            "lat": 40.7,
+            "lon": -74.0,
+            "routes": ["1", "2"],
+            "complex_id": "A01",
+        }
     ]
     assert "max-age" in res.headers.get("cache-control", "")
 
@@ -644,7 +652,33 @@ async def test_subway_stops_routes_default_empty_when_index_absent(client, subwa
     # serves markers; the routes field just comes back empty, never missing.
     app_module.app.state.subway_station_routes = {}
     res = await client.get("/api/subway-stops")
-    assert res.json() == [{"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": []}]
+    assert res.json() == [
+        {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": [], "complex_id": "A01"}
+    ]
+
+
+async def test_subway_stops_complex_id_is_none_when_no_index_is_loaded(client, subway_state):
+    """None, not the stop's own id, when no complex index is loaded: "a complex of one"
+    is a claim about the network, and before the warmup has read transfers.txt nothing
+    has made it. The frontend keeps the two apart as well (a complex of one takes the
+    complex rule, a missing complex_id takes F9's per-stop answer), which is why the wire
+    must, and an operator reading the payload can tell which it is."""
+    app_module.app.state.subway_station_complexes = {}
+    res = await client.get("/api/subway-stops")
+    assert [row["complex_id"] for row in res.json()] == [None]
+
+
+async def test_subway_stops_serves_every_stop_of_a_complex_under_one_id(client, subway_state):
+    """Times Square's shape at the endpoint: five stops, one complex id on each, which is
+    what lets the frontend union their trunks. The station order is the stations dict's,
+    untouched by the join."""
+    ids = ["127", "725", "902", "A27", "R16"]
+    app_module.app.state.subway_stations = {
+        sid: {"name": "Times Sq-42 St", "lat": 40.755, "lon": -73.987} for sid in ids
+    }
+    app_module.app.state.subway_station_complexes = {sid: "127" for sid in ids}
+    res = await client.get("/api/subway-stops")
+    assert [(row["id"], row["complex_id"]) for row in res.json()] == [(sid, "127") for sid in ids]
 
 
 async def test_subway_arrivals_warming_up_503(client, subway_state):
@@ -2278,6 +2312,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     # Patched so the lifespan warmup stays hermetic (the real loader parses the
     # committed 36 MB subway zip); the routes-per-station wiring is unit-tested above.
     monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
@@ -2554,6 +2589,7 @@ async def test_subway_static_warmup_loading_to_ready(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
     # Patched to stay hermetic: the real loader parses the committed 36 MB zip.
     monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {"101": ["1"]})
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {"101": "101"})
     app = _fake_app(subway_static_status="loading")
     await app_module._warm_subway_static(app)
     assert app.state.subway_static_status == "ready"
@@ -2561,6 +2597,7 @@ async def test_subway_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.subway_routes == [{"route": "1", "polylines": []}]
     assert app.state.subway_stations == SUBWAY_STOPS
     assert app.state.subway_station_routes == {"101": ["1"]}  # routes-per-station wired (H5)
+    assert app.state.subway_station_complexes == {"101": "101"}  # complexes wired
 
 
 async def test_subway_static_failed_reload_keeps_the_previous_station_routes(monkeypatch):
@@ -2587,6 +2624,7 @@ async def test_subway_static_failed_reload_keeps_the_previous_station_routes(mon
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
     monkeypatch.setattr(app_module, "load_subway_station_routes", routes_raise)
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})
 
     # A process that has already served riders: the group is ready and every field the
     # handlers read is populated.
@@ -2616,6 +2654,51 @@ async def test_subway_static_failed_reload_keeps_the_previous_station_routes(mon
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_subway_static_failed_complex_load_fails_and_keeps_the_previous_index(monkeypatch):
+    """transfers.txt is a required member for the reason stop_times.txt is, so the
+    complex loader gets F1's two guarantees: its raise drives the group to "failed"
+    rather than "ready" with every stop a complex of one, and the failure leaves the
+    complexes (and the routes beside them) that the rings, the hub labels and the
+    kicker are already drawn from exactly as they were."""
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 3600)
+    previous_routes = {"127": ["1", "2", "3"], "725": ["7"]}
+    previous_complexes = {"127": "127", "725": "127"}
+
+    async def fake_stops():
+        return SUBWAY_STOPS
+
+    def complexes_raise():
+        raise KeyError("There is no item named 'transfers.txt' in the archive")
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {"101": ["1"]})
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", complexes_raise)
+    app = _fake_app(
+        subway_static_status="ready",
+        subway_stops=SUBWAY_STOPS,
+        subway_routes=[],
+        subway_stations=SUBWAY_STOPS,
+        subway_station_routes=previous_routes,
+        subway_station_complexes=previous_complexes,
+    )
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    try:
+        for _ in range(200):
+            if app.state.subway_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "failed"
+        assert app.state.subway_station_complexes == previous_complexes
+        # The routes loader SUCCEEDED in this attempt and its answer is still not
+        # promoted, which is the whole-attempt rule: nothing half-writes.
+        assert app.state.subway_station_routes == previous_routes
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_subway_static_warmup_fails_when_station_routes_raise(monkeypatch):
     """The wiring F1 depends on, asserted rather than assumed: a raise from
     load_subway_station_routes reaches the warmup's `except Exception` and drives the
@@ -2633,6 +2716,7 @@ async def test_subway_static_warmup_fails_when_station_routes_raise(monkeypatch)
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
     monkeypatch.setattr(app_module, "load_subway_station_routes", routes_raise)
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})
     app = _fake_app(subway_static_status="loading")
     task = asyncio.create_task(app_module._warm_subway_static(app))
     try:
@@ -2662,6 +2746,7 @@ async def test_subway_static_warmup_retries_after_failure(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
     monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})  # hermetic
     app = _fake_app(subway_static_status="loading")
     task = asyncio.create_task(app_module._warm_subway_static(app))
     try:
@@ -2732,6 +2817,7 @@ async def test_subway_static_warmup_attempt_deadline_then_recovers(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
     monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})  # hermetic
     app = _fake_app(subway_static_status="loading")
     task = asyncio.create_task(app_module._warm_subway_static(app))
     try:
@@ -3111,6 +3197,7 @@ async def test_static_warmup_retries_land_inside_the_healthcheck_window(monkeypa
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
     monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {})  # hermetic
     app = _fake_app(subway_static_status="loading")
     await app_module._warm_subway_static(app)  # terminates: the third attempt loads
 

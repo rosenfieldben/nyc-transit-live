@@ -7,9 +7,11 @@ a closed local port).
 
 import csv
 import io
+import json
 import os
 import time
 import zipfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -78,16 +80,18 @@ def write_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None, members=None):
 def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
     """Write a zip that passes validate_subway_archive (C5 seam).
 
-    The validator requires stops.txt, shapes.txt, trips.txt AND stop_times.txt to be
-    PRESENT, so every archive a cache-lifecycle test hands the loader carries all four.
-    Header-only is enough for three of them and keeps each test's subject unchanged: an
-    empty shapes.txt yields the same [] route lines a missing one used to, and an empty
-    stop_times.txt yields the same {} routes-per-station index.
+    The validator requires stops.txt, shapes.txt, trips.txt, stop_times.txt AND
+    transfers.txt to be PRESENT, so every archive a cache-lifecycle test hands the loader
+    carries all five. Header-only is enough for three of them and keeps each test's subject
+    unchanged: an empty shapes.txt yields the same [] route lines a missing one used to, and
+    an empty stop_times.txt yields the same {} routes-per-station index. transfers.txt carries
+    one pair, because the validator's floor is one cross-stop row.
 
     THE LAST TWO ARE NEW AS OF THE F1 BRANCH. This docstring claimed trips.txt was
     required for a while when it was not, which is its own small lesson about a comment
     outliving the tuple it describes; both are genuinely required now and
-    backend/static_data.py's _REQUIRED_MEMBERS says why.
+    backend/static_data.py's _REQUIRED_MEMBERS says why. transfers.txt joined them on
+    claude/subway-hub-definition, for the station complexes.
     """
     write_gtfs_zip(
         path,
@@ -96,6 +100,7 @@ def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
             "trips.txt": csv_text(TRIPS_COLS, ()),
             "shapes.txt": csv_text(SHAPES_COLS, shape_rows),
             "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+            "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
         },
     )
 
@@ -261,6 +266,15 @@ def test_variant_dedup_keeps_branch_drops_express(gtfs_zip):
 
 TRIPS_COLS = ["route_id", "trip_id", "service_id", "trip_headsign", "direction_id", "shape_id"]
 STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
+TRANSFERS_COLS = ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"]
+# ONE REAL COMPLEX, both directions, as the MTA writes them: the validator's floor is one
+# cross-stop row (the operator's ruling on review finding H2), so every archive that has to
+# PASS validation carries a pair, and an archive with none is a test's subject, not a
+# fixture's accident.
+TRANSFER_ROWS = [
+    {"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2", "min_transfer_time": "180"},
+    {"from_stop_id": "103", "to_stop_id": "101", "transfer_type": "2", "min_transfer_time": "180"},
+]
 
 # Two parent stations (101, 103) with N/S child platforms, the real subway shape.
 ROUTE_STOP_ROWS = [
@@ -392,6 +406,7 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
         zf.writestr("shapes.txt", csv_text(SHAPES_COLS, ()))
         zf.writestr("trips.txt", csv_text(TRIPS_COLS, [{"route_id": "1", "trip_id": "t1"}]))
         zf.writestr("stop_times.txt", body)
+        zf.writestr("transfers.txt", csv_text(TRANSFERS_COLS, TRANSFER_ROWS))
     # Corrupt stop_times.txt's DEFLATE payload in place. Its stored CRC and its bytes
     # then disagree, so opening the archive and listing it still work and only READING
     # that member raises. A garbled CSV ROW would not do: the parser skips those by
@@ -418,23 +433,35 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
     # deleted except clause. Without this assertion the test could be passing because
     # the zip had become unopenable, which the bad-zip test above already covers.
     with zipfile.ZipFile(gtfs_zip) as zf:
-        assert set(zf.namelist()) == {"stops.txt", "shapes.txt", "trips.txt", "stop_times.txt"}
+        assert set(zf.namelist()) == {
+            "stops.txt",
+            "shapes.txt",
+            "trips.txt",
+            "stop_times.txt",
+            "transfers.txt",
+        }
         static_data.validate_subway_archive(zf)  # raises if the premise is wrong
 
     with pytest.raises(Exception):
         static_data.load_subway_station_routes()
 
 
-@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt"])
+@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt", "transfers.txt"])
 def test_validate_rejects_an_archive_without_the_station_routes_tables(gtfs_zip, missing):
     """F1's reproduction, pinned. A publication missing either table must fail the
     load through require_members, exactly as PATH and the ferry already do, so the
-    group reaches "failed" rather than "ready" with an empty index."""
+    group reaches "failed" rather than "ready" with an empty index.
+
+    THE transfers.txt CASE IS THE STATION COMPLEX INDEX'S, not the routes index's, and
+    it shares this test because the rule and the failure are the same: without it every
+    stop is a complex of one, Times Square loses its ring and its name at zooms 12 and
+    13, and the kicker lists one platform's routes (claude/subway-hub-definition)."""
     members = {
         "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
         "shapes.txt": csv_text(SHAPES_COLS, ()),
         "trips.txt": csv_text(TRIPS_COLS, ()),
         "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+        "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
     }
     del members[missing]
     write_gtfs_zip(gtfs_zip, members=members)
@@ -446,7 +473,7 @@ def test_validate_rejects_an_archive_without_the_station_routes_tables(gtfs_zip,
     assert missing in str(err.value)
 
 
-@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt"])
+@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt", "transfers.txt"])
 async def test_a_reduced_publication_fails_the_load_rather_than_serving_an_empty_index(
     gtfs_zip, monkeypatch, missing
 ):
@@ -458,12 +485,17 @@ async def test_a_reduced_publication_fails_the_load_rather_than_serving_an_empty
 
     BOTH ENDS MATTER. Rejecting the cache alone would only mean "treating as absent"
     and a redownload; it is the second rejection that makes it a failure rather than a
-    slow path to the same reduced archive."""
+    slow path to the same reduced archive.
+
+    The [transfers.txt] case is the station complex index's reduced publication, which
+    the same chain has to refuse for the same reason (the ruling's "a zip lacking
+    transfers.txt fails the load")."""
     members = {
         "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
         "shapes.txt": csv_text(SHAPES_COLS, ()),
         "trips.txt": csv_text(TRIPS_COLS, ()),
         "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+        "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
     }
     del members[missing]
 
@@ -534,3 +566,253 @@ def test_a_station_with_no_trips_is_still_tolerated(gtfs_zip):
         },
     )
     assert static_data.load_subway_station_routes() == {}
+
+
+# ---------------- the station complex index (claude/subway-hub-definition) ----------------
+#
+# THE FINDING, from the label-band diagnosis of 2026-09-25: F9's hub rule counted trunks
+# per stop_id, so 108 of its 124 rings sat on stops transfers.txt joins to no other (the
+# B beside the C on Central Park West, the D beside the R on Fourth Avenue), and 22 of the
+# 35 real complexes had no ring at all, Times Square among them, because each of its five
+# stops carries one trunk. (The diagnosis said 102 and 26, grouping stops within 250 m;
+# these are the same counts over this table.) THE RULING: a hub is a station complex, and
+# the complexes are transfers.txt's cross-stop rows closed over by union-find.
+
+SUBWAY_FIXTURE = Path(__file__).parent / "fixtures" / "subway_gtfs"
+CENSUS_FIXTURE = Path(__file__).parents[2] / "tests" / "e2e" / "fixtures" / "subway_stops_real.json"
+
+
+def test_a_three_stop_chain_is_one_complex():
+    """THE UNION-FIND, which the live table cannot test: every complex it publishes is
+    fully meshed, so a pairwise match would pass on it. A publication that lists A-B and
+    B-C and leaves A-C implied is still one station, and only a closure says so. The
+    mutation this kills is the closure replaced by a direct-partner lookup, which gives C
+    the complex "B" and splits one station into two."""
+    pairs = [("A", "B"), ("B", "A"), ("B", "C"), ("C", "B")]
+    index = static_data.derive_subway_station_complexes(pairs, ["A", "B", "C", "D"], {})
+    assert index == {"A": "A", "B": "A", "C": "A", "D": "D"}
+
+
+def test_a_stop_in_no_row_is_its_own_complex_and_self_rows_join_nothing():
+    """The ruling's wording, and the table's other kind of row: 101 -> 101 is a minimum
+    transfer time within one stop, not a complex, so it must not join 101 to anything."""
+    pairs = static_data._parse_transfer_pairs(
+        _zip_of(
+            {
+                "transfers.txt": "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+                "101,101,2,180\n,103,2,180\n103,,2,180\n"
+            }
+        )
+    )
+    assert pairs == []
+    index = static_data.derive_subway_station_complexes(pairs, ["101", "103"], {})
+    assert index == {"101": "101", "103": "103"}
+
+
+def test_a_non_station_id_links_the_closure_but_is_never_a_key():
+    """An id stops.txt has no parent row for can still be the one link between two
+    stations that are, so it joins the closure; it is never served, because the markers
+    are the parent stations and nothing else. Platform ids fold up to their parent first,
+    which is the space every consumer keys on."""
+    pairs = [("101N", "X9"), ("X9", "103")]
+    index = static_data.derive_subway_station_complexes(pairs, ["101", "103"], {"101N": "101"})
+    assert index == {"101": "101", "103": "101"}
+
+
+def test_a_transfer_type_that_says_no_change_joins_nothing():
+    """Review finding H7. GTFS type 3 says a transfer between the two stops is NOT
+    possible, and 4 and 5 are in-seat continuations that name a vehicle, so none of
+    them makes one station of two stops. A blank type is the spec's 0 and does."""
+    body = (
+        "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+        "101,103,3,\n103,101,3,\n"
+        "101,105,4,\n105,107,5,\n"
+        "107,109,,\n109,111,0,\n111,113,1,\n"
+    )
+    pairs = static_data._parse_transfer_pairs(_zip_of({"transfers.txt": body}))
+    assert pairs == [("107", "109"), ("109", "111"), ("111", "113")]
+    index = static_data.derive_subway_station_complexes(
+        pairs, ["101", "103", "105", "107", "109", "111", "113"], {}
+    )
+    assert index["103"] == "103" and index["105"] == "105"
+    assert {index[s] for s in ("107", "109", "111", "113")} == {"107"}
+
+
+def test_the_complex_id_is_the_smallest_station_in_it_whatever_the_order():
+    """The rule the docstring states and review finding H10 found no test holding: the
+    SMALLEST STATION id, not the first one stops.txt lists (station order is the
+    MTA's, and an id that moved with it would move every complex it names) and not
+    the union-find's root, which can be a non-station id that sorts lower."""
+    # Stations listed out of order: the id is still "101".
+    index = static_data.derive_subway_station_complexes([("103", "101")], ["103", "101"], {})
+    assert index == {"103": "101", "101": "101"}
+    # A non-station id that sorts below both links them and is never the id.
+    index = static_data.derive_subway_station_complexes(
+        [("0X", "103"), ("0X", "101")], ["103", "101"], {}
+    )
+    assert index == {"103": "101", "101": "101"}
+
+
+def _zip_of(members: dict[str, str]) -> zipfile.ZipFile:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, body in members.items():
+            zf.writestr(name, body)
+    buf.seek(0)
+    return zipfile.ZipFile(buf)
+
+
+def _write_committed_archive(path, *, drop=()):
+    """The committed live members as a zip. Only the two the complex loader opens are
+    here (fixtures/subway_gtfs/README.md says where they came from and what is not)."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in ("stops.txt", "transfers.txt"):
+            if name not in drop:
+                zf.writestr(name, (SUBWAY_FIXTURE / name).read_bytes())
+
+
+def test_the_committed_archive_complex_table(gtfs_zip):
+    """THE COMPLEX TABLE ON THE REAL PUBLICATION, through the real loader."""
+    _write_committed_archive(gtfs_zip)
+    index = static_data.load_subway_station_complexes()
+
+    # Times Square: five stops, one complex, named by its smallest station id. The four
+    # platforms' own trunks are one each (1/2/3, 7, S, N/Q/R/W) plus the A/C/E at the
+    # Port Authority stop, which is why F9's per-stop count gave none of them a ring.
+    times_square = {"127", "725", "902", "A27", "R16"}
+    assert {sid for sid, cid in index.items() if cid == "127"} == times_square
+    # Court Square, the ruling's other named hub: the 7, the G and the E/M, three stops.
+    assert {sid for sid, cid in index.items() if cid == "719"} == {"719", "F09", "G22"}
+    # A stop in no row is alone, by its own id. Van Cortlandt Park is the 1's terminal.
+    assert index["101"] == "101"
+    assert "101" not in {cid for sid, cid in index.items() if sid != "101"}
+    # And the shared-track stops the diagnosis found ringed are alone too, which is what
+    # takes their rings away: 96 St on Central Park West, Carroll St, 25 St.
+    for alone in ("A19", "F21", "R35"):
+        assert [sid for sid, cid in index.items() if cid == index[alone]] == [alone]
+
+    # THE STOP COUNT IS UNCHANGED: every one of the 496 parent stations is keyed, and
+    # nothing else is. A transfers.txt id outside the stations would be a coined stop.
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        stations = static_data.parse_member(zf, "stops.txt", static_data._parse_stations_rows)
+    assert len(stations) == 496
+    assert set(index) == set(stations)
+    groups = {}
+    for sid, cid in index.items():
+        groups.setdefault(cid, []).append(sid)
+    assert len(groups) == 444
+    assert sorted(len(g) for g in groups.values() if len(g) > 1)[-1] == 5
+    assert sum(1 for g in groups.values() if len(g) > 1) == 35
+    # A complex id is always one of its own stations, never a coined value.
+    assert all(cid in group for cid, group in groups.items())
+
+
+def test_load_subway_station_complexes_raises_without_transfers(gtfs_zip):
+    """The loader half of "a zip lacking transfers.txt fails the load". The validator
+    half is the [transfers.txt] case of the F1 tests above; this is the loader refusing
+    to swallow, so a warmup that somehow reached it still fails rather than serving every
+    stop as a complex of one."""
+    _write_committed_archive(gtfs_zip, drop=("transfers.txt",))
+    with pytest.raises(KeyError):
+        static_data.load_subway_station_complexes()
+
+
+# ---------------- the floor: at least one cross-stop row ----------------
+#
+# THE OPERATOR'S RULING ON REVIEW FINDING H2. Presence alone let a transfers.txt that
+# says nothing load as every stop alone under "ready". The validator now runs the
+# loader's own transfer parser and rejects a table that yields no pair.
+
+_TRANSFER_HEADER = "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+
+
+def _loadable_members(transfers: str) -> dict[str, str]:
+    return {
+        "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, ()),
+        "trips.txt": csv_text(TRIPS_COLS, ()),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+        "transfers.txt": transfers,
+    }
+
+
+@pytest.mark.parametrize(
+    "transfers",
+    [
+        pytest.param(_TRANSFER_HEADER, id="headers-only"),
+        pytest.param(_TRANSFER_HEADER + "101,101,2,180\n103,103,2,180\n", id="self-rows-only"),
+        pytest.param("from_stop,to_stop,transfer_type\n101,103,2\n", id="renamed-columns"),
+        pytest.param(_TRANSFER_HEADER + "101,103,3,\n103,101,3,\n", id="no-transfer-possible-only"),
+    ],
+)
+def test_validate_rejects_a_transfers_table_with_no_cross_stop_row(gtfs_zip, transfers):
+    """Each shape of "present and saying nothing" is refused, and the error names the
+    member, because an operator reads it off /api/status as last_download_error."""
+    write_gtfs_zip(gtfs_zip, members=_loadable_members(transfers))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert "transfers.txt" in str(err.value)
+
+
+def test_validate_accepts_one_cross_stop_row_and_the_live_table(gtfs_zip):
+    """The floor is one, and the live table is far above it: the committed 613 rows (150
+    of them cross-stop) pass the same validator."""
+    write_gtfs_zip(gtfs_zip, members=_loadable_members(_TRANSFER_HEADER + "101,103,2,180\n"))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+    live = (SUBWAY_FIXTURE / "transfers.txt").read_text(encoding="utf-8-sig")
+    members = _loadable_members(live)
+    members["stops.txt"] = (SUBWAY_FIXTURE / "stops.txt").read_text(encoding="utf-8-sig")
+    write_gtfs_zip(gtfs_zip, members=members)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+        assert len(static_data._parse_transfer_pairs(zf)) == 150
+
+
+async def test_a_publication_whose_transfers_say_nothing_fails_the_load(gtfs_zip, monkeypatch):
+    """End to end, the way test_a_reduced_publication_fails_the_load_rather_than_serving_
+    an_empty_index drives F1: the cached archive is rejected AND the redownload of the same
+    publication is rejected, so the load raises and the group reports failed, rather than
+    reaching ready with every stop a complex of one."""
+    members = _loadable_members(_TRANSFER_HEADER)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    reduced = buf.getvalue()
+    downloads = []
+    real_staged_fetch = static_shared.staged_fetch
+
+    async def publishes(url, dest, validate, **kwargs):
+        async def transfer(u, stage, deadline_s):
+            downloads.append(1)
+            stage.write_bytes(reduced)
+
+        await real_staged_fetch(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(static_data, "staged_fetch", publishes)
+    write_gtfs_zip(gtfs_zip, members=members)
+    with pytest.raises(static_data.StaticValidationError) as err:
+        await static_data.load_subway_stops()
+    assert "transfers.txt" in str(err.value)
+    assert downloads == [1]
+
+
+def test_the_e2e_census_fixture_agrees_with_this_archive(gtfs_zip):
+    """tests/e2e/fixtures/subway_stops_real.json is the /api/subway-stops payload the
+    real loaders produced from the full live archive, and the e2e census reads it. Its
+    routes come from stop_times.txt, which is not committed, so they cannot be checked
+    here; everything the committed members DO determine is held to them, so the two
+    fixtures cannot drift apart without this saying so."""
+    _write_committed_archive(gtfs_zip)
+    index = static_data.load_subway_station_complexes()
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        stations = static_data.parse_member(zf, "stops.txt", static_data._parse_stations_rows)
+    census = json.loads(CENSUS_FIXTURE.read_text())
+    assert [row["id"] for row in census] == list(stations)
+    assert {row["id"]: row["complex_id"] for row in census} == index
+    assert {row["id"]: row["name"] for row in census} == {
+        sid: s["name"] for sid, s in stations.items()
+    }
+    assert all(row["routes"] for row in census), "every station lists its routes"

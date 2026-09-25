@@ -253,6 +253,7 @@ def install_stubs(counts: Counter, *, stub_njt: bool) -> list[tuple[object, str,
     swap(main, "load_subway_route_shapes", lambda: [])
     swap(main, "load_subway_stations", lambda: {})
     swap(main, "load_subway_station_routes", lambda: {})
+    swap(main, "load_subway_station_complexes", lambda: {})
     swap(railroad_static, "load_railroad_static", railroad_load)
     swap(path_static, "load_path_static", path_load)
     swap(ferry_static, "load_ferry_static", ferry_load)

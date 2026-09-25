@@ -477,6 +477,33 @@ def test_a_rejected_publication_keeps_the_cached_archive_serving(harness):
     assert archive.read_bytes() == good_bytes
 
 
+def test_the_station_complexes_ride_the_real_warmup_to_the_stops_endpoint(contract_app):
+    """claude/subway-hub-definition, end to end over a real socket: the simulator
+    publishes an archive whose transfers.txt is the MTA's own table cut to the 1/7/S
+    capture's stations, the real warmup reads it, and /api/subway-stops serves
+    complex_id on every station.
+
+    What only this tier can say is that the new required member reaches the endpoint
+    through the real env wiring and the real warmup, rather than through a state the
+    hermetic tests assign by hand. Times Square's three stops in this capture (127 on
+    the 1/2/3, 725 on the 7, 902 on the shuttle) come back as one complex, and a stop
+    the table joins to nothing comes back alone, by its own id.
+
+    Hermetic counterparts: backend/tests/test_static_data.py's complex table on the
+    full committed archive, and test_api.py's endpoint tests."""
+    app = contract_app
+    app.await_status(
+        lambda s: s["subway_static"] == "ready",
+        "the subway static group to reach ready from a simulator archive",
+    )
+    stops = {stop["id"]: stop for stop in app.get("/api/subway-stops")}
+    assert stops, "a ready subway group must place stations"
+    assert all(stop["complex_id"] for stop in stops.values()), "a loaded index names every station"
+    assert {stops[sid]["complex_id"] for sid in ("127", "725", "902")} == {"127"}
+    # 103 is 238 St on the 1, which the MTA's table joins to nothing.
+    assert stops["103"]["complex_id"] == "103"
+
+
 def test_finding_4_cold_start_stays_failed_then_heals(harness):
     """Third-audit finding 4, against the real warmup and its real retry schedule.
 

@@ -300,8 +300,10 @@ function subwayKeyModel(routes, trainRoutes = []) {
   return [...groups.values()];
 }
 
-/* A station is a LOCAL dot when the routes calling there belong to ONE trunk and a TRANSFER
-   ring when they belong to two or more.
+/* A station is a LOCAL dot or a TRANSFER ring, and what decides it has moved twice. MR2 counted
+   route ids per stop; F9 counted trunks per stop; since claude/subway-hub-definition the trunks
+   are counted across the station COMPLEX, and isTransferStation below carries that rule and the
+   measurement that forced it. The trunk count here is still the unit it counts in.
 
    IT COUNTS TRUNKS, NOT ROUTE IDS (round 3, F9). Counting ids made a skip-stop pair into an
    interchange: Marcy Av is served by the J and the Z, which are one line taking turns at the
@@ -333,15 +335,102 @@ function stationTrunks(routes) {
   );
 }
 
-function isTransferStation(routes) {
-  return stationTrunks(routes).size >= 2;
+/* A HUB IS A STATION COMPLEX, NOT A STOP (claude/subway-hub-definition), and that reverses what
+   the rule above was asked. Counting trunks per stop_id answered "how many lines share this
+   platform", which is the wrong question twice over, and the label-band diagnosis of 2026-09-25
+   measured both halves on production's own payload: 108 of the 124 rings sat on stops that
+   transfers.txt joins to no other (the B beside the C on Central Park West, the F beside the G at
+   Carroll St), and 22 real complexes had no ring at all, Times Square among them, because each of
+   its five stops carries exactly one trunk.
+
+   SO THE PREDICATE READS THE WHOLE COMPLEX: the trunks served across every stop transfers.txt
+   joins into one station, and how many stops that is. A hub is a complex serving THREE OR MORE
+   trunks, or TWO OR MORE TRUNKS ACROSS TWO OR MORE STOPS. The second clause is the interchange a
+   rider walks: the 1 and the A at 168 St, the shuttle and the A/C at Franklin Av. The first is the
+   one-stop exception the ruling keeps, where three lines call at one platform (36 St on Queens
+   Boulevard, E, F/M and R). Two trunks at ONE stop is shared track, which is what F9's rule rang
+   and this one does not.
+
+   `complex` is { routes, stops }, the complex's routes unioned and its stop count, as
+   subwayComplexIndex builds it.
+
+   A BARE ROUTES LIST NAMES NO COMPLEX, and it gets F9's per-stop answer, which is the question
+   every caller that hands one meant: PATH's `[]` (no routes, so a dot either way), every caller
+   written before complexes, and a station the payload gives no complex_id. THE LAST IS REAL FOR
+   AN HOUR after a deploy, and this branch's review measured it (finding H1): /api/subway-stops
+   is served max-age=3600 while the scripts are revalidated, so a returning rider runs this code
+   on yesterday's payload. Read as "a stop alone", that payload rang 14 stations and named no
+   subway station in Manhattan at zoom 12 or 13 while Names read pressed; read as F9's answer, it
+   draws yesterday's map until the next fetch, which is the least a rider can be surprised by.
+   The backend keeps the same distinction on the wire (complex_id None is "no index loaded",
+   never "a complex of one"). */
+const HUB_TRUNKS_AT_ONE_STOP = 3;
+const HUB_TRUNKS_ACROSS_STOPS = 2;
+
+function asStationComplex(complex) {
+  if (Array.isArray(complex)) return { routes: complex, stops: 1 };
+  if (!complex || typeof complex !== "object") return { routes: [], stops: 1 };
+  const stops = Number(complex.stops);
+  return { routes: complex.routes ?? [], stops: Number.isFinite(stops) && stops > 1 ? stops : 1 };
+}
+
+function isTransferStation(complex) {
+  // No complex named: F9's per-stop count, trunks at this stop alone (see above).
+  if (Array.isArray(complex) || !complex || typeof complex !== "object") {
+    return stationTrunks(complex ?? []).size >= HUB_TRUNKS_ACROSS_STOPS;
+  }
+  const { routes, stops } = asStationComplex(complex);
+  const trunks = stationTrunks(routes).size;
+  return trunks >= HUB_TRUNKS_AT_ONE_STOP || (trunks >= HUB_TRUNKS_ACROSS_STOPS && stops >= 2);
+}
+
+/* EVERY STATION'S COMPLEX, from the stops payload: station id -> { id, routes, stops }, one
+   object shared by every stop in it, keyed by the served complex_id. A station alone arrives with
+   its own id as its complex_id (the backend's rule for a stop transfers.txt names in no row), so
+   it is a complex of one here too. A station with NO complex_id is left out of the index: nothing
+   has said which complex it is in, and the caller hands isTransferStation its bare routes, which
+   is F9's answer (the comment above says why that is the right one).
+
+   THE ROUTES ARE THE UNION IN PAYLOAD ORDER, each station's own list in its own order, so the
+   answer does not depend on which stop was asked. A STOP COUNTS ONLY IF SOMETHING CALLS THERE
+   (review finding H4): a sibling stop the archive lists no trip for is a closed platform, not a
+   second place to change, and counting it would ring a shared-track stop beside it. */
+function subwayComplexIndex(stations) {
+  const groups = new Map();
+  const index = new Map();
+  for (const station of stations ?? []) {
+    if (!station || station.id == null || station.complex_id == null) continue;
+    const key = String(station.complex_id);
+    if (!groups.has(key)) groups.set(key, { id: key, routes: [], stops: 0 });
+    const complex = groups.get(key);
+    const routes = (station.routes ?? []).map((route) => String(route ?? "")).filter(Boolean);
+    if (routes.length) complex.stops += 1;
+    for (const id of routes) if (!complex.routes.includes(id)) complex.routes.push(id);
+    index.set(String(station.id), complex);
+  }
+  return index;
+}
+
+/* THE ROUTES A STATION'S KICKER LISTS: the complex's, with the stop's own first. The ruling says
+   the complex's and not the stop's, because a rider on the 7 platform at Times Square is standing
+   in a station that also serves the 1, the A and the N; the stop's own lead because the kicker
+   shows three marks before its "+N", and a rider who clicked the 7's dot should see the 7 among
+   them. A station alone lists exactly its own routes, so every board that has no complex is
+   unchanged to the byte. */
+function stationKickerRoutes(ownRoutes, complex) {
+  const own = (ownRoutes ?? []).map((id) => String(id ?? "")).filter(Boolean);
+  const rest = asStationComplex(complex)
+    .routes.map((id) => String(id ?? ""))
+    .filter((id) => id && !own.includes(id));
+  return [...own, ...rest];
 }
 
 // The circleMarker options one station is drawn with. `ink` and `paper` are resolved by the
 // caller from the theme tokens, so this stays pure and a theme swap is a setStyle rather
-// than a rebuild.
-function stationMarkStyle(routes, ink, paper) {
-  return isTransferStation(routes)
+// than a rebuild. `complex` is the station's complex, or a bare routes list for a stop alone
+// (isTransferStation says why both are accepted).
+function stationMarkStyle(complex, ink, paper) {
+  return isTransferStation(complex)
     ? {
         radius: STATION_TRANSFER_RADIUS,
         fillColor: paper,
@@ -353,8 +442,22 @@ function stationMarkStyle(routes, ink, paper) {
     : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
 }
 
+/* ONE NAME PER COMPLEX (the operator's ruling after this branch's first review). The ring is on
+   every stop of a complex, because each stop is a place on the map a rider can tap; the NAME is
+   drawn once, on the stop whose id is the complex id, in that stop's own words. Measured before
+   the ruling: with a name per stop, 32 of the 100 hub names repeated another stop of the same
+   complex ("Times Sq-42 St" four times, "Canal St" four) and overprinted each other at zooms 12
+   and 13. A station whose complex is not known (a bare routes list, or no complex at all) names
+   itself, which is every station on a payload from before complexes, and every stop alone. */
+function stationNamesItself(stationId, complex) {
+  if (!complex || Array.isArray(complex) || typeof complex !== "object") return true;
+  return String(complex.id) === String(stationId);
+}
+
 /* The tooltip class one station's name is drawn with. A hub is the same station a transfer
-   ring is, so the two read one predicate rather than two.
+   ring is, so the two read one predicate rather than two, and since claude/subway-hub-definition
+   the one predicate is asked about the station's complex: the one stop of Times Square that is
+   named carries the class, and none of the shared-track locals does.
 
    `subway` IS A POSITIVE CLASS AND MR4 ADDED IT, which is the carry-forward paid at the
    source. `.stn-label` began as the subway's alone, so a count of it meant "subway station
@@ -366,8 +469,8 @@ function stationMarkStyle(routes, ink, paper) {
    An exclusion list grows with every family and is wrong once per stage. A family's own
    class cannot be widened by a family that does not carry it, so `.stn-label.subway` is the
    last version of this selector anyone has to write. */
-function stationLabelClass(routes) {
-  return isTransferStation(routes) ? "stn-label subway hub" : "stn-label subway";
+function stationLabelClass(complex) {
+  return isTransferStation(complex) ? "stn-label subway hub" : "stn-label subway";
 }
 
 /* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
@@ -379,20 +482,26 @@ const LABEL_HUB_ZOOM = 12;
 const LABEL_ALL_ZOOM = 14;
 
 /* AND ONE FALLBACK ZOOM, for the world where no station is a hub (round 3, F1). The routes
-   per station come from stop_times.txt, which is NOT a required member of the subway static
-   archive: load_subway_station_routes returns {} on any failure and the endpoint then serves
-   routes: [] for all 496 stations while the status stays "ready". Every station is then a
-   local, no label carries the `hub` class, and "hubs from 12" correctly reveals nothing. That
-   is the right answer to that data and the wrong thing to show a rider, who gets a map with
-   no names at the opening zoom and at the City preset while the Names button reads pressed.
+   per station come from stop_times.txt, and when this was written that file was NOT a required
+   member of the subway static archive: load_subway_station_routes returned {} on any failure
+   and the endpoint then served routes: [] for all 496 stations while the status stayed
+   "ready". Every station was then a local, no label carried the `hub` class, and "hubs from
+   12" correctly revealed nothing. That is the right answer to that data and the wrong thing to
+   show a rider, who gets a map with no names at the opening zoom and at the City preset while
+   the Names button reads pressed.
+
+   THE BACKEND HALF HAS LANDED SINCE (claude/subway-static-station-routes): stop_times.txt and
+   trips.txt are required members, load_subway_station_routes RAISES on a parse problem, and a
+   publication WITHOUT either file fails the load; transfers.txt joined them for the station
+   complexes (claude/subway-hub-definition). What a required member cannot rule out is a file
+   that is present and says nothing: a header-only stop_times.txt still loads as {} under
+   "ready", and so does a partial index. The fallback stays for those, and for a network with no
+   interchange at all, which is what the hermetic stock fixture is.
 
    So with no hubs the band skips the hubs step and shows every name from 13: one zoom later
    than the hub band, because with no hub to thin the field 12 is the zoom the collision
    measurements found worst (89% of painted labels overlapping another), and one zoom earlier
-   than the all band, because a rider should not have to reach 14 to see any name at all.
-   THE BACKEND HALF IS ITS OWN BRANCH: stop_times.txt should be a required member, the rule
-   PATH and the ferry already apply to shapes.txt, and the ledger records it with its three
-   consumers named. */
+   than the all band, because a rider should not have to reach 14 to see any name at all. */
 const LABEL_NO_HUB_ZOOM = 13;
 
 function labelZoomBand(zoom, hasHubs = true) {
@@ -447,18 +556,21 @@ function ferryLabelBand(zoom) {
 /* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
    zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
    have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
-   In the "hubs" band a network whose stations carry no routes has no hub either, and that is
-   a reachable backend state rather than a hypothetical: stop_times.txt is not a required
-   member of the static archive (backend/static_data.py), load_subway_station_routes returns
-   {} on any failure, and the endpoint then serves routes: [] for all 496 stations while the
-   status stays "ready". Every station is a local, no label carries the hub class, and at the
-   opening zoom 12 and the City preset's 13 nothing renders while the button reads pressed.
+   In the "hubs" band a network whose stations carry no routes has no hub either, and when this
+   was written that was a reachable backend state rather than a hypothetical: stop_times.txt
+   was not a required member of the static archive, load_subway_station_routes returned {} on
+   any failure, and the endpoint then served routes: [] for all 496 stations while the status
+   stayed "ready". Every station was a local, no label carried the hub class, and at the
+   opening zoom 12 and the City preset's 13 nothing rendered while the button read pressed.
+   An ABSENT file fails the load now (it is a required member, and load_subway_station_routes
+   RAISES on a table it cannot read), but a present one with headers and no rows still loads as
+   {} under "ready", so the state is narrower than it was and not gone. The sentence below earns
+   its place for that, for a partial index, and for a network with no interchange.
 
    The band's arithmetic is not the bug and is not changed here: "hubs from 12" showing no
    hubs is the right answer to that data. What was wrong is a control claiming otherwise in
-   silence, so the toggle says which of the three it is. THE BACKEND HALF IS NOT THIS
-   BRANCH'S: the railroad warmup gates its ready on a non-empty index and the subway warmup
-   does not, and that is one line in a file this stage does not touch. */
+   silence, so the toggle says which of the three it is. The backend half was its own branch
+   (claude/subway-static-station-routes) and has landed. */
 /* MR3 round 4: EVERY BAND IT IS GIVEN, not the subway's alone. The toggle hides commuter-rail
    names too (style.css's `:root[data-labels="off"] .stn-label.rail`), and the two bands do not
    agree: rail names show from zoom 11 and the subway's first band opens at 12. Reading only the
@@ -494,13 +606,13 @@ function namesToggleTitle(routedCount, stationCount = 1) {
   return "No station lists the routes that call there, so every name shows from zoom 13 and none is marked as an interchange.";
 }
 
-// Whether one station's name is on screen: the band, the station's own kind, and the Names
-// toggle, which overrides both.
-function stationLabelShown(zoom, routes, labelsOn, hasHubs = true) {
+// Whether one station's name is on screen: the band, the station's own kind (its complex's,
+// since claude/subway-hub-definition), and the Names toggle, which overrides both.
+function stationLabelShown(zoom, complex, labelsOn, hasHubs = true) {
   if (!labelsOn) return false;
   const band = labelZoomBand(zoom, hasHubs);
   if (band === "all") return true;
-  return band === "hubs" && isTransferStation(routes);
+  return band === "hubs" && isTransferStation(complex);
 }
 
 /* RAILROAD COLOURS ARE THE AGENCY'S, AND THE HASH THAT STOOD HERE IS GONE (ruling R1).
@@ -5828,6 +5940,8 @@ if (typeof module !== "undefined" && module.exports) {
     ribbonRouteSet, focusRoutesForBullet, bulletTrackSet, bulletDrawsSomething, bulletTitle, subwayKeyModel,
     STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
     isTransferStation, stationTrunks, stationMarkStyle, stationLabelClass,
+    HUB_TRUNKS_AT_ONE_STOP, HUB_TRUNKS_ACROSS_STOPS, subwayComplexIndex, stationKickerRoutes,
+    stationNamesItself,
     LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, LABEL_NO_HUB_ZOOM, labelZoomBand, stationLabelShown,
     namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.

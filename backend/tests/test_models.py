@@ -243,7 +243,15 @@ def test_railroad_route_builder_output_covers_model():
     assert set(geometry_only) | {"system"} == set(RailroadRoute.model_fields)
 
 
-SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}
+SUBWAY_STOP = {
+    "id": "A01",
+    "name": "Alpha",
+    "lat": 40.7,
+    "lon": -74.0,
+    "routes": ["1", "2"],
+    # claude/subway-hub-definition: the station complex, from transfers.txt.
+    "complex_id": "A01",
+}
 ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0, **_CONTRACT_PAIR}
 RAILROAD_STOP = {
     "system": "LIRR",

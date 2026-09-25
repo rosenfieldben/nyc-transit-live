@@ -178,6 +178,9 @@ async def _warm_subway_static(app: FastAPI) -> None:
                 # the pollers, and /healthz for the length of the parse. The lighter
                 # sibling loaders (stops/shapes/stations) stay inline as before.
                 station_routes = await asyncio.to_thread(main.load_subway_station_routes)
+                # Inline: transfers.txt is about 8 KB and 613 rows, so this is one of the
+                # light loaders, and it raises on a problem like the index above.
+                station_complexes = main.load_subway_station_complexes()
         except Exception as exc:
             attempt = await _fail_and_wait(app, "subway_static_status", exc, attempt)
             continue
@@ -185,6 +188,7 @@ async def _warm_subway_static(app: FastAPI) -> None:
         app.state.subway_routes = routes
         app.state.subway_stations = stations
         app.state.subway_station_routes = station_routes
+        app.state.subway_station_complexes = station_complexes
         _set_static_status(app, "subway_static_status", "ready")
         return
 

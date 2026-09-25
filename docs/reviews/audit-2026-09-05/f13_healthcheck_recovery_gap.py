@@ -719,6 +719,7 @@ async def part3_dead_task(cadence: dict) -> dict:
         (app_module, "load_subway_route_shapes", lambda: []),
         (app_module, "load_subway_stations", lambda: {}),
         (app_module, "load_subway_station_routes", lambda: {}),
+        (app_module, "load_subway_station_complexes", lambda: {}),
         (app_module, "fetch_vehicle_positions", fake_fetch_buses),
         (app_module, "fetch_subway_trains", fake_fetch_subways),
         (app_module, "fetch_railroad_trains", fake_fetch_railroads),

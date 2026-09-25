@@ -40,6 +40,11 @@ const {
   stationTrunks,
   stationMarkStyle,
   stationLabelClass,
+  HUB_TRUNKS_AT_ONE_STOP,
+  HUB_TRUNKS_ACROSS_STOPS,
+  subwayComplexIndex,
+  stationKickerRoutes,
+  stationNamesItself,
   LABEL_HUB_ZOOM,
   LABEL_ALL_ZOOM,
   labelZoomBand,
@@ -170,18 +175,43 @@ test("MR2: the focus state's three transitions, and the words each one says", ()
 
 /* ---------------- stations ---------------- */
 
-test("MR2: one trunk is a local dot and two or more is a transfer ring", () => {
+test("hub definition: a complex is a ring at three trunks, or at two across two stops", () => {
+  /* THE RULE SINCE claude/subway-hub-definition. F9 asked this of a stop's own routes, and "two
+     trunks at one stop" turned out to mean shared track far more often than an interchange: the
+     B beside the C on Central Park West, the F beside the G at Carroll St. So a lone stop needs
+     THREE trunks, and two trunks make a hub only when they meet across two or more stops of one
+     complex, which is the walk a rider actually makes. */
+  assert.equal(HUB_TRUNKS_AT_ONE_STOP, 3);
+  assert.equal(HUB_TRUNKS_ACROSS_STOPS, 2);
+  // A complex of one: a stop transfers.txt joins to nothing.
+  assert.equal(isTransferStation({ routes: ["1"], stops: 1 }), false);
+  assert.equal(isTransferStation({ routes: ["1", "A"], stops: 1 }), false, "two trunks at one stop is shared track");
+  assert.equal(isTransferStation({ routes: ["1", "A", "L"], stops: 1 }), true, "three at one stop is the ruling's exception");
+  assert.equal(isTransferStation({ routes: ["1", "A", "L", "G", "J", "7"], stops: 1 }), true);
+  /* A BARE ROUTES LIST NAMES NO COMPLEX, and gets F9's per-stop answer: review finding H1. It is
+     what a browser's cached pre-deploy payload is for up to an hour, and what every caller that
+     predates complexes hands in, so it keeps the meaning those callers were written against. */
   assert.equal(isTransferStation(["1"]), false);
-  assert.equal(isTransferStation(["1", "A"]), true);
-  assert.equal(isTransferStation(["1", "A", "L", "G", "J", "7"]), true);
+  assert.equal(isTransferStation(["1", "A"]), true, "F9 rang two trunks at one stop");
+  assert.equal(isTransferStation(["1", "A", "L"]), true);
+  assert.equal(isTransferStation(null), false);
+  // A complex: its routes unioned across its stops, and how many stops that is.
+  assert.equal(isTransferStation({ routes: ["1", "A"], stops: 2 }), true, "168 St: the 1 and the A/C");
+  assert.equal(isTransferStation({ routes: ["1", "2", "3"], stops: 2 }), false, "one trunk is one line");
+  assert.equal(isTransferStation({ routes: ["1"], stops: 5 }), false);
+  assert.equal(isTransferStation({ routes: ["1", "A"], stops: 1 }), false, "a complex of one is a stop alone");
+  // A stop count that is not a count reads as one stop, never as many.
+  for (const stops of [0, -2, NaN, null, undefined, "2x"]) {
+    assert.equal(isTransferStation({ routes: ["1", "A"], stops }), false, String(stops));
+  }
 
-  const local = stationMarkStyle(["1"], INK, PAPER);
+  const local = stationMarkStyle({ routes: ["1", "A"], stops: 1 }, INK, PAPER);
   assert.equal(local.radius, STATION_LOCAL_RADIUS);
   assert.equal(local.fillColor, INK);
   assert.equal(local.stroke, false);
   assert.equal(local.weight, 0);
 
-  const transfer = stationMarkStyle(["1", "A", "L"], INK, PAPER);
+  const transfer = stationMarkStyle({ routes: ["1", "A", "L"], stops: 1 }, INK, PAPER);
   assert.equal(transfer.radius, STATION_TRANSFER_RADIUS);
   assert.equal(transfer.fillColor, PAPER);
   assert.equal(transfer.color, INK);
@@ -205,17 +235,25 @@ test("MR2 F9: a skip-stop pair and a local/express pair are ONE trunk, so they a
     assert.equal(stationMarkStyle(pair, INK, PAPER).stroke, false, pair.join("/"));
     assert.equal(stationTrunks(pair).size, 1, pair.join("/"));
   }
-  // A real interchange still is one: two trunks, whatever the id count.
+  // A real interchange still is one: two trunks across two stops, whatever the id count. The
+  // same pairs at ONE stop are shared track since claude/subway-hub-definition, and a pair of
+  // ids on one trunk is not a hub across any number of stops.
   for (const real of [["J", "L"], ["A", "1"], ["4", "6", "N"], ["GS", "7"]]) {
-    assert.equal(isTransferStation(real), true, real.join("/"));
-    assert.equal(stationLabelClass(real), "stn-label subway hub", real.join("/"));
+    assert.equal(isTransferStation({ routes: real, stops: 2 }), true, real.join("/"));
+    assert.equal(stationLabelClass({ routes: real, stops: 2 }), "stn-label subway hub", real.join("/"));
+    assert.equal(isTransferStation({ routes: real, stops: 1 }), false, `${real.join("/")} at one stop`);
+    // With no complex named, F9's answer, which rang these.
+    assert.equal(isTransferStation(real), true, `${real.join("/")} with no complex`);
+  }
+  for (const pair of [["J", "Z"], ["A", "C", "E"], ["4", "5", "6"]]) {
+    assert.equal(isTransferStation({ routes: pair, stops: 3 }), false, pair.join("/"));
   }
   // Two ids lineColor cannot place collapse into one trunk rather than inventing a transfer:
   // an unknown id must not make a claim about the network.
-  assert.equal(isTransferStation(["ZZ1", "ZZ2"]), false);
+  assert.equal(isTransferStation({ routes: ["ZZ1", "ZZ2"], stops: 2 }), false);
   // Ids off the wire may be numbers.
-  assert.equal(isTransferStation([4, 5]), false);
-  assert.equal(isTransferStation([4, "A"]), true);
+  assert.equal(isTransferStation({ routes: [4, 5], stops: 2 }), false);
+  assert.equal(isTransferStation({ routes: [4, "A"], stops: 2 }), true);
 });
 
 test("MR2: a station with no routes is a local dot, which is the direction that matters", () => {
@@ -230,6 +268,152 @@ test("MR2: a station with no routes is a local dot, which is the direction that 
     assert.equal(stationMarkStyle(missing, INK, PAPER).stroke, false, JSON.stringify(missing));
     assert.equal(stationLabelClass(missing), "stn-label subway", JSON.stringify(missing));
   }
+});
+
+/* THE DIAGNOSIS'S OWN TABLE, over the real payload (claude/subway-hub-definition). On 2026-09-25 the
+   deployed build named 96 St, 86 St, 72 St, Carroll St, 25 St and 36 St at zoom 13, a band that
+   shows hubs only, and every one of them was a hub under F9's per-stop count. This asks the same
+   stations again through the complex rule, reading tests/e2e/fixtures/subway_stops_real.json,
+   which is production's /api/subway-stops payload from that day plus the complex_id the branch
+   serves (the backend test_the_e2e_census_fixture_agrees_with_this_archive holds it to the
+   committed transfers.txt).
+
+   THE MUTATION THIS KILLS FIRST is the predicate counting per stop again: 96 St on Central Park
+   West is A, B and C at one stop, two trunks, and F9's rule rings it. */
+const REAL_STOPS = JSON.parse(
+  require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "tests", "e2e", "fixtures", "subway_stops_real.json"),
+    "utf8",
+  ),
+);
+const REAL_COMPLEXES = subwayComplexIndex(REAL_STOPS);
+const realHub = (id) => isTransferStation(REAL_COMPLEXES.get(id));
+
+test("hub definition: the diagnosis's stations, asked of their complexes", () => {
+  assert.equal(REAL_STOPS.length, 496);
+  // The shared-track locals the deployed build named at zoom 13.
+  for (const [id, name] of [
+    ["A19", "96 St"],
+    ["A20", "86 St"],
+    ["A22", "72 St"],
+    ["F21", "Carroll St"],
+    ["R35", "25 St"],
+    ["R36", "36 St"],
+  ]) {
+    const complex = REAL_COMPLEXES.get(id);
+    assert.equal(REAL_STOPS.find((s) => s.id === id).name, name, id);
+    assert.equal(complex.stops, 1, `${name} (${id}) is a stop alone`);
+    assert.equal(stationTrunks(complex.routes).size, 2, `${name} (${id}) serves two trunks at one stop`);
+    assert.equal(realHub(id), false, `${name} (${id}) is shared track, not a hub`);
+    // And under F9's rule it WAS one, which is the finding, kept as a premise so this test
+    // cannot pass over stations that were never in question.
+    assert.equal(stationTrunks(REAL_STOPS.find((s) => s.id === id).routes).size >= 2, true, id);
+  }
+  // 36 St on Queens Boulevard: E, F/M and R at one stop, three trunks, the ruling's exception.
+  assert.equal(REAL_COMPLEXES.get("G20").stops, 1);
+  assert.equal(realHub("G20"), true, "36 St G20");
+  // Times Square: five stops, each ONE trunk, which is why F9 gave none of them a ring.
+  const timesSquare = ["127", "725", "902", "A27", "R16"];
+  for (const id of timesSquare) {
+    assert.equal(stationTrunks(REAL_STOPS.find((s) => s.id === id).routes).size, 1, `${id} alone is one trunk`);
+    assert.equal(REAL_COMPLEXES.get(id), REAL_COMPLEXES.get("127"), `${id} is in Times Square's complex`);
+    assert.equal(realHub(id), true, `Times Square ${id}`);
+  }
+  assert.equal(REAL_COMPLEXES.get("127").stops, 5);
+  assert.equal(stationTrunks(REAL_COMPLEXES.get("127").routes).size, 5);
+  // Court Square: the 7, the G and the E/M, three stops.
+  for (const id of ["719", "F09", "G22"]) assert.equal(realHub(id), true, `Court Sq ${id}`);
+  assert.equal(REAL_COMPLEXES.get("719").stops, 3);
+});
+
+test("hub definition: the census over the real payload, before and after", () => {
+  /* 124 rings under F9's per-stop count; under the complex rule, 100 stops in 48 complexes. The
+     e2e census (subway.spec.js D2i1) counts the same thing on the drawn page. */
+  const before = REAL_STOPS.filter((s) => stationTrunks(s.routes).size >= 2);
+  const after = REAL_STOPS.filter((s) => realHub(s.id));
+  assert.equal(before.length, 124);
+  assert.equal(after.length, 100);
+  assert.equal(new Set(after.map((s) => REAL_COMPLEXES.get(s.id))).size, 48);
+  // Every stop of a hub complex is a hub: the ring is the station's, not the platform's.
+  for (const s of after) {
+    for (const t of REAL_STOPS.filter((u) => REAL_COMPLEXES.get(u.id) === REAL_COMPLEXES.get(s.id))) {
+      assert.equal(realHub(t.id), true, `${t.name} (${t.id})`);
+    }
+  }
+});
+
+test("hub definition: subwayComplexIndex groups by complex_id and leaves a missing one out", () => {
+  const index = subwayComplexIndex([
+    { id: "127", routes: ["1", "2", "3"], complex_id: "127" },
+    { id: "725", routes: ["7"], complex_id: "127" },
+    { id: "A19", routes: ["A", "B", "C"], complex_id: "A19" },
+    // A payload from before the field: no complex_id at all, so NO complex is named and the
+    // station is left out, for its caller to ask with its bare routes (F9's answer).
+    { id: "X1", routes: ["1", "A"] },
+    { id: "X2", routes: ["1", "A"], complex_id: null },
+  ]);
+  assert.equal(index.get("127"), index.get("725"), "one object for every stop of a complex");
+  assert.deepEqual(index.get("725"), { id: "127", routes: ["1", "2", "3", "7"], stops: 2 });
+  assert.deepEqual(index.get("A19"), { id: "A19", routes: ["A", "B", "C"], stops: 1 });
+  assert.equal(index.has("X1"), false);
+  assert.equal(index.has("X2"), false);
+  assert.equal(isTransferStation(index.get("127")), true);
+  assert.equal(isTransferStation(index.get("A19")), false);
+  // Nothing in, nothing out, and junk rows are skipped rather than keyed as "undefined".
+  assert.equal(subwayComplexIndex([]).size, 0);
+  assert.equal(subwayComplexIndex(null).size, 0);
+  assert.equal(subwayComplexIndex([null, {}, { id: null }]).size, 0);
+});
+
+test("hub definition: a stop nothing calls at does not make a complex two stops (review finding H4)", () => {
+  /* Delancey St-Essex St is the F at one stop and the J/M/Z at the other, a real interchange. Take
+     the F's platform out of service (the archive lists no trip there, which the backend tolerates
+     as data) and what is left is the M beside the J at one stop, shared track. Counting the empty
+     platform as a second stop would ring it. */
+  const index = subwayComplexIndex([
+    { id: "F15", routes: [], complex_id: "F15" },
+    { id: "M18", routes: ["J", "M", "Z"], complex_id: "F15" },
+  ]);
+  assert.deepEqual(index.get("M18"), { id: "F15", routes: ["J", "M", "Z"], stops: 1 });
+  assert.equal(isTransferStation(index.get("M18")), false);
+  // And with the F calling again, it is the interchange it is.
+  const open = subwayComplexIndex([
+    { id: "F15", routes: ["F"], complex_id: "F15" },
+    { id: "M18", routes: ["J", "M", "Z"], complex_id: "F15" },
+  ]);
+  assert.equal(isTransferStation(open.get("M18")), true);
+});
+
+test("hub definition: one name per complex, on the stop whose id is the complex id", () => {
+  /* THE OPERATOR'S RULING. A name per stop repeated 32 of the 100 hub names within their own
+     complexes; the ring stays on every stop and the name is drawn once. Over the real payload,
+     every complex has exactly one stop that names itself, and it is the complex's own id. */
+  const named = REAL_STOPS.filter((s) => stationNamesItself(s.id, REAL_COMPLEXES.get(s.id)));
+  assert.equal(named.length, 444, "one name per complex, 444 complexes");
+  assert.equal(new Set(named.map((s) => REAL_COMPLEXES.get(s.id))).size, 444, "none twice");
+  for (const s of named) assert.equal(REAL_COMPLEXES.get(s.id).id, s.id, s.id);
+  // Times Square is named by 127, and its other four stops are not.
+  assert.equal(stationNamesItself("127", REAL_COMPLEXES.get("127")), true);
+  for (const id of ["725", "902", "A27", "R16"]) {
+    assert.equal(stationNamesItself(id, REAL_COMPLEXES.get(id)), false, id);
+  }
+  // The hub names are the census's 48: one per hub complex.
+  assert.equal(named.filter((s) => realHub(s.id)).length, 48);
+  // With no complex known, every stop names itself, which is the pre-complex payload's map.
+  assert.equal(stationNamesItself("725", null), true);
+  assert.equal(stationNamesItself("725", ["7", "7X"]), true);
+  assert.equal(stationNamesItself(725, { id: "725", routes: [], stops: 1 }), true, "ids off the wire may be numbers");
+});
+
+test("hub definition: the kicker lists the complex's routes, the stop's own first", () => {
+  const complex = { routes: ["1", "2", "3", "7", "7X", "GS", "A", "C", "E", "N", "Q", "R", "W"], stops: 5 };
+  assert.deepEqual(stationKickerRoutes(["7", "7X"], complex).slice(0, 2), ["7", "7X"]);
+  assert.deepEqual([...stationKickerRoutes(["7", "7X"], complex)].sort(), [...complex.routes].sort());
+  assert.equal(stationKickerRoutes(["7", "7X"], complex).length, 13, "no route twice");
+  // A stop alone, or no complex at all, lists exactly its own routes, in its own order.
+  assert.deepEqual(stationKickerRoutes(["A", "B", "C"], ["A", "B", "C"]), ["A", "B", "C"]);
+  assert.deepEqual(stationKickerRoutes(["A", "B", "C"], null), ["A", "B", "C"]);
+  assert.deepEqual(stationKickerRoutes(undefined, null), []);
 });
 
 test("MR2: the two theme colours are the caller's, so a theme swap is a setStyle", () => {
@@ -250,11 +434,24 @@ test("MR2: a hub label is the same station a transfer ring is", () => {
      A class a family carries cannot be widened by a family that does not, so these four
      assertions are what stop the qualifier being dropped again. */
   assert.equal(stationLabelClass(["1"]), "stn-label subway");
-  assert.equal(stationLabelClass(["1", "A"]), "stn-label subway hub");
+  assert.equal(stationLabelClass(["1", "A", "L"]), "stn-label subway hub");
+  assert.equal(stationLabelClass({ routes: ["1", "A"], stops: 2 }), "stn-label subway hub");
+  assert.equal(stationLabelClass({ routes: ["1", "A"], stops: 1 }), "stn-label subway");
+  assert.equal(stationLabelClass(["1", "A"]), "stn-label subway hub", "no complex named: F9's answer");
   assert.equal(stationLabelClass([]), "stn-label subway");
   assert.equal(stationLabelClass(undefined), "stn-label subway");
   // One predicate behind both, so a station cannot draw a ring and label itself local.
-  for (const routes of [[], ["1"], ["J", "Z"], ["1", "A"], ["1", "A", "L"], ["4", "5", "6", "N", "Q"]]) {
+  for (const routes of [
+    [],
+    ["1"],
+    ["J", "Z"],
+    ["1", "A"],
+    ["1", "A", "L"],
+    ["4", "5", "6", "N", "Q"],
+    { routes: ["1", "A"], stops: 2 },
+    { routes: ["1", "A"], stops: 1 },
+    { routes: ["1", "2"], stops: 3 },
+  ]) {
     assert.equal(
       stationLabelClass(routes).includes("hub"),
       isTransferStation(routes),

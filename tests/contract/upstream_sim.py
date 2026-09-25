@@ -442,6 +442,28 @@ def _archive_members(stops: dict, shape: str) -> dict[str, str]:
     }
 
 
+def _subway_transfers(stops: dict) -> str:
+    """transfers.txt for the subway archive: the COMMITTED LIVE TABLE, cut to the
+    sim's own stations (claude/subway-hub-definition).
+
+    It is a required member now, so an archive without one would fail the load and
+    take the whole subway off this tier's map. The rows are the MTA's own, from
+    backend/tests/fixtures/subway_gtfs, keeping only the pairs whose two stations the
+    sim's stops table has, which is how the rest of this archive is built: ids that
+    agree across the two halves by construction rather than by invention. The capture
+    is the 1/7/S group, so Times Square's 127, 725 and 902 are here and join into one
+    complex through the real loader; its A27 and R16 are not in the table and are not
+    coined."""
+    parents = {sid[:-1] if sid[-1:] in ("N", "S") else sid for sid in stops}
+    table = (FIXTURES / "subway_gtfs" / "transfers.txt").read_text(encoding="utf-8-sig")
+    rows = [
+        f"{row['from_stop_id']},{row['to_stop_id']},{row['transfer_type']},{row['min_transfer_time']}"
+        for row in _rows(table)
+        if row["from_stop_id"] in parents and row["to_stop_id"] in parents
+    ]
+    return _csv("from_stop_id,to_stop_id,transfer_type,min_transfer_time", rows)
+
+
 def _zip_of(members: dict[str, str], drop: tuple[str, ...] = ()) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -935,9 +957,11 @@ class UpstreamSim:
             ("lirr", load("railroad_lirr_stops.json"), "flat"),
             ("mnr", load("railroad_mnr_stops.json"), "flat"),
         ):
-            self.archives[key] = Archive(
-                key, bodies=_publications(_archive_members(stop_table, shape))
-            )
+            members = _archive_members(stop_table, shape)
+            if key == "subway":
+                # A required member of the subway archive and no other (_subway_transfers).
+                members["transfers.txt"] = _subway_transfers(stop_table)
+            self.archives[key] = Archive(key, bodies=_publications(members))
         # PATH and ferry take their archives from the committed GTFS fixtures, not
         # from a synthesized table, because both join realtime to static by ID and a
         # synthesized id space either matches nothing or, worse, matches by accident.

@@ -370,7 +370,7 @@ registerCanvasFamily("subway ribbons", ({ paper }) => {
 registerCanvasFamily("subway stations", ({ paper, ink }) => {
   for (const entry of stationRegistry) {
     if (entry.kind !== "subway" || !entry.marker || !entry.marker.setStyle) continue;
-    entry.marker.setStyle(stationMarkStyle(entry.routes ?? [], ink, paper));
+    entry.marker.setStyle(stationMarkStyle(entry.complex ?? entry.routes ?? [], ink, paper));
   }
 });
 
@@ -425,7 +425,7 @@ function subwayFocusBase(train) {
 }
 
 
-function subwayArrivalsHtml(station, body) {
+function subwayArrivalsHtml(station, body, complex = null) {
   // Skew-corrected now, reusing the staleness baseline from helpers.js.
   const now = Date.now() / 1000 - (minClockOffset ?? 0);
   // THE BOARD F03 WAS FOUND ON. Each row is qualified by its own feed group's content
@@ -446,8 +446,14 @@ function subwayArrivalsHtml(station, body) {
      AND THE LIST GOES THROUGH THE SHARED HELPER NOW (ruling R3), which this board had no version of:
      the expression here was an unbounded map().join(), so a station serving a dozen routes drew a
      dozen plates and pushed the popup as wide as Leaflet's cap allowed. popupRouteMarksHtml is the
-     one rule for all five boards, and its comment carries the measurement that chose the count. */
-  const plates = popupRouteMarksHtml(station.routes, (route) => ({
+     one rule for all five boards, and its comment carries the measurement that chose the count.
+
+     THE COMPLEX'S ROUTES, NOT THE STOP'S (claude/subway-hub-definition), with the stop's own first
+     (stationKickerRoutes says why). The 7's platform at Times Square is in a station that also
+     serves the 1, the A, the N and the shuttle, and a kicker that named only the 7 told a rider
+     less than the ring on the map beside it. A station alone, or a caller with no complex, lists
+     exactly the stop's routes as before. */
+  const plates = popupRouteMarksHtml(stationKickerRoutes(station.routes, complex), (route) => ({
     svg: subwayPlateSvg(route, lineColor(route), readableTextOn(lineColor(route))),
     // The route id IS the subway's name for a route, which is what a rider hears where the
     // plates are aria-hidden. The other four families have a branch or a route name instead.
@@ -493,6 +499,10 @@ async function loadStations() {
   if (!stations.length) return false; // failed-warmup []: retry until the backend heals
   const ink = inkColor();
   const paper = paperColor();
+  /* THE STATION COMPLEXES, read once from the whole payload, because a hub is a complex and not
+     a stop (claude/subway-hub-definition): the ring, the hub label and the kicker all ask about
+     every stop transfers.txt joins into one station, and no single row carries that. */
+  const complexes = subwayComplexIndex(stations);
   for (const station of stations) {
     /* MR2: A DOT WHERE ONE ROUTE CALLS AND A RING WHERE TWO OR MORE DO, so the map says
        which stations are interchanges without a rider having to open anything. The decision
@@ -507,8 +517,17 @@ async function loadStations() {
     /* THE ROUTES THEMSELVES, NOT THEIR COUNT (round 3, F9): a dot or a ring is a question
        about how many TRUNKS call here, and the J and the Z are one line taking turns. */
     const stationRoutes = station.routes ?? [];
+    /* AND OF ITS COMPLEX, NOT OF THE STOP (claude/subway-hub-definition). The routes above are
+       still the stop's own, and they stay the station alerts join's seed, which is untouched: an
+       alert for the 7 belongs on the 7's platform, not on the 1's across the passageway.
+
+       NULL WHEN THE PAYLOAD NAMES NO COMPLEX, and then the draw is asked with the stop's bare
+       routes, which isTransferStation answers the way F9 did (helpers.js says why: a browser's
+       cached payload from before the deploy is exactly this, for up to an hour). */
+    const complex = complexes.get(String(station.id)) ?? null;
+    const ringFrom = complex ?? stationRoutes;
     const marker = L.circleMarker([station.lat, station.lon], {
-      ...stationMarkStyle(stationRoutes, ink, paper),
+      ...stationMarkStyle(ringFrom, ink, paper),
       renderer: stationRenderer,
     });
     /* THE NAME, as a permanent tooltip, and OUT OF THE ACCESSIBILITY TREE.
@@ -528,11 +547,14 @@ async function loadStations() {
       const el = event.tooltip?.getElement?.();
       if (el) el.setAttribute("aria-hidden", "true");
     });
-    marker.bindTooltip(station.name ?? station.id, {
+    /* ONE NAME PER COMPLEX (helpers.js, stationNamesItself): the other stops of a complex keep
+       their ring and their popup and draw no name, so Times Square is named once, as "Times
+       Sq-42 St" on 127, rather than four times a few metres apart. */
+    if (stationNamesItself(station.id, complex)) marker.bindTooltip(station.name ?? station.id, {
       permanent: true,
       direction: "right",
       offset: [7, 0],
-      className: stationLabelClass(stationRoutes),
+      className: stationLabelClass(ringFrom),
       interactive: false,
       // BELOW THE VEHICLES, not above them: the default tooltipPane is 650 and markerPane is
       // 600, so a name painted over the bullet that identifies a train. shared.js says what
@@ -556,7 +578,7 @@ async function loadStations() {
       body: null,
       url: arrivalsUrl,
       // Prepend any active subway alerts affecting this station above the arrivals.
-      render: (s, b) => stationAlertsBlock("subway", s, b) + subwayArrivalsHtml(s, b),
+      render: (s, b) => stationAlertsBlock("subway", s, b) + subwayArrivalsHtml(s, b, complex),
     })).addTo(stationLayer);
     registerStation({
       key: `subway|${station.id}`,
@@ -568,6 +590,10 @@ async function loadStations() {
       lat: station.lat,
       lon: station.lon,
       routes: station.routes ?? [],
+      // The complex the ring and the hub label were drawn from (null when the payload named
+      // none), kept beside the stop's own routes so the theme repaint and the zoom band ask the
+      // same question the draw did: `entry.complex ?? entry.routes`, which is `ringFrom` above.
+      complex,
       wheelchair: false, // the subway stops endpoint carries no accessibility field
       arrivalsUrl,
       marker,

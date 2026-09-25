@@ -2088,6 +2088,7 @@ the same call about `C2c2`).
 | `stations.spec.js` A1v3 (a lagging contributor's qualifier is announced once) | follow-up 1, timing out in two full runs at loads of 30 and 56 | **Measured at the base, and it follows load**: 3 of 3 failed at `d49e9a7` and 3 of 3 on this branch at load 28, and 5 of 5 passed on this branch at loads of 9 to 18. It advances 31 seconds of the app's timers in a single `runFor`, which is CPU-bound, and runs out of its 30-second test budget. |
 | `busroute.spec.js` A7g (a reassignment landing mid-fetch) | follow-up 1, once in a six-file run at load 9, at `68d31da`'s successor tree | "the route fetch for M15 must still be in flight" found it already drawn: the delayed response resolved in real time before the spec looked. **6 of 6 alone on this branch and 6 of 6 at `d49e9a7`**, back to back. Not this branch's, and not diagnosed further. |
 | `subway.spec.js` D2w (the off-focus reach survives a poll) | follow-up 1, once in a six-test rerun at load 33 | **The message was not saved** (finding F1k). 1 of 1 alone and 4 of 4 repeated afterwards at loads of 23 to 30. Listed so the de-flake branch measures it rather than trusting either run. |
+| `smoke.spec.js` 25 (a ferry boat's colour self-heals once routes load) | follow-up 1, once in the final full run at `6b447c2`, load 7 to 13 | Timed out at 30 seconds in `waitForFunction(() => ferryRouteColors.has("ER"))`, waiting on the ferry routes' retry. 3 of 3 alone, and it passed in the full run before, on identical code. Not diagnosed further; listed so the de-flake branch measures it. |
 
 **The rule until that branch exists is the one this phase has used throughout.** `retries: 0` in
 `playwright.config.js`, with the comment saying why ("no retry masking"); a flake is recorded with
@@ -2897,7 +2898,7 @@ clause. Both come from, or are held to, one constant, `BUS_ZOOM_WORDS`.
 | --- | --- | --- |
 | "CSS on the bus marker's class keyed by data-zoom" | CSS on `.bus-marker` keyed by `data-bus-band`, which `paintZoomBand` computes from the same integer zoom in the same call that writes `data-zoom` | The label gate's own comment in `style.css` is the reason, and it is this phase's: an enumeration of `data-zoom` values fails silently at any zoom it does not list. The brief's own test ("non-finite hidden") is only expressible as a band: a stylesheet reading `data-zoom="NaN"` against a list of zooms matches nothing and draws. |
 | "the Key's bus row" | the first of the two bus rows | It is the row that names the family. The dot below it is the same bus with no heading, drawn and hidden by the same rule; a second copy of the clause would say it twice in one panel. |
-| (not stated) the map opens at zoom 12 | no bus is drawn at the opening view | The brief's own node test says 12 is hidden, and the map opens at 12. **For the operator:** a rider now lands on a map with no buses and a strip counting all of them, and meets the words only by hovering the button or opening the Key. If the opening view should draw buses, the smaller change is the opening zoom rather than the rule. |
+| (not stated) the map opens at zoom 12 | **ruled**: the map lands at the City preset, pressed | As first built, the rule as briefed drew no bus at the landing view (the map opened at 12). That went to the operator, and the ruling moved the landing rather than the rule; the section "Ruling: the landing" below records it. |
 | (not stated) a bus popup open when the rider zooms out | the popup, the route line and the banner stay; only the marker goes | Leaflet's `popupclose` is what releases a clicked bus's route line, so closing the popup would take the line with it, and the brief says the line is unaffected. The popup's own copy of the mark stays drawn; D7f asserts both. |
 
 #### The pins, and what they measured at the base
@@ -2967,7 +2968,8 @@ marker drawn.
 | the clicked route line, its banner, its popup, the popup's mark and route focus all left alone, focus asked at City as well as at Rail (since the review's M23) | D7f |
 | a root with no band draws every bus and leaves every one reachable | D7g |
 | a fly cut short rests the band on the zoom the map is actually at, in both directions, each premise asserted | D7h |
-| axe green with the buses undrawn at the opening view and at Rail and drawn at City, at 1280, 375 and 320, in both themes, with the bus seen per rule | `a11y.spec.js` A1w, three new states, eighteen scans |
+| the map lands at the City preset: every bus drawn and reachable, and City alone pressed (the landing ruling's one test) | D7i |
+| axe green with the buses drawn at the landing view, undrawn at Rail, and drawn at City again after Rail, at 1280, 375 and 320, in both themes, with the bus seen per rule | `a11y.spec.js` A1w, three new states, eighteen scans |
 
 #### The review: five finders at `68d31da`, and what it cost this branch to be read
 
@@ -3020,7 +3022,7 @@ table exits 1 if a control dies or any other row survives, and 2 if a row could 
 
 | # | Guard reverted | Killed by |
 | --- | --- | --- |
-| M0 | none: the opening control, every gate once | **survived all ten gates**, as it must |
+| M0 | none: the opening control, every gate once | **survived all eleven gates**, as it must |
 | M1 | the band's threshold moved to 12 (the brief's) | `frontend/buszoom.test.js`, the 12-and-13 test |
 | M2 | the stylesheet rule removed (the brief's) | D7a |
 | M3 | no `aria-hidden` on an undrawn bus (the brief's) | D7b, at the opening zoom |
@@ -3030,30 +3032,32 @@ table exits 1 if a control dies or any other row survives, and 2 if a row could 
 | M5 | `pointer-events` left on an undrawn bus | D7b |
 | M6 | the `add` hook removed | D7c, at the bus the poll adds at Rail (and not at the feed toggle: F1i) |
 | M7 | `paintZoomBand` no longer sweeps the buses | D7b, at City |
-| M7b | the same, at the axe tier | A1w's City state |
+| M7b | the same, at the axe tier | A1w's Rail state (the City state until the landing ruling: a bus born at the City landing needs no sweep to be drawn) |
 | M8 | the stylesheet made fail-closed (`:not([data-bus-band="drawn"])`) | D7g |
 | M8b | `buses.js` made fail-closed (`=== "drawn"`) | D7g |
 | M9 | the Key row loses the words | D7e |
 | M10 | the band never written on the root | D7a |
 | M11 | the rule widened from the buses to every marker | P6b |
 | M12 | the rule reaches the popup's own copy of the mark | D7f |
-| M13 | A4b measured at the opening zoom again | A4b, "bus-marker is not drawn here" |
-| M14 | D4f read at the opening zoom again | D4f, through the `marks()` guard |
-| M15 | D4g read at the opening zoom again | D4g, through the same guard |
+| M13 | A4b measured at Rail, where a bus is not drawn (until the landing ruling: at the old opening zoom) | A4b, "bus-marker is not drawn here" |
+| M14 | D4f read at Rail (likewise) | D4f, through the `marks()` guard |
+| M15 | D4g read at Rail (likewise) | D4g, through the same guard |
 | M16 | the rule as a re-render: bus markers taken off the layer below 13 | P6a |
-| M17 | smoke 7 clicks a bus at the opening zoom again | smoke 7, the click never finding a drawn target |
+| M17 | smoke 7 clicks a bus at Rail (likewise) | smoke 7, the click never finding a drawn target |
 | M18 | a drawn bus left with no role and no name | A1w's City state, `role-img-alt` no longer examining it |
 | M19 | a fly cut short no longer repaints the band (the review's V2) | D7h |
-| M20 | `theme.spec.js` reads its families at the opening zoom again (V4) | D5d, the bus family missing from the page |
-| M21 | P4c measures at the opening zoom again (V4) | P4c, "every family is measured" |
+| M20 | `theme.spec.js` reads its families at Rail (V4; likewise) | D5d, the bus family missing from the page |
+| M21 | P4c measures at Rail (V4; likewise) | P4c, "every family is measured" |
 | M22 | the rule widened to every other marker as a FADE (V3) | P6b, the computed opacity |
 | M22b | the same | D7a, the opacity floor |
 | M23 | a route focus that hides every bus, drawn but unreachable at City (V7) | D7f, at City |
 | M24 | the Key row's clause kept in the markup and taken off the page (V8) | D7e, the rendered text |
-| M25 | A7c clicks a bus at the opening zoom again (V10) | A7c, through the undrawn-target guard |
-| M0z | none: the closing control, every gate again | **survived all ten gates**, as it must |
+| M25 | A7c clicks a bus at Rail (V10; likewise) | A7c, through the undrawn-target guard |
+| M26 | the map opens where it used to, zoom 12 (the landing ruling) | D7i |
+| M27 | the map lands at City and the City button does not say so (the landing ruling) | D7i |
+| M0z | none: the closing control, every gate again | **survived all eleven gates**, as it must |
 
-**Thirty-two rows at `2950451`: both controls survived every one of their ten gates, the other thirty died, none failed to run, no gate needed the clock-race retry, and every anchor matched exactly once.** Every death is on the assertion its row names. The table's first run, at `f2cd698` before the review, had twenty-three rows and the same shape of result: M0 survived and the other twenty-two died.
+**Thirty-four rows at `6b447c2`, after the landing ruling: both controls survived every one of their eleven gates, the other thirty-two died, none failed to run, no gate needed the clock-race retry, and every anchor matched exactly once.** Every death is on the assertion its row names. The table's history, kept because each run caught something: at `f2cd698`, before the review, twenty-three rows (M0 survived, twenty-two died); at `2950451`, after it, thirty-two (both controls survived, thirty died); at `2355232`, after the ruling, thirty-four rows of which **M13 could not run**, its anchor ending a line at "exhaustively" where the file goes on, so the table exited 2 and standing rule 6 sent the whole table round again rather than the one row. `6b447c2` is that anchor fixed and nothing else.
 
 **A dominance, recorded rather than hidden.** The axe states' per-rule check is two claims, and only
 one of them has teeth of its own. At Rail, "`aria-hidden-focus` examined the bus" is the same fact as
@@ -3065,11 +3069,9 @@ state, and M18 is the row that shows it: a bus with no role and no name is visib
 
 #### For the operator
 
-1. **The landing view draws no bus.** The map opens at zoom 12 and the rule, as briefed, hides buses
-   below 13, so a rider lands on a strip counting every bus and a map drawing none
-   (`after-open.png`). The words that explain it are in the Buses button's tooltip, which a phone
-   never shows, and in the Key, which opens closed. If the landing view should draw buses, the
-   smaller change is the opening zoom, not the rule.
+1. **The landing view drew no bus: RULED.** The map opened at zoom 12 and the rule hides buses below
+   13. The ruling: the map lands at the City preset with its button pressed, and the band stays at
+   13. See "Ruling: the landing" below.
 2. **One state where the JavaScript half is not redundant.** While the stylesheet applies,
    `display: none` has already taken an undrawn bus out of the tree and the click path, so the
    `aria-hidden` and `pointer-events` the brief asked for change nothing a rider meets. If the
@@ -3083,16 +3085,67 @@ state, and M18 is the row that shows it: a bus with no role and no name is visib
    that branch changes `isTransferStation`'s signature, and this one adds the bus band beside the
    other zoom bands a few hundred lines away.
 
+#### Ruling: the landing
+
+**The ruling, as given.** "The map opens at the City preset (zoom 13, the design's own default),
+with its button pressed on landing; the band stays at 13. One test: the landing view draws buses and
+the City button reads pressed. Pins that recorded the old landing move, recorded as before."
+
+**What shipped.** The preset table moved to the top of `shared.js`, because the map is now
+constructed at one of its rows: `LANDING_PRESET` is the City row read out of that one table, so the
+landing cannot drift from the preset it claims to be. The active preset starts as City, so its
+button reads pressed from the first frame, and the existing handler clears it the moment the map
+moves away, exactly as after a press. **The one test is `buszoom.spec.js` D7i**: after the first
+poll and the station load, the zoom is 13, the root says `13` and `drawn`, `mapIsAt(City)` is true,
+City alone reads pressed, and every bus is drawn and reachable. M26 (the old landing) and M27 (City
+not pressed) are its rows.
+
+**What recorded the old landing, and moved.** Each before, as the ruling asks:
+
+| Where | Before | After |
+| --- | --- | --- |
+| `pins.spec.js` P6a, golden `busZoom/counts`, row `open` | `{"zoom": 12, "strip": "2", "registry": 2, "document": 2}` | `{"zoom": 13, ...}`, nothing else |
+| `chrome.spec.js` D1j | `["view-city:false", "view-rail:false", "view-region:false", "names-toggle:true"]`, "nothing is active until the rider asks for a view" | `view-city:true`, the rest unchanged, "the map lands at the City preset, and only City says so" |
+| `buszoom.spec.js` D7a, row `open` | `{zoom: 12, drawn: 0, inDocument: 2, registry: 2, strip: "2"}` | `{zoom: 13, drawn: 2, ...}` |
+| `buszoom.spec.js` D7b, first line | every bus HIDDEN, "open, zoom 12" | every bus DRAWN, "landing, zoom 13" |
+| `a11y.spec.js` A1w | "buses undrawn at the opening view", asserting zoom 12 | "buses drawn at the landing view", asserting zoom 13, with the City state now arriving by way of Rail so the zoomend sweep keeps a state that depends on it |
+| `after-open.png` | zoom 12, 0 of 2136 buses drawn | the City landing, 2136 of 2136 drawn |
+
+**What depended on the old landing's geometry, and keeps it.** `layout.spec.js` A4j and A4m had
+their premises ("a clearing move must be available") measured with the map at zoom 12 over lower
+Manhattan; at the City landing the same drag leaves none, so both now set that view before opening
+their popup, because their subject is the popup correction and not the landing. `smoke.spec.js` 17
+now moves the map unanimated: from 12 its animated zoom had not finished when it clicked either,
+and nothing at 12 was under the click, so it had been relying on an instant move without saying so.
+
+**One new undecidable, named and decided.** At 320 with the Key open, the City landing puts a subway
+train under the status note's box: behind the header's opaque surface, where no rider sees it, but
+axe reports the note's background as undecidable ("partially overlaps other elements") rather than
+stopping at that surface. `UNDECIDABLE_SHAPES` gains that one message for `#status` alone, and its
+decider is A1x, which already measured every Key row against the header's surface with one
+arithmetic and now measures the note too, in a stale state that gives it text. A third copy of the
+contrast arithmetic was the alternative, and that is the fifth defect shape.
+
+**The table, re-anchored.** Seven rows had proved a sentinel's guard by removing that sentinel's
+move to City, which put its reading back at the old landing. The landing is City now, so those
+removals would read a drawn bus and survive for the wrong reason. Each row moves the reading to
+Rail instead (M13, M14, M15, M17, M20, M21, M25), where the bus is undrawn and the guard has to
+bite. M7b is gated on the Rail state, because a bus born at the City landing is drawn and reachable
+without the sweep. That is standing rule 6's lesson again: a table is code, and a ruling that moves
+what the code starts from moves the table too.
+
 #### The gates, at the tip
 
-| Gate | At the tip |
+The code is `2355232` (the landing ruling); `6b447c2` changes only the mutation table's M13 anchor.
+
+| Gate | Result |
 | --- | --- |
-| `pytest` (backend) | **1738** passed. Run at `68d31da`; no backend file has changed on this branch at all |
+| `pytest` (backend) | **1738** passed, re-run at the tip; no backend file has changed on this branch at all |
 | `ruff check`, `ruff format --check`, `mypy` | clean; 79 files formatted; 30 source files |
 | contract-tier lint and format | clean |
-| contract API tier | **38** passed (reads the backend only, unchanged) |
-| contract browser tier, C6e1 to C6e5 | **5 of 5** at `2950451` |
-| node tier | **400 of 400** at `2950451` (397 at the base plus this branch's 3), and 400 again in a worktree with no `node_modules`, which is the condition `frontend-tests` runs in |
-| hermetic e2e | **341 of 347** at `2950451`, at load averages of 39 to 60 from other processes. The six: five pre-navigation clock races and A1v3's load timeout, all on the flake list. Re-run alone, four passed; D2w and A1v3 failed again; D2w then passed 1 of 1 and 4 of 4, and A1v3 fails at `d49e9a7` under the same load. 347 is the base's 318 plus P6's 3, D7's 8 and A1w's 18 |
-| `run_all.sh` | **15 of 15** at `2950451` |
-| the mutation table | 32 rows at `2950451`, as above |
+| contract API tier | **38** passed, re-run at the tip |
+| contract browser tier, C6e1 to C6e5 | **5 of 5** at `2355232` |
+| node tier | **400 of 400** at `6b447c2`, and 400 again in a worktree with no `node_modules`, the condition `frontend-tests` runs in |
+| hermetic e2e | **347 of 348** at `6b447c2` at load averages of 7 to 13. The one: smoke 25 (a ferry colour self-heals once routes load), which timed out waiting on the routes' retry, passed 3 of 3 alone, and passed in the previous full run on identical code (346 of 348 there, the two being the pre-navigation clock race, both passing alone). 348 is the base's 318, plus 3 for P6, 9 for D7 and 18 for A1w |
+| `run_all.sh` | **15 of 15** on the ruling's tree |
+| the mutation table | 34 rows at `6b447c2`, as above |

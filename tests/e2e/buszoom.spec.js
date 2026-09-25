@@ -24,11 +24,21 @@ const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
 const { pressView } = require("./views");
 
-// The frozen-clock boot the rest of the suite uses, so a poll happens only when a spec runs the
-// clock to one. That is what lets D7d say a zoom drew the buses WITHOUT a poll.
+/* The frozen-clock boot the rest of the suite uses, so a poll happens only when a spec runs the
+   clock to one. That is what lets D7d say a zoom drew the buses WITHOUT a poll.
+
+   INSTALLED ONE SECOND EARLY, AND THAT IS A RACE FIXED RATHER THAN A STYLE. The suite's boots
+   install the clock AT the frozen time and then pause at that same time, and an installed clock
+   runs: if a millisecond passes between the two calls, pauseAt is asked to go backwards and throws
+   "Cannot fast-forward to the past" before the page has even loaded. Measured on this machine at
+   load averages of 28 to 56, it failed D7b and D7d in one run of this file and six specs across
+   stations.spec.js and subway.spec.js in one full run. Installing earlier makes the pause always
+   a step forward, which is the order Playwright's own clock examples use; the page loads after
+   the pause either way, so it sees exactly the frozen time. The other boots are recorded in the
+   ledger's flake list rather than edited here. */
 async function boot(page) {
   const ctx = await installMocks(page);
-  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.install({ time: new Date(fx.FROZEN_MS - 1000) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
   await page.waitForFunction(() => buses.size === 2 && trains.size === 2 && pathTrainRecords.size === 2, null, {
@@ -287,4 +297,23 @@ test("D7f. what the rule does not govern: the clicked bus's route line, its popu
   await bullet.click();
   await expect(bullet).toHaveAttribute("aria-pressed", "false");
   expectEveryBus(await busReach(page), HIDDEN, "Rail, the focus cleared");
+});
+
+/* THE FAILURE POLICY, WHICH THREE COMMENTS STATED AND NOTHING TESTED until the mutation table
+   was being written and a row for it had nothing to die on. The stylesheet hides a bus only when
+   the root SAYS "hidden", and buses.js takes a bus out of reach only on the same word, so a root
+   whose script never wrote the band draws every bus and leaves every one reachable, as the map
+   did before this rule: too many buses is noise, and none at all while the strip counts them is
+   a map that is wrong. Asked at Rail, where the band would otherwise hide them, and through both
+   readers: the stylesheet by the drawn page, buses.js by calling its own sweep. */
+test("D7g. a root with no band on it draws every bus and leaves every one reachable", async ({ page }) => {
+  await boot(page);
+  await pressView(page, "view-rail");
+  expect(await drawnBuses(page)).toBe(0);
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute("data-bus-band");
+    paintBusBand();
+  });
+  expect(await drawnBuses(page)).toBe(2);
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `no band: ${id}`).toEqual(DRAWN);
 });

@@ -3,7 +3,8 @@
 A live map of NYC subways, buses, commuter rail (LIRR + Metro-North), PATH,
 and AirTrain JFK, built on the MTA's public real-time feeds plus the PANYNJ
 static data and a community PATH bridge feed.
-Buses report true GPS positions and move on the map; subways are placed at their
+Buses report true GPS positions and move on the map, drawn from the City zoom in
+(below it the Buses button still counts them); subways are placed at their
 next station using real-time arrival data joined against the static schedule,
 then glide between stations as time passes, following the actual route geometry.
 Each train's previous and next station are projected onto the route shape, and

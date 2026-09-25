@@ -857,6 +857,25 @@ body,
   transition: transform 0.5s ease; /* smooth turn between polls */
 }
 
+/* FOLLOW-UP 1: BUS MARKERS ARE DRAWN FROM CITY ZOOM (13) AND NOT BELOW IT. At Rail and Region
+   the layer was hundreds of 14px arrows across Queens and Brooklyn, each correct and none
+   readable. helpers.js's busMarkerBand decides and paintZoomBand writes the answer on the root
+   as data-bus-band, beside data-zoom; the label gate further down says why a band is read here
+   rather than an enumeration of zooms.
+
+   display:none, SO THE MARK IS NEITHER PAINTED NOR HIT. The element stays in the document, so
+   the registry, the strip's count and every sentinel that counts the class are unmoved, and the
+   zoomend that crosses 13 is all it takes to draw the buses again. buses.js takes the same
+   markers out of the accessibility tree and the click path from the same attribute; that half is
+   on the element because a stylesheet cannot write aria-hidden.
+
+   KEYED ON "hidden", NOT ON THE ABSENCE OF "drawn", so a root the script never reached draws
+   every bus as the map did before this rule. (0,3,0), above Leaflet's own display rule for a
+   marker icon at (0,1,0). */
+:root[data-bus-band="hidden"] .bus-marker {
+  display: none;
+}
+
 /* Square subway markers */
 .train-marker svg {
   width: 18px;

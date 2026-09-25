@@ -1562,7 +1562,7 @@
  },
  "legend": {
   "names": [
-   "Bus (arrow points where it's heading)",
+   "Bus (arrow points where it's heading); shown from City zoom",
    "Bus, heading unknown",
    "Subway train, at/approaching the stop shown",
    "Subway route line",

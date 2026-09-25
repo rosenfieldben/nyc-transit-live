@@ -10,17 +10,22 @@
    TWO WAYS TO ARRIVE, AND THEY ARE NOT INTERCHANGEABLE.
 
    pressView is the rider's path: the preset's own button, then the fly. The fly is 0.8s of
-   animation frames, and a paused clock (every boot in this suite that pins ages) runs none of
-   them until it is told to, so the caller says which clock the page has. Arrival is asserted
-   two ways that do not share a code path: the button's aria-pressed (mapIsAt, in shared.js) and
-   the root's data-zoom (paintZoomBand), because the first says the map is at the preset and the
-   second says the zoomend that repaints every band has run.
+   animation frames timed off Date.now, so it needs a clock that is INSTALLED AND PAUSED (the
+   frozen-clock boot every spec that pins ages uses), which runFor then walks through it.
+   Arrival is asserted two ways that do not share a code path: the button's aria-pressed
+   (mapIsAt, in shared.js) and the root's data-zoom (paintZoomBand), because the first says the
+   map is at the preset and the second says the zoomend that repaints every band has run.
 
    placeView is the preset's DESTINATION without the journey, read out of the app's own
-   VIEW_PRESETS table so it cannot name a zoom the buttons do not. It exists for one reading: a
-   popup carries the age of its feed in seconds, so a pin that runs the clock forward between
-   presets pins four different ages and not one popup. setView with animate:false moves the map
-   and fires zoomend synchronously without advancing the clock at all. */
+   VIEW_PRESETS table so it cannot name a zoom the buttons do not. setView with animate:false
+   moves the map and fires zoomend synchronously without advancing the clock at all, and that
+   is what two readings need:
+     - a popup carries its feed's age in seconds, so a pin that runs the clock between presets
+       pins four different ages and not one popup (pins.spec.js P6c);
+     - a page whose clock was FIXED rather than paused (a11y.spec.js's open(), because axe needs
+       its own timers to run) can never finish a fly at all: Date.now does not move, so Leaflet's
+       progress through the fly stays at zero. Measured, the first draft of the axe states waited
+       out every one of its twelve scans on a data-zoom that never changed. */
 const { expect } = require("@playwright/test");
 
 // The three presets, by the ids their buttons carry, in the order the view stack draws them.
@@ -38,12 +43,12 @@ async function atZoom(page, zoom) {
     .toBe(String(zoom));
 }
 
-// Press a preset's button and wait for the map to be there. `clock` is "paused" when the page's
-// clock was installed and paused (the frozen-clock boot), and "running" otherwise.
-async function pressView(page, id, { clock = "paused" } = {}) {
+// Press a preset's button and wait for the map to be there. The page's clock must be installed
+// and paused; the 1200ms is the 0.8s fly and a margin.
+async function pressView(page, id) {
   const zoom = await presetZoom(page, id);
   await page.locator(`#${id}`).click();
-  if (clock === "paused") await page.clock.runFor(1200);
+  await page.clock.runFor(1200);
   await expect(page.locator(`#${id}`)).toHaveAttribute("aria-pressed", "true");
   await atZoom(page, zoom);
   return zoom;

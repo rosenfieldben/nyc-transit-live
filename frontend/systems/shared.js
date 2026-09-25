@@ -809,6 +809,13 @@ function paintZoomBand() {
   // the same zoom the subway's names do, but they must not inherit the subway's DEGRADED band,
   // which arrives one zoom early and for a reason that has nothing to do with the ferry.
   document.documentElement.setAttribute("data-ferry-label-band", ferryLabelBand(zoom));
+  /* FOLLOW-UP 1: the bus markers' band, from the same integer zoom in the same call, so the
+     stylesheet's display rule and buses.js's reach both read one answer (helpers.js says why it
+     is a band). Then the reach itself, late-bound by name like applySubwayFocus, because
+     systems/buses.js loads after this file and owns the marks: the first paint at load runs
+     before it exists, and there are no buses to reach then anyway. */
+  document.documentElement.setAttribute("data-bus-band", busMarkerBand(zoom));
+  if (typeof paintBusBand === "function") paintBusBand();
   /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
      teach me: a network can have no interchange while every station lists its routes, and over
      that map the sentence "no station lists the routes that call there" is simply false. So the

@@ -15,6 +15,7 @@
 
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
+const { placeView } = require("./views");
 const fx = require("./fixtures/api");
 const { expectState } = require("./state");
 
@@ -144,6 +145,14 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
   await page.setViewportSize(viewport);
   await withBanner(page);
   await open(page);
+  /* FOLLOW-UP 1: MEASURED AT CITY, because a bus is display:none below it and the map opens at
+     12. An undrawn marker's box is 0x0, so the visual-size assertion below ("must not have been
+     visually inflated") passed for the bus over a box that does not exist, which is a test that
+     cannot fail. City is the one preset where every family on this list is drawn, and the drawn
+     box is now asserted for each of them rather than assumed. The destination without the fly,
+     because nothing here is about the presets and at 320 the stack shares the screen with the
+     banner this spec raises. */
+  await placeView(page, "view-city");
 
   // Markers are sampled by system rather than exhaustively: they share one rule, and
   // naming them individually says which system regressed.
@@ -171,6 +180,8 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
 
   for (const [cls, sizes] of Object.entries(markers)) {
     if (cls.startsWith("__")) continue;
+    // Drawn, so the size claims below are about a box a rider can see (follow-up 1).
+    expect(Math.min(...sizes.icon), `${cls} is not drawn here, so nothing below measures it`).toBeGreaterThan(0);
     expect(sizes.hit[0], `${cls} hit width`).toBeGreaterThanOrEqual(HIT_FLOOR);
     expect(sizes.hit[1], `${cls} hit height`).toBeGreaterThanOrEqual(HIT_FLOOR);
     /* AND THE VISUAL SIZE IS UNCHANGED. The floor is met with transparent hit area, not by

@@ -9,6 +9,7 @@ const fx = require("./fixtures/api");
 const { installMocks, json, emptyFeedAt } = require("./mock");
 // MR5: a mark is one token when this file pins a popup's markup (popup.js says why).
 const { withoutMarks } = require("./popup");
+const { pressView } = require("./views");
 
 // Common setup: intercept everything, freeze the clock at FROZEN_MS, then load the
 // app. Returns the mock ctx so a test can flip overrides / read hit counts.
@@ -279,6 +280,10 @@ test("6. layer toggle: Railroads hides then restores markers, dots and lines", a
 test("7. bus route: clicking a bus draws the line and banner, clear removes both", async ({ page }) => {
   await boot(page);
   await waitForReady(page);
+  /* FOLLOW-UP 1: A BUS IS CLICKABLE FROM CITY ZOOM, because below it a bus is not drawn and takes
+     no pointer (the map opens at 12). This spec clicks, which hit-tests, so it goes where a rider
+     would have to go to do the same. buszoom.spec.js D7b is what says a click cannot land below. */
+  await pressView(page, "view-city");
 
   await busMarkers(page).first().click();
 

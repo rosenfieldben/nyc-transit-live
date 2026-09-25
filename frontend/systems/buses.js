@@ -88,6 +88,46 @@ function busMarkerName(bus, now = correctedNow()) {
   return busName(bus, busPosition(bus, now));
 }
 
+/* FOLLOW-UP 1: A BUS THE ZOOM HAS NOT DRAWN IS ALSO OUT OF REACH, which is the treatment MR2
+   gave an off-focus train (paintSubwayFocusReach in systems/subway.js) for the same reason. The
+   stylesheet takes the mark off the screen below City zoom; this takes it out of the
+   accessibility tree and out of the click path, so a screen reader does not read out a bus the
+   map is not showing and nothing can land on one. Both come back when the band says "drawn".
+
+   IT READS THE ROOT'S ATTRIBUTE, NOT THE ZOOM. data-bus-band is the answer the stylesheet's
+   display rule reads (paintZoomBand writes it from busMarkerBand), so the two readers cannot
+   disagree about which zoom counts, and a page whose script never wrote it leaves every bus
+   drawn and reachable, which is the failure policy helpers.js gives.
+
+   WRITTEN ON THE ELEMENT, SO IT IS REWRITTEN WHENEVER LEAFLET BUILDS ONE. Hiding the Buses feed
+   removes every marker and showing it again builds a fresh element for each, which keeps the
+   icon's class (so the stylesheet still applies) and loses anything written as an attribute or
+   an inline style; labeledMarker's `add` hook is the same repair for the accessible name. The
+   hook is registered where the marker is made, in applyBuses. A setIcon today reuses the
+   element it is handed and so keeps both, and buszoom.spec.js D7c asserts that rather than
+   leaving it to a Leaflet detail. */
+function busesDrawn() {
+  return document.documentElement.getAttribute("data-bus-band") !== "hidden";
+}
+
+function paintBusReach(marker) {
+  const el = marker.getElement();
+  if (!el) return; // not on the map: a hidden feed, which the add hook repaints on return
+  if (busesDrawn()) {
+    el.removeAttribute("aria-hidden");
+    el.style.pointerEvents = "";
+    return;
+  }
+  el.setAttribute("aria-hidden", "true");
+  el.style.pointerEvents = "none";
+}
+
+// Every bus, when the band may have moved. Called by paintZoomBand in systems/shared.js on
+// every zoomend and every feed toggle.
+function paintBusBand() {
+  for (const record of buses.values()) paintBusReach(record.marker);
+}
+
 // Re-dim every bus from the larger of its source's age and its own fix's (C2, 6.3).
 // Buses do not glide, so there is no freeze clock here: a bus sits at its last
 // reported position either way.
@@ -389,15 +429,21 @@ function applyBuses(data) {
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
-      newRecord.marker = labeledMarker([bus.latitude, bus.longitude], {
+      const marker = labeledMarker([bus.latitude, bus.longitude], {
         icon: busIcon(bus),
         // Dim on the first frame, from the larger of the system's age and the fix's own.
         opacity: markerOpacity(vehicleMarkerAge("buses", systemAgeOf("buses", "buses"), bus)),
       }, busMarkerName(bus))
         .bindPopup(() => busPopup(newRecord), POPUP_OPTIONS)
         .on("popupopen", () => showBusRoute(newRecord.latest))
-        .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker))
-        .addTo(busLayer);
+        .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker));
+      /* Follow-up 1: out of reach below City zoom from its first frame, and again every time
+         Leaflet builds its element. Registered BEFORE addTo so the first add is one of them, and
+         on a name bound here rather than on newRecord.marker, because that first add fires
+         INSIDE addTo, before any assignment of its result has happened. (It was written against
+         newRecord.marker first, and every bus load threw on an undefined marker.) */
+      marker.on("add", () => paintBusReach(marker));
+      newRecord.marker = marker.addTo(busLayer);
       buses.set(bus.id, newRecord);
     }
   }

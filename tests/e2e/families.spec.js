@@ -30,6 +30,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { pressView } = require("./views");
 
 const DESKTOP = { width: 1280, height: 720 };
 
@@ -90,12 +91,23 @@ const stale = (data, key) => ({
    `drawn` IS el.style.opacity, WHICH IS WHERE setOpacity WRITES, and never the marker option
    that asked for it. One of the four defect shapes this phase keeps producing is believing the
    model over the drawn page. */
+/* FOLLOW-UP 1: A MARK IS READ WHERE IT IS DRAWN, OR NOT AT ALL. Bus markers are display:none
+   below City zoom, and every field below that a rider could see (the resolved matrix, the
+   opacity they are dimmed to) is then a property of something nobody sees: Chrome resolves the
+   arrow's transform to `none` inside a display:none subtree, which is how D4f found it, and an
+   opacity on an undrawn mark is a value and not a treatment. So this throws on an undrawn mark
+   rather than returning one, for every family, and a spec about a bus goes to City first. That
+   is a guard for the third defect shape rather than a fix for one spec: a later rule that hides
+   another family below some zoom fails here by name instead of passing over nothing. */
 const marks = (page, family) =>
   page.evaluate((name) => {
     const store =
       name === "path" ? pathTrainRecords : name === "ferry" ? ferryBoatRecords : buses;
     return [...store.entries()].map(([id, record]) => {
       const el = record.marker.getElement();
+      if (getComputedStyle(el).display === "none") {
+        throw new Error(`${name} ${id} is not drawn at zoom ${map.getZoom()}; read it where it is drawn`);
+      }
       const svg = el.querySelector("svg");
       const shape = svg.querySelector("path, circle, rect");
       const style = getComputedStyle(shape);
@@ -499,6 +511,8 @@ test("D4e. AirTrain draws a gray dashed guideway and the commuter square", async
 
 test("D4f. a bus is an arrow when a heading is served and a dot when one is not", async ({ page }) => {
   await open(page);
+  // At City, because a bus is not drawn below it (follow-up 1) and this reads the drawn mark.
+  await pressView(page, "view-city");
   const rows = await marks(page, "bus");
   expect(rows).toHaveLength(2);
   const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
@@ -579,6 +593,8 @@ test("D4g. a bus on a stale feed dims, and never trades its glyph for the other 
   await open(page, (c) => {
     c.overrides.buses = (route) => json(route, stale(fx.buses().data, "data"));
   });
+  // At City, for D4f's reason: a dimmed bus is only a treatment where the bus is drawn.
+  await pressView(page, "view-city");
   const rows = await marks(page, "bus");
   expect(rows).toHaveLength(2);
   for (const row of rows) {

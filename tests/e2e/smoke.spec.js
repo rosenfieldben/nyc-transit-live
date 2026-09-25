@@ -9,6 +9,7 @@ const fx = require("./fixtures/api");
 const { installMocks, json, emptyFeedAt } = require("./mock");
 // MR5: a mark is one token when this file pins a popup's markup (popup.js says why).
 const { withoutMarks } = require("./popup");
+const { pressView } = require("./views");
 
 // Common setup: intercept everything, freeze the clock at FROZEN_MS, then load the
 // app. Returns the mock ctx so a test can flip overrides / read hit counts.
@@ -279,6 +280,10 @@ test("6. layer toggle: Railroads hides then restores markers, dots and lines", a
 test("7. bus route: clicking a bus draws the line and banner, clear removes both", async ({ page }) => {
   await boot(page);
   await waitForReady(page);
+  /* FOLLOW-UP 1: A BUS IS CLICKABLE FROM CITY ZOOM, because below it a bus is not drawn and takes
+     no pointer (the map opens at 12). This spec clicks, which hit-tests, so it goes where a rider
+     would have to go to do the same. buszoom.spec.js D7b is what says a click cannot land below. */
+  await pressView(page, "view-city");
 
   await busMarkers(page).first().click();
 
@@ -686,8 +691,13 @@ test("17. PATH click targets: the station dot opens arrivals, the diamond above 
 
   // WTC has a train placed on it in the fixtures (p-1 shares its coords).
   // Zoom in so neighboring fixture markers cannot straddle the click point.
+  // UNANIMATED, which is what this spec always relied on and never said. From where the map
+  // used to open (zoom 12) the animated zoom had not finished either when the first click was
+  // made, and nothing at 12 was under the click; from the City preset the map now lands on
+  // (follow-up 1's ruling) the unfinished zoom put the click beside the station. The view is
+  // this spec's premise, and a premise should arrive whole.
   await page.evaluate(() => {
-    map.setView([40.71271, -74.01193], 14);
+    map.setView([40.71271, -74.01193], 14, { animate: false });
   });
   // Container-point lookups are recomputed before EACH click: opening a popup
   // auto-pans the map, so a point captured earlier goes stale and a click at

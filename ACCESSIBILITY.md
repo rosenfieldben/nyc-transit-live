@@ -335,6 +335,17 @@ The map container itself stays focusable so Leaflet's arrow-key panning still wo
 sits on top of a station, its popup carries an "Also here" link to that station's
 arrivals so the station stays reachable (`crosslink.spec.js A3a`, `A3b`).
 
+**Buses are drawn from City zoom.** Below zoom 13, the City preset's zoom, the map draws
+no bus marker, because at Rail and Region the bus layer was hundreds of arrows too small
+to read. The map opens at the City preset, with its button pressed, so a rider lands on a
+view that draws every bus (`buszoom.spec.js D7i`). A bus the map is not drawing is also hidden from assistive technology and takes
+no pointer, so a screen reader is never offered a bus the screen is not showing, and the
+same zoomend that draws the buses again brings them back into the tree
+(`buszoom.spec.js D7b`, `D7c`). The Buses button still counts every bus at every zoom,
+and its tooltip and the Key's bus row both say "shown from City zoom" so the count and
+the map do not disagree in silence (`buszoom.spec.js D7e`). The page is scanned with the
+buses on both sides of that line, at three widths and in both themes (`a11y.spec.js A1w`).
+
 **The map is still a picture.** The tiles are third-party imagery with no text
 alternative. Geographic relationships, route shapes and vehicle positions are not
 available in text; what is available in text is arrivals, by station.

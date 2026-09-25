@@ -27,6 +27,7 @@ const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
 const { danglingCitations, citedPairs } = require("../specids");
 const { expectState } = require("./state");
+const { placeView } = require("./views");
 
 /* THE GATE'S SCAN, IN ONE PLACE, because A1l's whole job is to prove THIS scan has teeth.
    Round 4: A1l built its own AxeBuilder, so it measured axe-core rather than the gate, and
@@ -337,6 +338,18 @@ const UNDECIDABLE_SHAPES = [
   },
   {
     name: "the skip link, judged by a static rule that cannot run the page",
+    rule: "color-contrast",
+    /* FOLLOW-UP 1, THE LANDING RULING. The map lands at the City preset, and at 320 with the Key
+       open a subway train is under the status note's box: behind the header's opaque surface, so
+       no rider sees it, but axe reports the note's background as undecidable rather than stopping
+       at that surface. Scoped to the note alone and to this one message. */
+    message: /background color could not be determined because it partially overlaps other elements/,
+    where: (id) => id === "#status",
+    decider:
+      "a11y.spec.js A1x measures the status note's ink against the header's own surface, and asserts " +
+      "that surface opaque, at 1280, 375 and 320 in both themes, in the stale state that gives the note text.",
+  },
+  {
     rule: "skip-link",
     // "Skip link target should become visible on activation". The panel is hidden at scan
     // time, and no static rule can know that activating the link opens it.
@@ -387,7 +400,7 @@ function violations(results) {
 // examined. The floors are set well under what is observed so an axe-core bump that retires
 // a rule cannot redden the build; the named targets are what catch a scope that silently
 // stopped reaching a surface.
-function assertScanned(results, { targets, label }) {
+function assertScanned(results, { targets, examinedBy = [], label }) {
   const checked = results.passes.flatMap((p) => p.nodes.map((n) => n.target.join(" ")));
   expect(results.passes.length, `${label}: axe rules that ran and passed`).toBeGreaterThanOrEqual(15);
   expect(checked.length, `${label}: nodes axe actually examined`).toBeGreaterThanOrEqual(40);
@@ -398,7 +411,30 @@ function assertScanned(results, { targets, label }) {
   for (const target of targets) {
     expect(checked.some((t) => t.includes(target)), `${label}: axe must have examined ${target}`).toBe(true);
   }
+  /* FOLLOW-UP 1: WHICH RULES A NODE WAS EXAMINED BY, for a state whose whole point is that a
+     node has left the accessibility tree or come back into it.
+
+     "axe examined it" CANNOT BE THE QUESTION, which the first draft of the bus states measured
+     by asking it: at Rail, with every bus display:none AND aria-hidden, axe still reported both
+     under two rules, because some rules run on hidden content on purpose. aria-hidden-focus is
+     the clearest: it SELECTS aria-hidden elements, to check that nothing inside one can take
+     focus. So the question is per rule. A bus that axe checked under aria-hidden-focus is one axe
+     saw as hidden; a bus it checked under role-img-alt, which applies only to an image in the
+     tree, is one a screen reader is offered. Every outcome counts, not only the passes, so a
+     node reported as a violation or an undecidable was still examined. */
+  for (const { rule, node, want } of examinedBy) {
+    const nodes = ["passes", "violations", "incomplete"].flatMap((kind) =>
+      results[kind].filter((r) => r.id === rule).flatMap((r) => r.nodes.map((n) => n.target.join(" "))),
+    );
+    expect(nodes.some((t) => node.test(t)), `${label}: ${rule} examined ${node}`).toBe(want);
+  }
 }
+
+/* FOLLOW-UP 1: A BUS MARKER AS AXE NAMES IT, which is by its accessible name and not its class
+   (div[aria-label="M15 bus, heading east"]). Anchored at both ends, because the svg INSIDE a bus
+   is aria-hidden by design and axe names it with this as a prefix; a substring match would read
+   that decorative child as the marker. */
+const BUS_MARKER_NODE = /^div\[aria-label="[^"]* bus, heading [^"]*"\]$/;
 
 /* THE SIX STATES, AND WHY SOME OF THEM USED TO HIDE WHAT OTHERS SHOWED.
    Before the landmarks were added, `landmark-one-main` and `page-has-heading-one` VIOLATED
@@ -621,6 +657,91 @@ const STATES = [
     // popup rule reaches for a token.
     themes: ["light", "dark"],
   },
+  /* FOLLOW-UP 1: THE BUS BAND, SCANNED FROM BOTH SIDES AND AT THE DOOR. Below City zoom every bus
+     marker is display:none and also aria-hidden with its pointer-events off; at City all of that
+     comes back. Three states, each at every width this suite uses and in both themes: the LANDING,
+     untouched, which since the operator's ruling is the City preset with its buses drawn and the
+     only state reached without moving the map, so the buses' reach there is what they were born
+     with; Rail, after a move, with every bus hidden; and City again AFTER Rail, where the buses are
+     back only because the zoomend sweep put them back. The landing state used to be "undrawn at
+     the opening view", at zoom 12, until the ruling moved the landing; the review of this
+     follow-up is why it exists at all, having removed the add hook and found the two moved states
+     both still passing.
+
+     EACH reach() PROVES ITS STATE OFF THE DRAWN PAGE BEFORE THE SCAN, which is the round 4 lesson
+     "map alone" records: a state whose name nothing asserts can quietly become a copy of another.
+     AND WHICH AXE RULES SAW A BUS IS ASKED PER RULE (examinedBy, at assertScanned), not by naming
+     `bus-marker` as a target: axe names a marker by its accessible name, so no target ever
+     contains the class, and a target list cannot say "examined as hidden" from "examined as an
+     image". At City it is `role-img-alt` that must have seen one, and that half is the only guard
+     against a drawn bus that has lost its role and its name (mutation M18).
+
+     placeView AND NOT THE BUTTON, because this file fixes the clock rather than pausing it and a
+     fly cannot finish under a fixed clock (views.js says why). The scan is of the destination;
+     that the buttons reach it is buszoom.spec.js D7a's. */
+  {
+    key: "buses drawn at the landing view",
+    alerts: 0,
+    viewports: [DESKTOP, PHONE, NARROW],
+    themes: ["light", "dark"],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      expect(await page.evaluate(() => map.getZoom()), "the map is still where it landed").toBe(13);
+      await expect(page.locator(".bus-marker").filter({ visible: true })).toHaveCount(2);
+      await expect(page.locator(".bus-marker[aria-hidden]")).toHaveCount(0);
+    },
+    targets: ["#view-stack", "leaflet-control-zoom"],
+    examinedBy: [
+      { rule: "role-img-alt", node: BUS_MARKER_NODE, want: true },
+      { rule: "aria-hidden-focus", node: BUS_MARKER_NODE, want: false },
+    ],
+  },
+  {
+    key: "buses undrawn at Rail",
+    alerts: 0,
+    viewports: [DESKTOP, PHONE, NARROW],
+    themes: ["light", "dark"],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      await placeView(page, "view-rail");
+      await expect(page.locator(".bus-marker")).toHaveCount(2);
+      await expect(page.locator(".bus-marker").filter({ visible: true })).toHaveCount(0);
+      await expect(page.locator(".bus-marker[aria-hidden='true']")).toHaveCount(2);
+    },
+    targets: ["#view-stack", "leaflet-control-zoom"],
+    // THE CLAIM THIS STATE EXISTS FOR, asked of axe rule by rule (assertScanned says why).
+    examinedBy: [
+      { rule: "aria-hidden-focus", node: BUS_MARKER_NODE, want: true },
+      { rule: "role-img-alt", node: BUS_MARKER_NODE, want: false },
+    ],
+  },
+  {
+    key: "buses drawn at City, after Rail",
+    alerts: 0,
+    viewports: [DESKTOP, PHONE, NARROW],
+    themes: ["light", "dark"],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      // By way of Rail, so the buses are drawn here only because the sweep drew them again: the
+      // landing state above is the one reached without a move.
+      await placeView(page, "view-rail");
+      await expect(page.locator(".bus-marker").filter({ visible: true })).toHaveCount(0);
+      await placeView(page, "view-city");
+      await expect(page.locator(".bus-marker").filter({ visible: true })).toHaveCount(2);
+      await expect(page.locator(".bus-marker[aria-hidden]")).toHaveCount(0);
+    },
+    targets: ["#view-stack"],
+    examinedBy: [
+      { rule: "role-img-alt", node: BUS_MARKER_NODE, want: true },
+      { rule: "aria-hidden-focus", node: BUS_MARKER_NODE, want: false },
+    ],
+  },
   {
     key: "banner active",
     alerts: 2,
@@ -743,7 +864,7 @@ for (const state of STATES) {
         const results = await scanPage(page);
         expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
         await assertUndecidablesAreKnown(page, results, label);
-        assertScanned(results, { targets: state.targets, label });
+        assertScanned(results, { targets: state.targets, examinedBy: state.examinedBy, label });
       });
     }
   }
@@ -762,11 +883,20 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
      BOTH THEMES, because MR1 is the stage that gave this page a second one and nothing in
      this suite had ever scanned it. AND THREE WIDTHS, because the panel is two columns at
      1280 and one below, and the row that straddles the scroll boundary differs at each. */
+  /* AND THE STATUS NOTE BESIDE THEM, since follow-up 1's landing ruling. The map lands at the City
+     preset now, and at 320 with the Key open a subway train sits under the note: behind the
+     header's opaque surface, where no rider sees it, but under the note's box, and axe reports
+     the note's background as undecidable ("partially overlaps other elements") rather than
+     stopping at the surface. So the question axe declined is asked here, of the same surface and
+     with the same arithmetic as every row, and the UNDECIDABLE_SHAPES entry for #status names
+     this spec as its decider. A stale railroad is what gives the note text to measure; it changes
+     nothing about the rows. */
   for (const viewport of [DESKTOP, PHONE, NARROW]) {
     await page.setViewportSize(viewport);
-    await open(page, { alerts: 0 });
+    await open(page, { alerts: 0, staleRailroad: true });
     await page.locator("#legend-toggle").click();
     await expect(page.locator("#legend")).toBeVisible();
+    await expect(page.locator("#status")).toBeVisible();
 
     for (const theme of ["light", "dark"]) {
       await setTheme(page, theme);
@@ -787,15 +917,17 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
         const panel = getComputedStyle(document.getElementById("panel")).backgroundColor;
         const surface = /rgba?\([^)]*,\s*0?\.\d+\)/.test(panel) ? null : parse(panel);
         const rows = [...document.querySelectorAll("#legend .legend-row, #legend .legend-note")];
+        const inkOf = (el, i) => {
+          const ink = parse(getComputedStyle(el).color);
+          if (!ink || !surface) return { i, ink: getComputedStyle(el).color, ratio: null };
+          const [hi, lo] = [lum(ink), lum(surface)].sort((a, b) => b - a);
+          return { i, ink: getComputedStyle(el).color, ratio: +((hi + 0.05) / (lo + 0.05)).toFixed(2) };
+        };
         return {
           surface,
           panel,
-          rows: rows.map((row, i) => {
-            const ink = parse(getComputedStyle(row).color);
-            if (!ink || !surface) return { i, ink: getComputedStyle(row).color, ratio: null };
-            const [hi, lo] = [lum(ink), lum(surface)].sort((a, b) => b - a);
-            return { i, ink: getComputedStyle(row).color, ratio: +((hi + 0.05) / (lo + 0.05)).toFixed(2) };
-          }),
+          rows: rows.map(inkOf),
+          status: inkOf(document.getElementById("status"), "status"),
         };
       });
 
@@ -813,6 +945,8 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
       expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(19);
       const dim = measured.rows.filter((r) => r.ratio === null || r.ratio < 4.5);
       expect(dim, `${label}: every Key panel row must clear AA on the header's surface`).toEqual([]);
+      expect(measured.status.ratio, `${label}: the status note must clear AA on the header's surface`)
+        .toBeGreaterThanOrEqual(4.5);
     }
   }
 });

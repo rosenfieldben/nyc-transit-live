@@ -553,6 +553,47 @@ function ferryLabelBand(zoom) {
   return zoom >= FERRY_LABEL_ZOOM ? "all" : "none";
 }
 
+/* ----- FOLLOW-UP 1: THE BUS MARKERS' BAND ------------------------------------------------
+
+   THE FINDING. At the Rail preset (zoom 11) and at Region (zoom 10) the bus layer is hundreds
+   of 14px arrows and dots across Queens and Brooklyn, each one correct and none of them
+   readable, and together they are the noisiest thing on the map. The design gave the arrow a
+   size and a hue and said nothing about zoom. Follow-up 1 of the phase close-out.
+
+   THE RULE. Bus markers are drawn from City zoom (13) up and not below it. It is a stylesheet
+   rule and not a re-render: every marker stays in the document at every zoom, the registry and
+   the feed strip's count do not move, and a rider who zooms in sees the buses on the zoomend
+   that crosses 13 rather than on the next poll. The clicked bus's route line is not a marker
+   and is not governed by this; neither is route focus, which is the subway's.
+
+   A BAND ON ITS OWN ATTRIBUTE, for the reason style.css gives at the label gate: CSS cannot
+   compare integers, and a stylesheet that enumerated data-zoom values would fail silently at
+   any zoom it did not list. So this decides "drawn" or "hidden", paintZoomBand writes it on the
+   root as data-bus-band in the same call that writes data-zoom, and BOTH readers read that one
+   attribute: style.css's display rule, and buses.js's aria-hidden and pointer-events. One
+   decision and one value, so what a rider sees and what a screen reader or a pointer can reach
+   cannot disagree.
+
+   A ZOOM THAT IS NOT A NUMBER IS "hidden", the same answer every band above gives. The
+   stylesheet keys on "hidden" rather than on the absence of "drawn", though, and that is the
+   other half of the failure policy: a page whose script never wrote the attribute draws every
+   bus, as it did before this rule. Too many buses is noise; no buses while the strip counts a
+   thousand is a map that is wrong. */
+const BUS_MARKER_ZOOM = 13;
+
+function busMarkerBand(zoom) {
+  if (!Number.isFinite(zoom)) return "hidden";
+  return zoom >= BUS_MARKER_ZOOM ? "drawn" : "hidden";
+}
+
+/* AND THE WORDS THAT SAY SO, because the strip counts every bus at every zoom and the map at
+   Rail draws none, and those two must not disagree in silence. Two surfaces carry them: the bus
+   feed button's tooltip (FEEDS below, through feedTooltip) and the Key's bus row, which is
+   static markup and so is held to this constant by buszoom.spec.js D7e rather than built from
+   it. "City" is the preset whose zoom this rule is keyed to; nothing here can know that, so D7a
+   is what holds the two together, by pressing City and counting what is drawn. */
+const BUS_ZOOM_WORDS = "shown from City zoom";
+
 /* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
    zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
    have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
@@ -736,9 +777,12 @@ function nextTheme(current) {
    realtime feed anywhere behind it, so it has no age to report and no vehicles to count.
    Its dot is the scheduled-only gray permanently, and it shows no count, because a count
    of its stations would be a different kind of number wearing the same badge. */
+/* FOLLOW-UP 1: `note` is a clause a feed's tooltip carries whatever its state, and only the
+   buses have one: BUS_ZOOM_WORDS, which says why the map below City zoom draws none of the
+   buses this button counts. */
 const FEEDS = [
   { key: "subway", name: "Subway", source: "subways", system: null, tick: "#0039A6" },
-  { key: "buses", name: "Buses", source: "buses", system: null, tick: "#605d5d" },
+  { key: "buses", name: "Buses", source: "buses", system: null, tick: "#605d5d", note: BUS_ZOOM_WORDS },
   { key: "lirr", name: "LIRR", source: "railroads", system: "LIRR", glyph: "L" },
   { key: "mnr", name: "Metro-North", source: "railroads", system: "MNR", glyph: "M" },
   { key: "njt", name: "NJ Transit", source: "njt", system: "njt", glyph: "NJ" },
@@ -789,9 +833,17 @@ function feedStateWords({ state, age = null } = {}) {
    THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its tooltip
    says "show". A tooltip that said "hide" on a button that shows would be wrong in the one place a
    rider looks to find out what pressing it does. That clause is the reason feedStateWords exists
-   separately: it is the half a popup must not repeat. */
-function feedTooltip({ name, state, age = null, hidden = false } = {}) {
-  return `${feedStateWords({ state, age })} · ${hidden ? "show" : "hide"} ${name}`;
+   separately: it is the half a popup must not repeat.
+
+   FOLLOW-UP 1: A FEED'S NOTE GOES BETWEEN THE TWO, so the action stays last, which is where the
+   design puts it and where a rider looks for what the press will do: "Live · 12s · shown from
+   City zoom · hide Buses". The note is about what the MAP draws, not about the feed's state, so
+   it is not feedStateWords' and a popup footer never says it. */
+function feedTooltip({ name, state, age = null, hidden = false, note = null } = {}) {
+  const clauses = [feedStateWords({ state, age })];
+  if (note) clauses.push(note);
+  clauses.push(`${hidden ? "show" : "hide"} ${name}`);
+  return clauses.join(" · ");
 }
 
 /* MR5 (ruling Q2): THE POPUP'S FRESHNESS FOOTER, which is the feed strip's dot at the popup.
@@ -1189,7 +1241,7 @@ function feedStripModel({ counts = {}, ages = {}, hidden = null } = {}) {
       dot: state,
       pressed: !isOff,
       off: isOff,
-      title: feedTooltip({ name: feed.name, state, age, hidden: isOff }),
+      title: feedTooltip({ name: feed.name, state, age, hidden: isOff, note: feed.note ?? null }),
     };
   });
 }
@@ -5985,6 +6037,8 @@ if (typeof module !== "undefined" && module.exports) {
     airtrainLineStyle, AIRTRAIN_LINE_DASH, AIRTRAIN_LINE_WEIGHT,
     busMarkSvg, busHasHeading, BUS_MARK_BOX, BUS_ARROW_PATH, BUS_DOT_R,
     railLabelBand, RAIL_LABEL_ZOOM, ferryLabelBand, FERRY_LABEL_ZOOM,
+    // Follow-up 1: the bus markers' band and the words that explain it.
+    busMarkerBand, BUS_MARKER_ZOOM, BUS_ZOOM_WORDS,
     railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     composeAnnouncements, withheldTrains, withheldClause,

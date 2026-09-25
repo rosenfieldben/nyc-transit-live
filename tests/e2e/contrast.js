@@ -159,8 +159,15 @@ async function measureMarkContrast(page) {
          paints both: a `<rect>` or a `<path>` whose author set no fill really is drawn black,
          which is a defect worth measuring rather than a phantom worth dropping. */
       const PAINTS_FILL = new Set(["path", "circle", "rect", "text", "ellipse", "polygon"]);
+      /* FOLLOW-UP 1: ONLY A MARK THAT IS DRAWN IS MEASURED. Bus markers are display:none below City
+         zoom, and their paints still COMPUTE there, so a reading at the opening zoom used to report
+         the bus family from marks nobody sees and theme.spec.js D5d's "a family that stopped drawing
+         fails here" could not fail for it. An undrawn mark is skipped instead, so a caller reading
+         where a family is not drawn loses that family and fails by name. families.spec.js's marks()
+         learned the same rule in the same follow-up; this is the other reader of the same paint. */
       for (const [family, selector] of Object.entries(markFamilies)) {
         for (const el of document.querySelectorAll(selector)) {
+          if (getComputedStyle(el).display === "none") continue;
           const paints = [];
           for (const shape of el.querySelectorAll("path, circle, rect, text, line, polyline")) {
             const tag = shape.tagName.toLowerCase();

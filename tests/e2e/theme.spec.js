@@ -23,6 +23,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks } = require("./mock");
 const { measureMarkContrast, bestPerFamily } = require("./contrast");
+const { placeView } = require("./views");
 const fx = require("./fixtures/api");
 
 const DESKTOP = { width: 1280, height: 720 };
@@ -50,6 +51,13 @@ async function open(page) {
     { timeout: 15_000 },
   );
   await page.clock.runFor(1000);
+  /* AT CITY, BECAUSE THAT IS WHERE EVERY FAMILY IS DRAWN (follow-up 1). Bus markers are
+     display:none below 13 and the map opens at 12, so every bus reading in this file (the swap's
+     fill, the route line against its own bus, D5c's paints, D5d's contrast) was reading a mark no
+     rider sees; the review of that follow-up found them still there after four other readers had
+     moved. One line here moves all of them, and "every family drawn before anything is asserted"
+     above is true again. The destination without the fly, because nothing here is about presets. */
+  await placeView(page, "view-city");
 }
 
 const toggle = (page) => page.locator("#theme-toggle");

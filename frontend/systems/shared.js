@@ -20,6 +20,23 @@
 // carries the same limitation in full, and the README states it for riders.
 const motionAtLoad = motionAllowed();
 
+/* THE THREE VIEW PRESETS, declared here rather than beside their buttons further down, because the
+   map LANDS on one of them and has to be constructed at it. The controls, the fly and the pressed
+   state are the "MR1: the view presets" section below, which says what each part is for.
+
+   THE LANDING IS THE CITY PRESET, by the operator's ruling on follow-up 1. The map opened at a
+   zoom of its own, 12, one below the zoom the bus markers are drawn from, so a rider landed on a
+   strip counting every bus and a map drawing none. The ruling moved the landing rather than the
+   rule: City is the design's own default view, the bus band stays at 13, and the button that names
+   the view the rider lands on reads pressed from the first frame. Read out of this one table, so the
+   landing cannot drift from the preset it claims to be. */
+const VIEW_PRESETS = [
+  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
+  { id: "view-rail", center: [40.76, -73.96], zoom: 11 },
+  { id: "view-region", center: [40.79, -73.9], zoom: 10 },
+];
+const LANDING_PRESET = VIEW_PRESETS.find((preset) => preset.id === "view-city");
+
 const map = L.map("map", {
   zoomAnimation: motionAtLoad,
   fadeAnimation: motionAtLoad,
@@ -31,7 +48,7 @@ const map = L.map("map", {
   // header now owns the top edge, so the control moves out from under it rather than the
   // chrome being nudged around it.
   zoomControl: false,
-}).setView([40.7128, -74.006], 12);
+}).setView(LANDING_PRESET.center, LANDING_PRESET.zoom);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 
 // Everything this app owns follows the preference LIVE. One class on the root element
@@ -809,6 +826,13 @@ function paintZoomBand() {
   // the same zoom the subway's names do, but they must not inherit the subway's DEGRADED band,
   // which arrives one zoom early and for a reason that has nothing to do with the ferry.
   document.documentElement.setAttribute("data-ferry-label-band", ferryLabelBand(zoom));
+  /* FOLLOW-UP 1: the bus markers' band, from the same integer zoom in the same call, so the
+     stylesheet's display rule and buses.js's reach both read one answer (helpers.js says why it
+     is a band). Then the reach itself, late-bound by name like applySubwayFocus, because
+     systems/buses.js loads after this file and owns the marks: the first paint at load runs
+     before it exists, and there are no buses to reach then anyway. */
+  document.documentElement.setAttribute("data-bus-band", busMarkerBand(zoom));
+  if (typeof paintBusBand === "function") paintBusBand();
   /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
      teach me: a network can have no interchange while every station lists its routes, and over
      that map the sentence "no station lists the routes that call there" is simply false. So the
@@ -829,6 +853,18 @@ function paintZoomBand() {
   }
 }
 map.on("zoomend", paintZoomBand);
+/* FOLLOW-UP 1: AND WHEN A MOVE ENDS AT A ZOOM THE ROOT DOES NOT SAY, which is a fly cut short.
+   A drag or a touch during a preset's 0.8s fly stops it through Leaflet's _stop(), which fires
+   no zoomend, so the map rests at a fractional zoom while every band keeps the zoom the fly left
+   from. The review of the bus rule measured it: City, press Rail, drag 300ms in, and the map
+   settled at 11.817 with data-zoom still "13" and every bus drawn, the 2136-arrow picture the
+   rule exists to remove, until the rider next zoomed. The drag that interrupted it ends in a
+   moveend, so this repaints then, and only when the integer zoom actually moved: an ordinary pan
+   costs one attribute read. Rounded the way paintZoomBand rounds, so the root's data-zoom and
+   every band on it stay one answer to one number. */
+map.on("moveend", () => {
+  if (document.documentElement.getAttribute("data-zoom") !== String(Math.round(map.getZoom()))) paintZoomBand();
+});
 
 if (namesToggleEl) {
   namesToggleEl.addEventListener("click", () => {
@@ -878,14 +914,14 @@ paintZoomBand();
    arithmetic, so at zoom 10 it arrived 0.0007 degrees off its target and a 1e-4 allowance
    read that as the rider having moved: the button went dark at the instant it became true.
    Two pixels is a rounding allowance at any zoom, and a rider's pan is orders of magnitude
-   more than two pixels. */
-const VIEW_PRESETS = [
-  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
-  { id: "view-rail", center: [40.76, -73.96], zoom: 11 },
-  { id: "view-region", center: [40.79, -73.9], zoom: 10 },
-];
+   more than two pixels.
+
+   THE TABLE ITSELF IS AT THE TOP OF THIS FILE, because the map is constructed at LANDING_PRESET.
+   And the active preset STARTS as that one, so the button naming the view a rider lands on reads
+   pressed before they touch anything; the moveend and zoomend handler below clears it the moment
+   the map stops being there, exactly as it does after a press. */
 const VIEW_EPSILON_PX = 2;
-let activeView = null;
+let activeView = LANDING_PRESET.id;
 
 function mapIsAt(preset) {
   if (map.getZoom() !== preset.zoom) return false;

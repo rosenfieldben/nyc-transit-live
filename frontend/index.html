@@ -7,6 +7,10 @@
      settled state before any script runs. data-zoom and data-label-band are written by
      systems/shared.js on every zoomend, because only the map knows the zoom; the band is
      what the stylesheet reads (style.css says why an enumerated zoom list is not safe). -->
+<!-- FOLLOW-UP 1: data-bus-band is written in the same call and read the same way, by the rule
+     that draws bus markers from City zoom and not below it. It is deliberately NOT written here:
+     the stylesheet hides a bus only when the attribute says "hidden", so a page whose script
+     never ran draws every bus rather than none (helpers.js, busMarkerBand). -->
 <html lang="en" data-theme="light" data-labels="on">
 <head>
   <meta charset="utf-8">
@@ -277,9 +281,15 @@
            plate: 7.24, against the 6.00 it replaces. A literal rather than the token for H3's
            reason: `var(--bus-mark-lightness)` would resolve to the DARK end on a light plate
            the moment a rider changed theme. -->
+      <!-- FOLLOW-UP 1: "shown from City zoom", because the map draws no bus below it while the
+           Buses button still counts every one, and the two must not disagree in silence. The
+           button's tooltip says the same words (helpers.js, BUS_ZOOM_WORDS), and buszoom.spec.js
+           D7e holds this row to that constant. ON THIS ROW ONLY: it is the row that names the
+           family, and the dot below is the same bus with no heading, drawn and hidden by the same
+           rule. The clause follows "; " because that is how every row in this panel adds one. -->
       <div class="legend-row">
         <svg aria-hidden="true" viewBox="0 0 14 14"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#354d8d" stroke="#f3f2f2" stroke-width="0.8"/></svg>
-        Bus (arrow points where it's heading)
+        Bus (arrow points where it's heading); shown from City zoom
       </div>
       <div class="legend-row">
         <svg aria-hidden="true" viewBox="0 0 14 14"><circle cx="7" cy="7" r="3.5" fill="#354d8d" stroke="#f3f2f2" stroke-width="1"/></svg>

@@ -24,25 +24,23 @@ The strip reads **Buses 2,136** in both frames. City is unchanged (`before-city.
 `after-city.png` draw all 2,136). The view a rider lands on is below. `MEASURING.md` says how the
 frames were taken.
 
-## Concurrent branch
+## Rebased onto #122
 
-**`claude/subway-hub-definition` (#122) is in flight at the same time and also edits
-`frontend/helpers.js`.** It changes `isTransferStation`'s signature, so that a hub becomes a
-station complex. This branch adds the bus band beside the other zoom bands, a few hundred lines
-away, and also touches `FEEDS` and `feedTooltip`.
+**#122 (`claude/subway-hub-definition`) merged first, as `e2b44b2`, so this branch is rebased onto
+it.** The eleven commits replayed with no conflict. The rebased tree is byte for byte the
+`git merge-tree` result I checked before either branch merged (#122 at `81d1ac3` against this
+branch at `c8ff8ba`), apart from one later PR-body commit. The two branches shared five files.
+The Key golden now holds both changes side by side: this branch's bus row, and #122's reworded
+transfer row.
 
-The two branches share five files: `frontend/helpers.js`, `frontend/index.html`,
-`frontend/systems/shared.js`, `tests/e2e/fixtures/mr_pins.json` and
-`docs/reviews/map-redesign-rounds.md`.
-
-**The merge is clean.** I checked it with `git merge-tree --write-tree` of #122 at `81d1ac3`
-against this branch at `c8ff8ba`, which moves no refs. #122's session also reports that the
-merged tree passes backend 1763, node 406 and the full hermetic e2e 354. That is their run, not
-mine.
-
-**One interaction to know about.** This branch lands the map at zoom 13, which is #122's hubs
-band, so the first view shows #122's 48 station-complex names. Whichever branch merges second
-should re-run that check after rebasing.
+**Where they meet is the landing.** #122 names each hub station complex once, 48 names on the real
+payload, and shows them at zooms 12 and 13. The map now lands at 13. **D7j** boots #122's real
+payload and leaves the landing untouched. It checks that City reads pressed, that every bus is
+drawn and reachable, and that exactly 48 station names are drawn, every one a hub. **M28** moves
+the City preset to zoom 14, where local names show too, and dies on D7j. It dies on the zoom check
+before D7j counts any names, so **M28b** leaves the zoom at 13 and breaks only which names show,
+which proves the names half catches a problem on its own. **No pin moved:** all 34
+pins pass on the rebased tree with the golden untouched.
 
 ## The change
 
@@ -122,6 +120,7 @@ moved what recorded the old landing, and the ledger keeps each before:
 | a root with no band draws every bus and leaves every one reachable | D7g |
 | a fly cut short leaves the band on the zoom the map actually rests at, in both directions | D7h |
 | the map lands at the City preset: every bus drawn and reachable, and City alone pressed | D7i |
+| on #122's real payload, the untouched landing draws every bus and exactly the 48 complex names, all hubs | D7j |
 | axe green with the buses drawn at the landing view, undrawn at Rail, and drawn at City again after Rail, at 1280, 375 and 320, in both themes; each bus checked per axe rule (`aria-hidden-focus` where hidden, `role-img-alt` where drawn) | `a11y.spec.js` A1w, 18 new scans |
 
 ## The sentinels, re-read
@@ -178,9 +177,11 @@ must survive. The table exits non-zero if a control dies or any other row surviv
 | M25 | A7c clicks where the bus is not drawn | A7c |
 | M26 | the map opens at the old zoom 12 | D7i |
 | M27 | the map lands at City without City pressed | D7i |
+| M28 | the City preset, and so the landing, at zoom 14 | D7j, on the zoom |
+| M28b | the name band draws every subway name at zoom 13 | D7j, on the 48 names |
 | M0z | none (the closing control) | **survived all eleven gates** |
 
-**All 34 rows at `6b447c2`. Both controls survived all eleven of their gates, the other 32 died, none failed to run, and every anchor matched exactly once.** One earlier run, at `2355232`, could not run M13, because its anchor stopped partway through a line. Under standing rule 6, a row that doesn't run fails the run, so after the fix the whole table ran again, not just that row.
+**All 36 rows at `a3ec17e`, the rebased tip. Both controls survived all eleven of their gates, the other 34 died, none failed to run, and every anchor matched exactly once.** Earlier runs are in the ledger. One, before the rebase, could not run M13 because its anchor stopped partway through a line, so the whole table ran again. Another, after the rebase, showed M28 dying on the zoom check, which is why M28b exists.
 
 **M6 corrected a claim of mine.** The hook's comment said the feed toggle depended on it. With the
 hook removed, the toggle half of D7c still passed, because `applyFeedVisibility` repaints the band
@@ -216,19 +217,19 @@ unpressed. It reproduces at `d49e9a7` too, and it is recorded below.
 
 ## Gates
 
-The code is `2355232`, the landing ruling. `6b447c2` changes only one anchor in the mutation table.
+At `7312a64`, the rebased branch with D7j and M28 on top. `a3ec17e` adds only the table's M28b row.
 
 | Gate | Result |
 | --- | --- |
-| `pytest` (backend, unchanged, re-run) | **1738** passed |
+| `pytest` (backend, including #122's changes) | **1763** passed |
 | `ruff check` / `ruff format --check` / `mypy` | clean / 79 files / 30 source files |
 | contract-tier lint and format | clean |
-| contract API tier | **38** passed, re-run at the tip |
+| contract API tier | **39** passed |
 | contract browser tier (C6e1 to C6e5) | **5 of 5** |
-| node tier | **400 of 400**, and 400 again with no `node_modules` (the `frontend-tests` condition) |
-| hermetic e2e | **347 of 348**. The one failure is smoke 25, a ferry test that timed out waiting on a retry. It passed 3 of 3 alone, and it passed in the previous full run on identical code, which scored 346 of 348 because two tests hit the known clock race; both passed alone. |
+| node tier | **406 of 406**, and 406 again with no `node_modules` |
+| hermetic e2e | **355 of 355**: #122's 354 plus D7j |
 | `run_all.sh` | **15 of 15** |
-| mutation table | **34 rows at `6b447c2`**: both controls survived, 32 died, none failed to run |
+| mutation table | **36 rows at `a3ec17e`**: both controls survived, 34 died, none failed to run |
 
 ## For the operator
 
@@ -239,8 +240,7 @@ The code is `2355232`, the landing ruling. `6b447c2` changes only one anchor in 
    would leave them drawn but silent and unclickable.
 3. **A preset pressed after a fly is cut short ends unpressed.** This predates the branch
    (reproduced at `d49e9a7`) and could be a small branch of its own.
-4. **The concurrent branch** `claude/subway-hub-definition` also edits `frontend/helpers.js`
-   (above).
+4. **#122 merged first**, and this branch is rebased onto it (above).
 5. **An incident, repaired.** Another session switched this checkout's branch mid-task, and the
    pins commit landed on its branch. That session put it back itself, and nothing was lost. The
    ledger's standing rule 4 gains a clause from it: check the branch as well as the tree before a

@@ -2969,6 +2969,7 @@ marker drawn.
 | a root with no band draws every bus and leaves every one reachable | D7g |
 | a fly cut short rests the band on the zoom the map is actually at, in both directions, each premise asserted | D7h |
 | the map lands at the City preset: every bus drawn and reachable, and City alone pressed (the landing ruling's one test) | D7i |
+| on #122's real payload, the untouched landing draws every bus and exactly the 48 complex names, every one a hub's | D7j |
 | axe green with the buses drawn at the landing view, undrawn at Rail, and drawn at City again after Rail, at 1280, 375 and 320, in both themes, with the bus seen per rule | `a11y.spec.js` A1w, three new states, eighteen scans |
 
 #### The review: five finders at `68d31da`, and what it cost this branch to be read
@@ -3055,9 +3056,11 @@ table exits 1 if a control dies or any other row survives, and 2 if a row could 
 | M25 | A7c clicks a bus at Rail (V10; likewise) | A7c, through the undrawn-target guard |
 | M26 | the map opens where it used to, zoom 12 (the landing ruling) | D7i |
 | M27 | the map lands at City and the City button does not say so (the landing ruling) | D7i |
+| M28 | the City preset, and so the landing, at zoom 14, where every name shows (the rebase onto #122) | D7j, on the root's zoom ("14" where "13" was asked), before the names are read |
+| M28b | the hubs band draws every subway name, the zoom left at 13 (so that D7j's names half has a row of its own) | D7j, on the names |
 | M0z | none: the closing control, every gate again | **survived all eleven gates**, as it must |
 
-**Thirty-four rows at `6b447c2`, after the landing ruling: both controls survived every one of their eleven gates, the other thirty-two died, none failed to run, no gate needed the clock-race retry, and every anchor matched exactly once.** Every death is on the assertion its row names. The table's history, kept because each run caught something: at `f2cd698`, before the review, twenty-three rows (M0 survived, twenty-two died); at `2950451`, after it, thirty-two (both controls survived, thirty died); at `2355232`, after the ruling, thirty-four rows of which **M13 could not run**, its anchor ending a line at "exhaustively" where the file goes on, so the table exited 2 and standing rule 6 sent the whole table round again rather than the one row. `6b447c2` is that anchor fixed and nothing else.
+**Thirty-four rows at `6b447c2`, after the landing ruling: both controls survived every one of their eleven gates, the other thirty-two died, none failed to run, no gate needed the clock-race retry, and every anchor matched exactly once.** Every death is on the assertion its row names. The table's history, kept because each run caught something: at `f2cd698`, before the review, twenty-three rows (M0 survived, twenty-two died); at `2950451`, after it, thirty-two (both controls survived, thirty died); at `2355232`, after the ruling, thirty-four rows of which **M13 could not run**, its anchor ending a line at "exhaustively" where the file goes on, so the table exited 2 and standing rule 6 sent the whole table round again rather than the one row. `6b447c2` is that anchor fixed and nothing else. After the rebase onto #122: at `7312a64`, thirty-five rows (both controls survived, thirty-three died, none failed to run), where M28 died on D7j's zoom assertion before the names were read; so M28b was added and the whole table ran again, **thirty-six rows at `a3ec17e`: both controls survived, the other thirty-four died, none failed to run, no retry, and every anchor matched once**, M28b dying on D7j's names, 444 drawn where 48 were asked.
 
 **A dominance, recorded rather than hidden.** The axe states' per-rule check is two claims, and only
 one of them has teeth of its own. At Rail, "`aria-hidden-focus` examined the bus" is the same fact as
@@ -3081,9 +3084,8 @@ state, and M18 is the row that shows it: a bus with no role and no name is visib
 3. **A preset pressed after a fly is cut short ends unpressed** (F1j). Not this branch's, reproduced
    at `d49e9a7`: the preset control's own handler clears on a stray `zoomend` at 12. A small branch
    of its own, if it is worth one.
-4. **This branch and `claude/subway-hub-definition` will meet in `frontend/helpers.js`** at merge:
-   that branch changes `isTransferStation`'s signature, and this one adds the bus band beside the
-   other zoom bands a few hundred lines away.
+4. **`claude/subway-hub-definition` merged first (#122), and this branch is rebased onto it**
+   (see "Rebased onto #122" below).
 
 #### Ruling: the landing
 
@@ -3134,18 +3136,58 @@ bite. M7b is gated on the Rail state, because a bus born at the City landing is 
 without the sweep. That is standing rule 6's lesson again: a table is code, and a ruling that moves
 what the code starts from moves the table too.
 
+#### Rebased onto #122
+
+**#122 (`claude/subway-hub-definition`) merged first, as `e2b44b2`, so the second-to-merge rerun fell
+to this branch.** The two branches shared five files (`frontend/helpers.js`, `frontend/index.html`,
+`frontend/systems/shared.js`, `tests/e2e/fixtures/mr_pins.json` and this file). The eleven commits
+replayed onto `e2b44b2` with no conflict. **The rebased tree is byte for byte the `git merge-tree`
+result checked before either branch merged** (tree `9b35dd8`, from #122 at `81d1ac3` and this branch
+at `c8ff8ba`), apart from the one PR-body commit made after that check. The legend golden holds both
+branches' changes to the Key side by side: this branch's bus row and #122's reworded transfer row.
+
+**Where the two meet is the landing.** #122 names each hub station complex once, 48 names on
+production's payload, in the hubs band, which is zoom 12 and 13. The landing ruling put the map at
+the City preset, zoom 13, so the view a rider lands on is exactly where both changes draw. **D7j**
+boots #122's real payload (`subway_stops_real.json`, 496 stations with their complex ids), leaves the
+landing untouched, and asks both halves of the drawn page: City pressed, the root at 13 in the hubs
+band, every bus drawn and reachable, and exactly 48 names drawn, every one a hub's. **M28** moves the
+City preset to zoom 14, the band where local names show too, and dies on D7j; but it dies on the
+root's zoom, before the names are read, so **M28b** leaves the zoom at 13 and breaks only which names
+the hubs band draws, and that is the row that shows the names half has teeth of its own.
+
+**No pin moved.** `pins.spec.js` ran 34 of 34 on the rebased tree with the golden untouched, before any
+gate here was run.
+
+**The shas above this section are the branch as reviewed, before the rebase.** Each maps one to one onto
+its rebased commit, and a local tag `pre-rebase-263631a` keeps the old tip:
+
+| Before | After | Commit |
+| --- | --- | --- |
+| `8e30014` | `ad9e4c7` | Bus zoom rule pins: what drawing buses from City zoom is not allowed to change |
+| `feac996` | `8598edb` | Bus zoom rule: bus markers are drawn from City zoom (13) and not below it |
+| `f2cd698` | `7c01632` | Bus zoom rule: the failure policy gets its test, and D7's boot stops racing its clock |
+| `09d9c20` | `88c8cb1` | Bus zoom rule: the add hook's comments say what mutation M6 measured |
+| `68d31da` | `0a130b8` | Bus zoom rule: the mutation table, the capture harness and the Rail pair |
+| `2950451` | `d0a4192` | Bus zoom rule: the review's fourteen findings, repaired |
+| `a20ebf8` | `732587d` | Bus zoom rule: the ledger entry under the phase's follow-ups, and the PR body |
+| `2355232` | `0ef0598` | Bus zoom rule: the map lands at the City preset, pressed (the operator's landing ruling) |
+| `6b447c2` | `1b440fc` | Bus zoom rule: M13's anchor names its whole line (standing rule 6 caught it) |
+| `c8ff8ba` | `af04715` | Bus zoom rule: the landing ruling in the ledger and the PR body, and the gates at the tip |
+| `263631a` | `65cde7c` | Bus zoom rule: the PR body cites #122 and the checked merge |
+
 #### The gates, at the tip
 
-The code is `2355232` (the landing ruling); `6b447c2` changes only the mutation table's M13 anchor.
+At `7312a64`, the rebased branch with D7j and M28 on top. `a3ec17e` adds only the table's M28b row.
 
 | Gate | Result |
 | --- | --- |
-| `pytest` (backend) | **1738** passed, re-run at the tip; no backend file has changed on this branch at all |
+| `pytest` (backend, #122's changes included) | **1763** passed |
 | `ruff check`, `ruff format --check`, `mypy` | clean; 79 files formatted; 30 source files |
 | contract-tier lint and format | clean |
-| contract API tier | **38** passed, re-run at the tip |
-| contract browser tier, C6e1 to C6e5 | **5 of 5** at `2355232` |
-| node tier | **400 of 400** at `6b447c2`, and 400 again in a worktree with no `node_modules`, the condition `frontend-tests` runs in |
-| hermetic e2e | **347 of 348** at `6b447c2` at load averages of 7 to 13. The one: smoke 25 (a ferry colour self-heals once routes load), which timed out waiting on the routes' retry, passed 3 of 3 alone, and passed in the previous full run on identical code (346 of 348 there, the two being the pre-navigation clock race, both passing alone). 348 is the base's 318, plus 3 for P6, 9 for D7 and 18 for A1w |
-| `run_all.sh` | **15 of 15** on the ruling's tree |
-| the mutation table | 34 rows at `6b447c2`, as above |
+| contract API tier | **39** passed |
+| contract browser tier, C6e1 to C6e5 | **5 of 5** |
+| node tier | **406 of 406**, and 406 again in a worktree with no `node_modules` |
+| hermetic e2e | **355 of 355**, at load averages of 3 to 5: #122's 354 plus D7j |
+| `run_all.sh` | **15 of 15** |
+| the mutation table | **36 rows at `a3ec17e`**: both controls survived all eleven of their gates, the other 34 died, none failed to run, no retry, every anchor matched once |

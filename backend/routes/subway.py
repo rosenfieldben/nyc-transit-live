@@ -56,6 +56,7 @@ async def get_subway_stops(request: Request, response: Response) -> list[dict]:
         return []
     stations = getattr(app.state, "subway_stations", None) or {}
     station_routes = getattr(app.state, "subway_station_routes", None) or {}
+    station_complexes = getattr(app.state, "subway_station_complexes", None) or {}
     return [
         {
             "id": sid,
@@ -66,6 +67,10 @@ async def get_subway_stops(request: Request, response: Response) -> list[dict]:
             # route-scoped alerts for every route here, not only routes with an
             # imminent train. Empty when the derive found none or was skipped.
             "routes": station_routes.get(sid, []),
+            # The station complex (transfers.txt), which the hub predicate, the
+            # ring and the kicker read. None only when no index is loaded: a loaded
+            # index names every station, alone ones by their own id.
+            "complex_id": station_complexes.get(sid),
         }
         for sid, s in stations.items()
     ]

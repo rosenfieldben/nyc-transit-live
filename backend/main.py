@@ -83,6 +83,7 @@ from routes import status as status_routes
 from routes import subway as subway_routes
 from static_data import (
     load_subway_route_shapes,
+    load_subway_station_complexes,
     load_subway_station_routes,
     load_subway_stations,
     load_subway_stops,
@@ -213,6 +214,10 @@ async def lifespan(app: FastAPI):
     # train there. Enrichment only, so an empty index (a failed derive) just
     # omits the routes; it never gates the markers.
     app.state.subway_station_routes = {}
+    # Station complex index (transfers.txt): parent station_id -> complex_id. Empty
+    # until the warmup loads it, and the endpoint serves complex_id None meanwhile,
+    # which the frontend reads as "a stop alone" without claiming that it is.
+    app.state.subway_station_complexes = {}
     app.state.subway_static_status = "loading"
     app.state.railroad_static = {}  # {system: {stops, trips, shapes, routes} | None}
     app.state.railroad_stops = {}
@@ -485,6 +490,7 @@ __all__ = [
     "load_subway_stations",
     "load_subway_route_shapes",
     "load_subway_station_routes",
+    "load_subway_station_complexes",
     "_fresh_entry",
     "_fresh_alerts_entry",
     "fresh_alert_health",

@@ -78,7 +78,22 @@ MAX_AGE_DAYS = 30
 # /healthz green, so the operator surface said nothing at all. PATH and ferry have
 # required stop_times.txt all along, for the same kind of reason (advance matching
 # and the dock/route alert join, 13d and H5); the subway is the one that was behind.
-_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt")
+#
+# A FOURTH CONSUMER READS THAT INDEX, and the list above predates it: MR5's popup
+# kicker draws the routes calling at a station as route plates, so an empty index is
+# a kicker with no plates in it as well.
+#
+# transfers.txt IS HERE BY THE SAME RULE (claude/subway-hub-definition). A hub is a
+# station COMPLEX now, not a stop_id: F9's rule counted trunks per stop, so 108 of
+# its 124 rings sat on stops this table joins to no other (the B beside the C on
+# Central Park West, the D beside the R on Fourth Avenue), and 22 real complexes had
+# no ring at all, Times Square among them, because each of its five stops carries
+# one trunk. The complexes come from transfers.txt's cross-stop rows,
+# and THREE CONSUMERS READ THEM, all rider-visible: the transfer ring, the hub label
+# class (the same predicate), and the kicker, which lists the routes of the complex
+# rather than of the stop. Without the file every stop is its own complex, Times
+# Square's ring and name go again, and the status would say "ready" over it.
+_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt", "transfers.txt")
 
 
 def validate_subway_archive(zf: zipfile.ZipFile) -> None:
@@ -390,9 +405,10 @@ def load_subway_station_routes() -> dict[str, list[str]]:
     RAISES rather than returning {} on a parse problem, and that reverses what this
     function used to do. It caught every exception, logged a warning and returned an
     empty index, on the grounds that the routes were popup enrichment and the map was
-    fully functional without them. Three consumers read the index now, all
-    rider-visible (the transfer ring, the hub label class, the station alerts join),
-    and _REQUIRED_MEMBERS above names them: the files this reads are required members,
+    fully functional without them. Four consumers read the index now, all
+    rider-visible (the transfer ring, the hub label class, the station alerts join,
+    and MR5's popup kicker), and _REQUIRED_MEMBERS above names them: the files this
+    reads are required members,
     so a problem parsing one is a failed load of the archive, not a warning. The
     warmup's `except Exception` catches it, the subway static group reports "failed",
     /healthz degrades, and the last-known-good index stays in app.state.
@@ -408,4 +424,94 @@ def load_subway_station_routes() -> dict[str, list[str]]:
         child_to_parent = _parse_child_to_parent(zf)
     index = derive_subway_station_routes(trip_routes, trip_stops, child_to_parent)
     logger.info("Loaded subway routes-per-station index (%d stations)", len(index))
+    return index
+
+
+def _parse_transfer_pairs(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    """transfers.txt -> the CROSS-STOP rows as (from_stop_id, to_stop_id) pairs.
+
+    The MTA publishes two kinds of row here. A row from a stop to itself (101 -> 101)
+    is a minimum transfer time within one stop, which says nothing about which stops
+    form a complex, so it is dropped. A row between two stops (127 -> 725) is the
+    complex: the two stops are one station a rider can change within. Rows with a
+    blank id on either side are skipped as data, the way the other parsers here skip
+    a malformed row."""
+    pairs: list[tuple[str, str]] = []
+    with zf.open("transfers.txt") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            source = (row.get("from_stop_id") or "").strip()
+            target = (row.get("to_stop_id") or "").strip()
+            if source and target and source != target:
+                pairs.append((source, target))
+    return pairs
+
+
+def derive_subway_station_complexes(
+    pairs: list[tuple[str, str]],
+    station_ids: list[str],
+    child_to_parent: dict[str, str],
+) -> dict[str, str]:
+    """Pure: parent station_id -> complex_id, for EVERY station in `station_ids`.
+
+    UNION-FIND OVER THE PAIRS, not the pairs themselves, because a complex is the
+    transitive closure of "a rider can change between these two stops". The live
+    publication happens to list every pair of every complex (measured on the
+    2026-08-27 archive: 35 complexes, none of them a chain), so on today's data a
+    pairwise match gives the same answer; a publication that lists A-B and B-C and
+    leaves A-C implied is still one complex, and only a closure says so.
+
+    A STOP IN NO ROW IS ITS OWN COMPLEX, with its own id as the complex id, which is
+    the ruling's wording and the honest reading of the table: a station the MTA lists
+    no transfer for is a station alone. THE COMPLEX ID IS THE SMALLEST STATION ID IN
+    IT, so it is stable across loads and is always a real station id rather than a
+    coined one (Times Square's five stops are complex "127").
+
+    Ids fold through child_to_parent first, because every consumer keys on the parent
+    station. The live table names parents only, so the fold is a guard rather than a
+    translation. An id that is no station still joins the closure (it may be the one
+    link between two stations that are) but is never a key of the result."""
+    parent: dict[str, str] = {}
+
+    def find(stop: str) -> str:
+        parent.setdefault(stop, stop)
+        root = stop
+        while parent[root] != root:
+            root = parent[root]
+        while parent[stop] != root:
+            parent[stop], stop = root, parent[stop]
+        return root
+
+    for source, target in pairs:
+        a = find(child_to_parent.get(source, source))
+        b = find(child_to_parent.get(target, target))
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+
+    members: dict[str, list[str]] = defaultdict(list)
+    for station_id in station_ids:
+        members[find(station_id)].append(station_id)
+    return {station_id: min(group) for group in members.values() for station_id in group}
+
+
+def load_subway_station_complexes() -> dict[str, str]:
+    """The station complex index (parent station_id -> complex_id) from the cached
+    static GTFS: transfers.txt's cross-stop rows closed over by
+    derive_subway_station_complexes, keyed by the same parent stations the markers
+    are drawn from. Assumes the zip exists (call after load_subway_stops ensured it).
+
+    RAISES rather than returning {}, for the reason load_subway_station_routes gives:
+    transfers.txt is a required member because three rider-visible consumers read this
+    index, so a problem reading it is a failed load of the archive, not a warning. The
+    warmup's `except Exception` catches it and the last-known-good index stays."""
+    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+        stations = parse_member(zf, "stops.txt", _parse_stations_rows)
+        child_to_parent = _parse_child_to_parent(zf)
+        pairs = _parse_transfer_pairs(zf)
+    index = derive_subway_station_complexes(pairs, list(stations), child_to_parent)
+    logger.info(
+        "Loaded subway station complex index (%d stations, %d complexes)",
+        len(index),
+        len(set(index.values())),
+    )
     return index

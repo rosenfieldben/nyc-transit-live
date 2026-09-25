@@ -307,6 +307,16 @@ class SubwayStop(BaseModel):
     # station popup joins route-scoped alerts for these. Defaults to [] so an
     # older client and a pre-index warmup both stay valid.
     routes: list[str] = []
+    # The station COMPLEX this stop belongs to (claude/subway-hub-definition): the
+    # smallest station id among the stops transfers.txt joins it to, or the stop's own
+    # id when no row names it. The frontend's hub predicate reads the trunks served
+    # across the whole complex, which is what puts a ring on Times Square and takes it
+    # off a shared-track local. None when no complex index is loaded, which is not the
+    # same claim as "a complex of one", so the two are kept apart on the wire.
+    # ADDITIVE, for the reason RailroadRoute.color gives: the payload is client-cached,
+    # and a client holding yesterday's must not fail on a field the server has only
+    # just begun to send.
+    complex_id: str | None = None
 
 
 class RailroadStop(BaseModel):

@@ -208,6 +208,13 @@ GOOD_SHAPES_TXT = csv_text(SHAPES_COLS, SHAPE_ROWS)
 GOOD_STOP_TIMES_TXT = csv_text(
     ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], ()
 )
+# Header-only, in every archive below, for the reason stop_times.txt is: transfers.txt
+# became a required member of the subway archive on claude/subway-hub-definition, and an
+# archive without it would be rejected for THAT, not for the invalid shapes.txt this record
+# is about. With it present the four archives still differ only where they are meant to.
+GOOD_TRANSFERS_TXT = csv_text(
+    ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"], ()
+)
 
 # Invalid UTF-8 ONLY in shapes.txt: a lone 0xFF byte inside a latitude field. The
 # header and the row structure are otherwise exactly the good file's.
@@ -239,6 +246,7 @@ ARCHIVE_GOOD = write_zip(
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": GOOD_SHAPES_TXT,
         "stop_times.txt": GOOD_STOP_TIMES_TXT,
+        "transfers.txt": GOOD_TRANSFERS_TXT,
     },
 )
 ARCHIVE_BAD_UTF8 = write_zip(
@@ -248,6 +256,7 @@ ARCHIVE_BAD_UTF8 = write_zip(
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": BAD_SHAPES_BYTES,
         "stop_times.txt": GOOD_STOP_TIMES_TXT,
+        "transfers.txt": GOOD_TRANSFERS_TXT,
     },
 )
 ARCHIVE_EMPTY_SHAPES = write_zip(
@@ -257,6 +266,7 @@ ARCHIVE_EMPTY_SHAPES = write_zip(
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": EMPTY_SHAPES_TXT,
         "stop_times.txt": GOOD_STOP_TIMES_TXT,
+        "transfers.txt": GOOD_TRANSFERS_TXT,
     },
 )
 ARCHIVE_NO_SHAPES = write_zip(
@@ -265,6 +275,7 @@ ARCHIVE_NO_SHAPES = write_zip(
         "stops.txt": GOOD_STOPS_TXT,
         "trips.txt": GOOD_TRIPS_TXT,
         "stop_times.txt": GOOD_STOP_TIMES_TXT,
+        "transfers.txt": GOOD_TRANSFERS_TXT,
     },
 )
 

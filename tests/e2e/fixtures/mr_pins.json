@@ -46,6 +46,951 @@
    "popup": "<div class=\"pk\"><span>Subway</span>\n<span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">2</text>\n    </svg></span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1e8449\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">5</text>\n    </svg></span><span class=\"visually-hidden\">2, 5</span></span></div>\n<div class=\"pt\"><span>Prospect Av</span></div>\n<div class=\"dir\">Northbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">2 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">5 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">10 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n<div class=\"dir\">Southbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n now\">now</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n"
   }
  },
+ "busZoom": {
+  "bus": {
+   "icons": [
+    {
+     "id": "MTA NYCT_101",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"0.8\"/></svg>",
+     "className": "bus-marker",
+     "size": [
+      14,
+      14
+     ],
+     "anchor": [
+      7,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "id": "MTA NYCT_102",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
+     "className": "bus-marker",
+     "size": [
+      14,
+      14
+     ],
+     "anchor": [
+      7,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ],
+   "popups": {
+    "MTA NYCT_101": "<div class=\"pk\"><span>Buses</span>\n<span></span></div>\n<div class=\"pt\"><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\" width=\"24\" height=\"24\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"0.8\"></path></svg></span>\n<span style=\"color:hsl(329, 75%, 40%)\">M15</span></div>\n<div class=\"kv\"><div class=\"k\">Bus</div>\n<div class=\"v\">MTA NYCT_101</div>\n<div class=\"k\">Heading</div>\n<div class=\"v\">90°</div></div>\n<div class=\"fresh\"><span class=\"fresh-dot\" data-state=\"live\" aria-hidden=\"true\"></span><span class=\"visually-hidden\">Live · 5s</span></div>",
+    "MTA NYCT_102": "<div class=\"pk\"><span>Buses</span>\n<span></span></div>\n<div class=\"pt\"><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" width=\"24\" height=\"24\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"1\"></circle></svg></span>\n<span style=\"color:hsl(292, 75%, 40%)\">B46</span></div>\n<div class=\"kv\"><div class=\"k\">Bus</div>\n<div class=\"v\">MTA NYCT_102</div>\n<div class=\"k\">Heading</div>\n<div class=\"v\">unknown</div></div>\n<div class=\"fresh\"><span class=\"fresh-dot\" data-state=\"live\" aria-hidden=\"true\"></span><span class=\"visually-hidden\">Live · 5s</span></div>"
+   }
+  },
+  "counts": {
+   "open": {
+    "zoom": 12,
+    "strip": "2",
+    "registry": 2,
+    "document": 2
+   },
+   "view-city": {
+    "zoom": 13,
+    "strip": "2",
+    "registry": 2,
+    "document": 2
+   },
+   "view-rail": {
+    "zoom": 11,
+    "strip": "2",
+    "registry": 2,
+    "document": 2
+   },
+   "view-region": {
+    "zoom": 10,
+    "strip": "2",
+    "registry": 2,
+    "document": 2
+   }
+  },
+  "others": {
+   "open": [
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "East River, NYC Ferry, boat H201, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "Unassigned route, NYC Ferry, boat H099, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "South Brooklyn, NYC Ferry, boat H202, at dock",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": "0.55"
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop Newark, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop World Trade Center, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Federal Circle, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Jamaica, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Terminal Alpha, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
+     "name": "LIRR Babylon Branch, train 521, next stop Jamaica, Outbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
+     "name": "Jamaica, LIRR, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
+     "name": "Metro-North Hudson, train 1797, live GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
+     "name": "Grand Central, Metro-North, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Montclair-Boonton Line, NJ Transit, train 6633, to Hackettstown, next stop Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9001, to Meadowlands, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9002, to Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Northeast Corridor, NJ Transit, train 3800, to New York, next stop New York Penn Station, 4 min late, estimated from a prediction",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Hoboken, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "New York Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Newark Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "A train, next stop Canal St, Southbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    }
+   ],
+   "view-city": [
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "East River, NYC Ferry, boat H201, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "Unassigned route, NYC Ferry, boat H099, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "South Brooklyn, NYC Ferry, boat H202, at dock",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": "0.55"
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop Newark, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop World Trade Center, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Federal Circle, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Jamaica, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Terminal Alpha, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
+     "name": "LIRR Babylon Branch, train 521, next stop Jamaica, Outbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
+     "name": "Jamaica, LIRR, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
+     "name": "Metro-North Hudson, train 1797, live GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
+     "name": "Grand Central, Metro-North, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Montclair-Boonton Line, NJ Transit, train 6633, to Hackettstown, next stop Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9001, to Meadowlands, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9002, to Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Northeast Corridor, NJ Transit, train 3800, to New York, next stop New York Penn Station, 4 min late, estimated from a prediction",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Hoboken, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "New York Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Newark Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "A train, next stop Canal St, Southbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    }
+   ],
+   "view-rail": [
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "East River, NYC Ferry, boat H201, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "Unassigned route, NYC Ferry, boat H099, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "South Brooklyn, NYC Ferry, boat H202, at dock",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": "0.55"
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop Newark, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop World Trade Center, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Federal Circle, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Jamaica, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Terminal Alpha, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
+     "name": "LIRR Babylon Branch, train 521, next stop Jamaica, Outbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
+     "name": "Jamaica, LIRR, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
+     "name": "Metro-North Hudson, train 1797, live GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
+     "name": "Grand Central, Metro-North, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Montclair-Boonton Line, NJ Transit, train 6633, to Hackettstown, next stop Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9001, to Meadowlands, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9002, to Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Northeast Corridor, NJ Transit, train 3800, to New York, next stop New York Penn Station, 4 min late, estimated from a prediction",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Hoboken, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "New York Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Newark Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "A train, next stop Canal St, Southbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    }
+   ],
+   "view-region": [
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "East River, NYC Ferry, boat H201, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "Unassigned route, NYC Ferry, boat H099, under way",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
+     "name": "South Brooklyn, NYC Ferry, boat H202, at dock",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": "0.55"
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop Newark, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+     "name": "Newark - World Trade Center, PATH, next stop World Trade Center, To New York, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Federal Circle, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Jamaica, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+     "name": "Terminal Alpha, AirTrain JFK station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
+     "name": "LIRR Babylon Branch, train 521, next stop Jamaica, Outbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
+     "name": "Jamaica, LIRR, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
+     "name": "Metro-North Hudson, train 1797, live GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
+     "name": "Grand Central, Metro-North, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Montclair-Boonton Line, NJ Transit, train 6633, to Hackettstown, next stop Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9001, to Meadowlands, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "NJ Transit route 17, NJ Transit, train 9002, to Hoboken, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+     "name": "Northeast Corridor, NJ Transit, train 3800, to New York, next stop New York Penn Station, 4 min late, estimated from a prediction",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Hoboken, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "New York Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+     "name": "Newark Penn Station, NJ Transit, station",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    },
+    {
+     "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+     "name": "A train, next stop Canal St, Southbound, scheduled position, no GPS",
+     "role": "img",
+     "ariaHidden": null,
+     "drawn": true,
+     "pointerEvents": "auto",
+     "opacity": ""
+    }
+   ]
+  },
+  "othersMarkup": [
+   {
+    "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+    "name": "East River, NYC Ferry, boat H201, under way",
+    "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #00839c; stroke: var(--paper)\" stroke-width=\"2\"></path><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"></path></svg>"
+   },
+   {
+    "cls": "ferry-active ferry-marker leaflet-interactive leaflet-marker-icon",
+    "name": "Unassigned route, NYC Ferry, boat H099, under way",
+    "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #78909c; stroke: var(--paper)\" stroke-width=\"2\"></path><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"></path></svg>"
+   },
+   {
+    "cls": "ferry-docked ferry-marker leaflet-interactive leaflet-marker-icon",
+    "name": "South Brooklyn, NYC Ferry, boat H202, at dock",
+    "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #ffd100; stroke: var(--paper)\" stroke-width=\"2\"></path><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"></path></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+    "name": "Newark - World Trade Center, PATH, next stop Newark, To New York, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"></path></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon path-marker",
+    "name": "Newark - World Trade Center, PATH, next stop World Trade Center, To New York, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"></path></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+    "name": "Federal Circle, AirTrain JFK station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+    "name": "Jamaica, AirTrain JFK station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-airtrain-stn rail-stn-marker",
+    "name": "Terminal Alpha, AirTrain JFK station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-lirr rail-tag-marker rail-tag-outlined",
+    "name": "LIRR Babylon Branch, train 521, next stop Jamaica, Outbound, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 35 30\" width=\"35\" height=\"30\" class=\"rail-tag rail-tag-outlined rail-head-outlined\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"0.6\" y=\"0.6\" width=\"33.8\" height=\"11.8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.2\"></rect><line x1=\"11\" y1=\"0.6\" x2=\"11\" y2=\"12.4\" style=\"stroke: var(--ink)\" stroke-width=\"1.2\"></line><rect x=\"11.6\" y=\"9.9\" width=\"22.8\" height=\"2.5\" fill=\"#00985F\"></rect><text x=\"5.5\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">L</text><text x=\"23\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">BAB</text><line x1=\"17.5\" y1=\"13\" x2=\"17.5\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><circle cx=\"17.5\" cy=\"21\" r=\"3\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.4\"></circle></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-lirr-stn rail-stn-marker",
+    "name": "Jamaica, LIRR, station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-mnr rail-tag-marker rail-tag-solid",
+    "name": "Metro-North Hudson, train 1797, live GPS",
+    "html": "<svg viewBox=\"0 0 35 30\" width=\"35\" height=\"30\" class=\"rail-tag rail-tag-solid rail-head-filled\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"-0.5\" y=\"-0.5\" width=\"36\" height=\"14\" style=\"fill: var(--paper)\" opacity=\"0.9\"></rect><rect x=\"0\" y=\"0\" width=\"11\" height=\"13\" style=\"fill: var(--ink)\"></rect><rect x=\"11\" y=\"0\" width=\"24\" height=\"13\" fill=\"#009B3A\"></rect><text x=\"5.5\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--paper)\">M</text><text x=\"23\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" fill=\"#1a1a1a\">HUD</text><line x1=\"17.5\" y1=\"13\" x2=\"17.5\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><path d=\"M 17.5 15.5 L 22.5 24.5 L 17.5 22 L 12.5 24.5 Z\" style=\"fill: var(--ink); stroke: var(--paper)\" stroke-width=\"1\" transform=\"rotate(210 17.5 21)\"></path></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-mnr-stn rail-stn-marker",
+    "name": "Grand Central, Metro-North, station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+    "name": "Montclair-Boonton Line, NJ Transit, train 6633, to Hackettstown, next stop Hoboken, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 51 30\" width=\"51\" height=\"30\" class=\"rail-tag rail-tag-outlined rail-head-outlined\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"0.6\" y=\"0.6\" width=\"49.8\" height=\"11.8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.2\"></rect><line x1=\"16\" y1=\"0.6\" x2=\"16\" y2=\"12.4\" style=\"stroke: var(--ink)\" stroke-width=\"1.2\"></line><rect x=\"16.6\" y=\"9.9\" width=\"33.8\" height=\"2.5\" fill=\"#E66859\"></rect><text x=\"8\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">NJ</text><text x=\"33.5\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">MNBTN</text><line x1=\"25.5\" y1=\"13\" x2=\"25.5\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><circle cx=\"25.5\" cy=\"21\" r=\"3\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.4\"></circle></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+    "name": "NJ Transit route 17, NJ Transit, train 9001, to Meadowlands, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 34 30\" width=\"34\" height=\"30\" class=\"rail-tag rail-tag-outlined rail-head-outlined\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"0.6\" y=\"0.6\" width=\"32.8\" height=\"11.8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.2\"></rect><line x1=\"16\" y1=\"0.6\" x2=\"16\" y2=\"12.4\" style=\"stroke: var(--ink)\" stroke-width=\"1.2\"></line><rect x=\"16.6\" y=\"9.9\" width=\"16.8\" height=\"2.5\" fill=\"#6d6e71\"></rect><text x=\"8\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">NJ</text><text x=\"25\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">17</text><line x1=\"17\" y1=\"13\" x2=\"17\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><circle cx=\"17\" cy=\"21\" r=\"3\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.4\"></circle></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+    "name": "NJ Transit route 17, NJ Transit, train 9002, to Hoboken, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 34 30\" width=\"34\" height=\"30\" class=\"rail-tag rail-tag-outlined rail-head-outlined\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"0.6\" y=\"0.6\" width=\"32.8\" height=\"11.8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.2\"></rect><line x1=\"16\" y1=\"0.6\" x2=\"16\" y2=\"12.4\" style=\"stroke: var(--ink)\" stroke-width=\"1.2\"></line><rect x=\"16.6\" y=\"9.9\" width=\"16.8\" height=\"2.5\" fill=\"#6d6e71\"></rect><text x=\"8\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">NJ</text><text x=\"25\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">17</text><line x1=\"17\" y1=\"13\" x2=\"17\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><circle cx=\"17\" cy=\"21\" r=\"3\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.4\"></circle></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt rail-tag-marker rail-tag-outlined",
+    "name": "Northeast Corridor, NJ Transit, train 3800, to New York, next stop New York Penn Station, 4 min late, estimated from a prediction",
+    "html": "<svg viewBox=\"0 0 40 30\" width=\"40\" height=\"30\" class=\"rail-tag rail-tag-outlined rail-head-filled\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"0.6\" y=\"0.6\" width=\"38.8\" height=\"11.8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.2\"></rect><line x1=\"16\" y1=\"0.6\" x2=\"16\" y2=\"12.4\" style=\"stroke: var(--ink)\" stroke-width=\"1.2\"></line><rect x=\"16.6\" y=\"9.9\" width=\"22.8\" height=\"2.5\" fill=\"#DD3439\"></rect><text x=\"8\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">NJ</text><text x=\"28\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--ink)\">NEC</text><line x1=\"20\" y1=\"13\" x2=\"20\" y2=\"16.5\" style=\"stroke: var(--ink)\" stroke-width=\"1\"></line><path d=\"M 20 15.5 L 25 24.5 L 20 22 L 15 24.5 Z\" style=\"fill: var(--ink); stroke: var(--paper)\" stroke-width=\"1\" transform=\"rotate(83.1 20 21)\"></path></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+    "name": "Hoboken, NJ Transit, station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+    "name": "New York Penn Station, NJ Transit, station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon rail-njt-stn rail-stn-marker",
+    "name": "Newark Penn Station, NJ Transit, station",
+    "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+    "name": "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 18 18\" aria-hidden=\"true\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>"
+   },
+   {
+    "cls": "leaflet-interactive leaflet-marker-icon train-marker",
+    "name": "A train, next stop Canal St, Southbound, scheduled position, no GPS",
+    "html": "<svg viewBox=\"0 0 18 18\" aria-hidden=\"true\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>"
+   }
+  ]
+ },
  "census": {
   "popups": {
    "mnr train": {

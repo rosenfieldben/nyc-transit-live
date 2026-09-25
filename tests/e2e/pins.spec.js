@@ -2120,3 +2120,150 @@ test("P4d. every non-opaque paint on the page, composited and not, on the map an
   }
   pin("contrast/alpha", measured);
 });
+
+/* ---------------- P6: follow-up 1, the bus layer's zoom rule ---------------- */
+
+/* THE PHASE'S FIRST FOLLOW-UP, AND ITS PINS COME FIRST FOR THE REASON EVERY STAGE'S DID. The
+   rule it brings is a stylesheet rule keyed on the zoom: bus markers are drawn from City zoom
+   (13) and not below it. A rule keyed on the zoom reaches things at zooms no pin here looked at,
+   because P1f to P1n all read the map at the one zoom it opens at, which is 12. So these read it
+   at the opening view AND at each of the three presets, and each says what the rule may NOT
+   change there:
+
+     P6a  the bus count: the feed strip's, the registry's and the document's. Every bus counted
+          and every bus marker in the document at every view, drawn or not, because a hidden
+          marker is still a marker and the strip counts the fleet rather than the viewport.
+     P6b  every marker that is not a bus: its markup, its name, whether it is drawn, whether it
+          takes the pointer, and whether it is exposed. The rule is scoped to one class, and
+          this is the pin that says so at every zoom the rule can see.
+     P6c  the bus marker's icon and both bus popups, byte for byte. The rule is CSS, so neither
+          moves with the zoom; a rule implemented by swapping the icon or rebuilding the popup
+          below 13 is exactly what this catches.
+
+   The views are asked of views.js, which reads the presets out of the app's own table. */
+const busZoomViews = require("./views");
+const BUS_ZOOM_VIEWS = ["open", ...busZoomViews.PRESET_IDS];
+
+test("P6a. the bus count in the strip, the registry and the document, at the opening view and each preset", async ({
+  page,
+}) => {
+  await boot(page);
+  const measured = {};
+  for (const view of BUS_ZOOM_VIEWS) {
+    const zoom = view === "open" ? await page.evaluate(() => map.getZoom()) : await busZoomViews.pressView(page, view);
+    measured[view] = await page.evaluate((z) => ({
+      zoom: z,
+      strip: document.querySelector("#toggle-buses .feed-count").textContent,
+      registry: buses.size,
+      document: document.querySelectorAll(".bus-marker").length,
+    }), zoom);
+  }
+  // Read against each other as well as against the golden: the strip's number is the fleet at
+  // every view, which is the half of the rule the tooltip exists to explain.
+  expect(new Set(Object.values(measured).map((m) => m.strip)).size, "the strip's bus count moved with the zoom").toBe(1);
+  pin("busZoom/counts", measured);
+});
+
+/* WHAT A MARKER IS, READ OFF THE DRAWN PAGE. Its classes and its name are markup; `drawn`,
+   `pointerEvents` and `ariaHidden` are the three things the rule changes for a bus and must not
+   change for anything else, read from the computed style and the element rather than from the
+   root attribute or the stylesheet, because a markup read where the drawn page is what matters
+   is the first of this phase's defect shapes. The inline opacity is the freshness contract's
+   dimming, and it rides along so a rule that faded rather than hid would show here too. */
+const readMarkersExceptBuses = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll(".leaflet-marker-icon:not(.bus-marker)")]
+      .map((el) => {
+        const style = getComputedStyle(el);
+        return {
+          cls: [...el.classList].filter((c) => c !== "leaflet-zoom-animated").sort().join(" "),
+          name: el.getAttribute("aria-label"),
+          role: el.getAttribute("role"),
+          ariaHidden: el.getAttribute("aria-hidden"),
+          drawn: style.display !== "none" && style.visibility === "visible",
+          pointerEvents: style.pointerEvents,
+          opacity: el.style.opacity,
+          html: el.innerHTML,
+        };
+      })
+      .sort((a, b) => `${a.cls}|${a.name}|${a.html}`.localeCompare(`${b.cls}|${b.name}|${b.html}`)),
+  );
+
+test("P6b. every marker that is not a bus, at the opening view and each preset", async ({ page }) => {
+  await boot(page);
+  const measured = {};
+  for (const view of BUS_ZOOM_VIEWS) {
+    if (view !== "open") await busZoomViews.pressView(page, view);
+    measured[view] = await readMarkersExceptBuses(page);
+    // A pin over an empty list is a pin that cannot fail, which is the third defect shape.
+    expect(measured[view].length, `${view}: no marker other than a bus was read`).toBeGreaterThan(10);
+  }
+  /* THE MARKUP IS PINNED ONCE AND EVERY VIEW IS HELD TO IT, because at the base of this branch it
+     is the same at all four (measured: 21 markers, identical bytes), so four stored copies would
+     be four goldens that could each be regenerated alone. The per-view state is pinned per view,
+     because that is the half a zoom rule could move. */
+  const markup = (list) => list.map(({ cls, name, html }) => ({ cls, name, html }));
+  for (const view of BUS_ZOOM_VIEWS) {
+    expect(markup(measured[view]), `${view}: a marker that is not a bus changed its markup`).toEqual(markup(measured.open));
+  }
+  pin("busZoom/othersMarkup", markup(measured.open));
+  pin(
+    "busZoom/others",
+    Object.fromEntries(BUS_ZOOM_VIEWS.map((view) => [view, measured[view].map(({ html, ...state }) => state)])),
+  );
+});
+
+/* THE ICON IS READ FROM LEAFLET'S OPTIONS, which is what P1g's `markers/buses` golden reads, so
+   the two cannot disagree about what "the bus marker HTML" is. THE POPUP IS READ FROM THE
+   MARKER'S OWN POPUP ELEMENT once the route line it opens has landed, because opening a bus
+   popup fetches that line and refreshes the popup when it arrives, and a read taken before
+   then is a read of a popup a rider sees for one frame.
+
+   placeView AND NOT pressView, because the footer carries the feed's age in seconds and the fly
+   runs the clock: four presses would pin four ages. views.js says so at more length. */
+test("P6c. the bus marker's icon and both bus popups, byte for byte, at the opening view and each preset", async ({
+  page,
+}) => {
+  await boot(page);
+  const measured = {};
+  for (const view of BUS_ZOOM_VIEWS) {
+    if (view !== "open") await busZoomViews.placeView(page, view);
+    const icons = await page.evaluate(() =>
+      [...buses.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, record]) => {
+          const o = record.marker.options.icon.options;
+          return {
+            id,
+            html: o.html,
+            className: o.className,
+            size: o.iconSize,
+            anchor: o.iconAnchor,
+            popupAnchor: o.popupAnchor,
+            opacity: record.marker.options.opacity,
+          };
+        }),
+    );
+    const popups = {};
+    for (const id of ["MTA NYCT_101", "MTA NYCT_102"]) {
+      await closeAllPopups(page);
+      const route = await page.evaluate((key) => {
+        buses.get(key).marker.openPopup();
+        return buses.get(key).latest.route_id;
+      }, id);
+      await expect(page.locator("#route-banner-label")).toHaveText(`Bus route ${route}`);
+      popups[id] = await page.evaluate(
+        (key) => buses.get(key).marker.getPopup().getElement().querySelector(".leaflet-popup-content").innerHTML,
+        id,
+      );
+    }
+    await closeAllPopups(page);
+    measured[view] = { icons, popups };
+  }
+  // Every view against the opening one, so the golden holds one answer rather than four copies
+  // of it that could each be regenerated separately.
+  for (const view of BUS_ZOOM_VIEWS) {
+    expect(measured[view], `${view}: the bus marker or popup moved with the zoom`).toEqual(measured.open);
+  }
+  pin("busZoom/bus", measured.open);
+});

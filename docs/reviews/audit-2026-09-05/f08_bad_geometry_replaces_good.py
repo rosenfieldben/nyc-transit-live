@@ -208,12 +208,14 @@ GOOD_SHAPES_TXT = csv_text(SHAPES_COLS, SHAPE_ROWS)
 GOOD_STOP_TIMES_TXT = csv_text(
     ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], ()
 )
-# Header-only, in every archive below, for the reason stop_times.txt is: transfers.txt
-# became a required member of the subway archive on claude/subway-hub-definition, and an
-# archive without it would be rejected for THAT, not for the invalid shapes.txt this record
-# is about. With it present the four archives still differ only where they are meant to.
+# In every archive below, for the reason stop_times.txt is: transfers.txt became a required
+# member of the subway archive on claude/subway-hub-definition, with a floor of one
+# cross-stop row, and an archive without one would be rejected for THAT, not for the invalid
+# shapes.txt this record is about. With it present the four archives still differ only where
+# they are meant to.
 GOOD_TRANSFERS_TXT = csv_text(
-    ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"], ()
+    ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"],
+    [{"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2", "min_transfer_time": "180"}],
 )
 
 # Invalid UTF-8 ONLY in shapes.txt: a lone 0xFF byte inside a latitude field. The
@@ -489,9 +491,13 @@ async def amain() -> int:
         "shapes.txt" in v["required"],
         "shapes.txt is no longer in static_data._REQUIRED_MEMBERS",
     )
+    # THE CLAIM IS ABOUT shapes.txt, so the check is. It used to read "parses stops.txt and
+    # nothing else", which held until claude/subway-hub-definition gave transfers.txt a floor
+    # through the same require_parsed; that is a new member parsed, not shapes.txt parsed, and
+    # this record's disposition is about the second only.
     check(
-        v["parsed_members"] == ["stops.txt"],
-        f"validate_subway_archive now parses {v['parsed_members']}, not only stops.txt",
+        "shapes.txt" not in v["parsed_members"],
+        f"validate_subway_archive now parses shapes.txt ({v['parsed_members']})",
     )
     print()
 

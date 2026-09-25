@@ -82,10 +82,10 @@ def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
 
     The validator requires stops.txt, shapes.txt, trips.txt, stop_times.txt AND
     transfers.txt to be PRESENT, so every archive a cache-lifecycle test hands the loader
-    carries all five. Header-only is enough for four of them and keeps each test's subject
-    unchanged: an empty shapes.txt yields the same [] route lines a missing one used to, an
-    empty stop_times.txt yields the same {} routes-per-station index, and an empty
-    transfers.txt makes every station a complex of one.
+    carries all five. Header-only is enough for three of them and keeps each test's subject
+    unchanged: an empty shapes.txt yields the same [] route lines a missing one used to, and
+    an empty stop_times.txt yields the same {} routes-per-station index. transfers.txt carries
+    one pair, because the validator's floor is one cross-stop row.
 
     THE LAST TWO ARE NEW AS OF THE F1 BRANCH. This docstring claimed trips.txt was
     required for a while when it was not, which is its own small lesson about a comment
@@ -100,7 +100,7 @@ def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
             "trips.txt": csv_text(TRIPS_COLS, ()),
             "shapes.txt": csv_text(SHAPES_COLS, shape_rows),
             "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
-            "transfers.txt": csv_text(TRANSFERS_COLS, ()),
+            "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
         },
     )
 
@@ -267,6 +267,14 @@ def test_variant_dedup_keeps_branch_drops_express(gtfs_zip):
 TRIPS_COLS = ["route_id", "trip_id", "service_id", "trip_headsign", "direction_id", "shape_id"]
 STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
 TRANSFERS_COLS = ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"]
+# ONE REAL COMPLEX, both directions, as the MTA writes them: the validator's floor is one
+# cross-stop row (the operator's ruling on review finding H2), so every archive that has to
+# PASS validation carries a pair, and an archive with none is a test's subject, not a
+# fixture's accident.
+TRANSFER_ROWS = [
+    {"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2", "min_transfer_time": "180"},
+    {"from_stop_id": "103", "to_stop_id": "101", "transfer_type": "2", "min_transfer_time": "180"},
+]
 
 # Two parent stations (101, 103) with N/S child platforms, the real subway shape.
 ROUTE_STOP_ROWS = [
@@ -398,7 +406,7 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
         zf.writestr("shapes.txt", csv_text(SHAPES_COLS, ()))
         zf.writestr("trips.txt", csv_text(TRIPS_COLS, [{"route_id": "1", "trip_id": "t1"}]))
         zf.writestr("stop_times.txt", body)
-        zf.writestr("transfers.txt", csv_text(TRANSFERS_COLS, ()))
+        zf.writestr("transfers.txt", csv_text(TRANSFERS_COLS, TRANSFER_ROWS))
     # Corrupt stop_times.txt's DEFLATE payload in place. Its stored CRC and its bytes
     # then disagree, so opening the archive and listing it still work and only READING
     # that member raises. A garbled CSV ROW would not do: the parser skips those by
@@ -453,7 +461,7 @@ def test_validate_rejects_an_archive_without_the_station_routes_tables(gtfs_zip,
         "shapes.txt": csv_text(SHAPES_COLS, ()),
         "trips.txt": csv_text(TRIPS_COLS, ()),
         "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
-        "transfers.txt": csv_text(TRANSFERS_COLS, ()),
+        "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
     }
     del members[missing]
     write_gtfs_zip(gtfs_zip, members=members)
@@ -487,7 +495,7 @@ async def test_a_reduced_publication_fails_the_load_rather_than_serving_an_empty
         "shapes.txt": csv_text(SHAPES_COLS, ()),
         "trips.txt": csv_text(TRIPS_COLS, ()),
         "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
-        "transfers.txt": csv_text(TRANSFERS_COLS, ()),
+        "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
     }
     del members[missing]
 
@@ -707,6 +715,88 @@ def test_load_subway_station_complexes_raises_without_transfers(gtfs_zip):
     _write_committed_archive(gtfs_zip, drop=("transfers.txt",))
     with pytest.raises(KeyError):
         static_data.load_subway_station_complexes()
+
+
+# ---------------- the floor: at least one cross-stop row ----------------
+#
+# THE OPERATOR'S RULING ON REVIEW FINDING H2. Presence alone let a transfers.txt that
+# says nothing load as every stop alone under "ready". The validator now runs the
+# loader's own transfer parser and rejects a table that yields no pair.
+
+_TRANSFER_HEADER = "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+
+
+def _loadable_members(transfers: str) -> dict[str, str]:
+    return {
+        "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, ()),
+        "trips.txt": csv_text(TRIPS_COLS, ()),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+        "transfers.txt": transfers,
+    }
+
+
+@pytest.mark.parametrize(
+    "transfers",
+    [
+        pytest.param(_TRANSFER_HEADER, id="headers-only"),
+        pytest.param(_TRANSFER_HEADER + "101,101,2,180\n103,103,2,180\n", id="self-rows-only"),
+        pytest.param("from_stop,to_stop,transfer_type\n101,103,2\n", id="renamed-columns"),
+        pytest.param(_TRANSFER_HEADER + "101,103,3,\n103,101,3,\n", id="no-transfer-possible-only"),
+    ],
+)
+def test_validate_rejects_a_transfers_table_with_no_cross_stop_row(gtfs_zip, transfers):
+    """Each shape of "present and saying nothing" is refused, and the error names the
+    member, because an operator reads it off /api/status as last_download_error."""
+    write_gtfs_zip(gtfs_zip, members=_loadable_members(transfers))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert "transfers.txt" in str(err.value)
+
+
+def test_validate_accepts_one_cross_stop_row_and_the_live_table(gtfs_zip):
+    """The floor is one, and the live table is far above it: the committed 613 rows (150
+    of them cross-stop) pass the same validator."""
+    write_gtfs_zip(gtfs_zip, members=_loadable_members(_TRANSFER_HEADER + "101,103,2,180\n"))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+    live = (SUBWAY_FIXTURE / "transfers.txt").read_text(encoding="utf-8-sig")
+    members = _loadable_members(live)
+    members["stops.txt"] = (SUBWAY_FIXTURE / "stops.txt").read_text(encoding="utf-8-sig")
+    write_gtfs_zip(gtfs_zip, members=members)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+        assert len(static_data._parse_transfer_pairs(zf)) == 150
+
+
+async def test_a_publication_whose_transfers_say_nothing_fails_the_load(gtfs_zip, monkeypatch):
+    """End to end, the way test_a_reduced_publication_fails_the_load_rather_than_serving_
+    an_empty_index drives F1: the cached archive is rejected AND the redownload of the same
+    publication is rejected, so the load raises and the group reports failed, rather than
+    reaching ready with every stop a complex of one."""
+    members = _loadable_members(_TRANSFER_HEADER)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    reduced = buf.getvalue()
+    downloads = []
+    real_staged_fetch = static_shared.staged_fetch
+
+    async def publishes(url, dest, validate, **kwargs):
+        async def transfer(u, stage, deadline_s):
+            downloads.append(1)
+            stage.write_bytes(reduced)
+
+        await real_staged_fetch(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(static_data, "staged_fetch", publishes)
+    write_gtfs_zip(gtfs_zip, members=members)
+    with pytest.raises(static_data.StaticValidationError) as err:
+        await static_data.load_subway_stops()
+    assert "transfers.txt" in str(err.value)
+    assert downloads == [1]
 
 
 def test_the_e2e_census_fixture_agrees_with_this_archive(gtfs_zip):

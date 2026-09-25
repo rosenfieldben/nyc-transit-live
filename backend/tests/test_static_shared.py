@@ -114,9 +114,12 @@ def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS, trips=None) -> b
         "trips.txt": _csv(_TRIPS_COLS, _TRIP_ROWS) if trips is None else trips,
         "shapes.txt": _csv(_SHAPES_COLS, _SHAPE_ROWS),
         "stop_times.txt": _csv(_STOP_TIMES_COLS, _STOP_TIME_ROWS),
-        # Header-only: the subway requires it and no other loader reads it, and an empty
-        # table is the honest "no stop joins another" rather than a coined complex.
-        "transfers.txt": _csv(_TRANSFERS_COLS, ()),
+        # One pair: the subway requires the member AND one cross-stop row (the operator's
+        # ruling on review finding H2), and no other loader reads it.
+        "transfers.txt": _csv(
+            _TRANSFERS_COLS,
+            [{"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2"}],
+        ),
     }
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

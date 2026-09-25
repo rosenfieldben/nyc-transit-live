@@ -392,7 +392,20 @@ NJT_SERVICE_WARN_DAYS = 30
 # and its absence in a live feed is a real truncation) even though the trimmed
 # test fixtures omit it for size; the presence check is structural, separate
 # from the parse.
-SUBWAY_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt")
+# THE SUBWAY'S LIST IS THE APP'S LIST (the operator's ruling on review finding H8,
+# claude/subway-hub-definition). It stayed ("stops.txt", "shapes.txt") through PR 116, which
+# made trips.txt and stop_times.txt required members and relied on /healthz for the rest,
+# and /healthz sees a cold start but not a warm process refusing a new publication: that
+# process keeps serving the last-known-good, reports ready, and the drift check passed the
+# publication it had just refused. So the monitor names every member
+# static_data._REQUIRED_MEMBERS does, and test_contract_monitor holds the two equal.
+SUBWAY_REQUIRED_MEMBERS = (
+    "stops.txt",
+    "shapes.txt",
+    "trips.txt",
+    "stop_times.txt",
+    "transfers.txt",
+)
 RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
 PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
 FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")

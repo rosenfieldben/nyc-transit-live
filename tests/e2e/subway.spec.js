@@ -100,7 +100,9 @@ const withLocalStation = (ctx) => {
       // node test calls the direction that matters.
       { id: "L01", name: "Lorimer St", lat: 40.7141, lon: -73.9503, routes: ["L"] },
       { id: "X01", name: "Nowhere", lat: 40.7, lon: -73.95 },
-      // Two TRUNKS, so a ring and a hub label: the only real interchange in this world.
+      // THREE trunks at one stop (the A, the 4 and the J), so a ring and a hub label: the only
+      // real interchange in this world. Two were enough until claude/subway-hub-definition made
+      // a hub a station complex, where a stop alone needs three and two is shared track.
       { id: "X04", name: "Fulton St", lat: 40.7102, lon: -74.0074, routes: ["A", "4", "J"] },
       // Two IDS and one trunk, which is the F9 case: a dot, not a ring.
       { id: "X05", name: "Marcy Av", lat: 40.7083, lon: -73.9578, routes: ["J", "Z"] },
@@ -1558,7 +1560,7 @@ test("D2m. focusing a route actually repaints the canvas, not just the options",
 
 /* ---------------- the stations ---------------- */
 
-test("D2i. a transfer ring where two trunks call, a local dot where one does", async ({ page }) => {
+test("D2i. a transfer ring where three trunks call at one stop, a local dot where one does", async ({ page }) => {
   /* THE MUTATION THIS KILLS is "the transfer ring drawn for single-route stations". The stock
      fixture's two stations are BOTH transfers, so this world adds a one-route station and a
      station with no routes field at all: without them the assertion has no subject. */
@@ -1625,6 +1627,251 @@ test("D2i. a transfer ring where two trunks call, a local dot where one does", a
   for (const mark of [marks.transfer, marks.local, marks.routeless, marks.oneTrunk, marks.skipStop]) {
     expect(mark.rendererPane).toBe("stationPane");
   }
+});
+
+/* ---------------- the station complex (claude/subway-hub-definition) ----------------
+
+   A HUB IS A STATION COMPLEX NOW, and these four read the real network to say so. The world is
+   tests/e2e/fixtures/subway_stops_real.json: production's /api/subway-stops payload of 2026-09-25,
+   496 stations with their routes, plus the complex_id the branch serves (the backend's
+   test_the_e2e_census_fixture_agrees_with_this_archive holds it to the committed transfers.txt).
+   The label-band diagnosis measured that payload on the deployed build: F9's per-stop count rang
+   124 stations, 108 of them stops transfers.txt joins to nothing, and 22 real complexes had no
+   ring, Times Square among them. */
+const REAL_STOPS = require("./fixtures/subway_stops_real.json");
+const withRealStops = (ctx) => {
+  ctx.overrides.subwayStops = (route) => json(route, REAL_STOPS);
+};
+// open()'s default of 14 is the stock fixture's two subway stations and twelve of the other
+// families', so the real world is 496 plus the same twelve.
+const REAL_WORLD = { stations: REAL_STOPS.length + 12 };
+const TIMES_SQUARE = ["127", "725", "902", "A27", "R16"];
+
+// The 48 hub complexes, by complex id and the names of their stops. The same list is in the PR
+// body; each is a station a rider changes lines at, or one stop where three trunks call.
+const HUB_COMPLEXES = [
+  "112: 168 St-Washington Hts / 168 St",
+  "125: 59 St-Columbus Circle",
+  "127: Times Sq-42 St / 42 St-Port Authority Bus Terminal",
+  "132: 14 St / 6 Av",
+  "222: 149 St-Hostos",
+  "228: Park Place / Chambers St / World Trade Center / Cortlandt St",
+  "229: Fulton St",
+  "232: Borough Hall / Court St",
+  "235: Atlantic Av-Barclays Ctr",
+  "239: Franklin Av-Medgar Evers College / Botanic Garden",
+  "254: Junius St / Livonia Av",
+  "414: 161 St-Yankee Stadium",
+  "629: 59 St / Lexington Av/63 St / Lexington Av/59 St",
+  "630: 51 St / Lexington Av/53 St",
+  "631: Grand Central-42 St",
+  "635: 14 St-Union Sq",
+  "637: Bleecker St / Broadway-Lafayette St",
+  "639: Canal St",
+  "640: Brooklyn Bridge-City Hall / Chambers St",
+  "710: 74 St-Broadway / Jackson Hts-Roosevelt Av",
+  "718: Queensboro Plaza",
+  "719: Court Sq / Court Sq-23 St",
+  "724: 5 Av / 42 St-Bryant Pk",
+  "A12: 145 St",
+  "A31: 14 St / 8 Av",
+  "A32: W 4 St-Wash Sq",
+  "A41: Jay St-MetroTech",
+  "A45: Franklin Av",
+  "A51: Broadway Junction",
+  "B16: 62 St / New Utrecht Av",
+  "D17: 34 St-Herald Sq",
+  "D26: Prospect Park",
+  "F15: Delancey St-Essex St",
+  "F23: 4 Av-9 St",
+  "G08: Forest Hills-71 Av",
+  "G09: 67 Av",
+  "G10: 63 Dr-Rego Park",
+  "G11: Woodhaven Blvd",
+  "G12: Grand Av-Newtown",
+  "G13: Elmhurst Av",
+  "G15: 65 St",
+  "G16: Northern Blvd",
+  "G18: 46 St",
+  "G19: Steinway St",
+  "G20: 36 St",
+  "G21: Queens Plaza",
+  "G29: Metropolitan Av / Lorimer St",
+  "L17: Myrtle-Wyckoff Avs",
+];
+
+test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in 48 complexes", async ({
+  page,
+}) => {
+  /* THE MUTATION THIS KILLS is the predicate counting per stop again, and "before" is measured in
+     the same page rather than remembered: F9's rule is stationTrunks(stop routes) >= 2, asked of
+     the same 496 registry entries the rings were drawn from. */
+  await open(page, withRealStops, REAL_WORLD);
+  const census = await page.evaluate(() => {
+    const subway = stationRegistry.filter((entry) => entry.kind === "subway");
+    const ringed = subway.filter((entry) => entry.marker.options.stroke === true);
+    const labelled = subway.filter((entry) => entry.marker.getTooltip().getElement().classList.contains("hub"));
+    const complexes = new Map();
+    for (const entry of ringed) {
+      if (!complexes.has(entry.complex.id)) complexes.set(entry.complex.id, []);
+      const names = complexes.get(entry.complex.id);
+      if (!names.includes(entry.name)) names.push(entry.name);
+    }
+    return {
+      stations: subway.length,
+      before: subway.filter((entry) => stationTrunks(entry.routes).size >= 2).length,
+      rings: ringed.length,
+      ringKeys: ringed.map((entry) => entry.key),
+      labelKeys: labelled.map((entry) => entry.key),
+      complexes: [...complexes.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([id, names]) => `${id}: ${names.join(" / ")}`),
+      timesSquare: subway.filter((entry) => entry.complex.id === "127").map((entry) => entry.marker.options.stroke),
+    };
+  });
+  expect(census.stations).toBe(496);
+  expect(census.before, "F9's per-stop count on this payload, the diagnosis's number").toBe(124);
+  expect(census.rings).toBe(100);
+  expect(census.complexes).toEqual(HUB_COMPLEXES);
+  // One predicate behind the ring and the name, so the two sets are the same stations.
+  expect(census.labelKeys).toEqual(census.ringKeys);
+  // And every one of Times Square's five stops is ringed, none of which F9 rang.
+  expect(census.timesSquare).toEqual([true, true, true, true, true]);
+});
+
+test("D2i2. at zoom 13 over the Upper West Side the band draws no local", async ({ page }) => {
+  /* THE OBSERVATION THE DIAGNOSIS STARTED FROM: at about zoom 13 with Names on, the deployed build
+     named 96 St, 86 St and 72 St, a band that shows hubs only. They were hubs under F9, because the
+     B shares Central Park West's local track with the C. Under the complex rule the band is the
+     same and those names are not in it. */
+  await open(page, withRealStops, REAL_WORLD);
+  await page.evaluate(() => {
+    map.setView([40.787, -73.972], 13, { animate: false });
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-zoom", "13");
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
+  const labels = await page.evaluate(() => {
+    const box = document.getElementById("map").getBoundingClientRect();
+    return stationRegistry
+      .filter((entry) => entry.kind === "subway")
+      .map((entry) => {
+        const el = entry.marker.getTooltip().getElement();
+        const r = el.getBoundingClientRect();
+        const dot = map.latLngToContainerPoint([entry.lat, entry.lon]);
+        const size = map.getSize();
+        return {
+          id: entry.id,
+          name: entry.name,
+          drawn: getComputedStyle(el).display !== "none",
+          hub: el.classList.contains("hub"),
+          // A hidden label has no box, so whether a STATION is in view is asked of its dot.
+          inView: dot.x >= 0 && dot.y >= 0 && dot.x <= size.x && dot.y <= size.y,
+          labelInView: r.right > box.left && r.left < box.right && r.bottom > box.top && r.top < box.bottom,
+          perStopTrunks: stationTrunks(entry.routes).size,
+        };
+      });
+  });
+  const drawn = labels.filter((l) => l.drawn);
+  expect(drawn.filter((l) => !l.hub), "no local name in the hubs band, anywhere").toEqual([]);
+  expect(drawn.length, "and the hub names are the census's hundred").toBe(100);
+  const drawnInView = drawn.filter((l) => l.labelInView).map((l) => l.name);
+  expect(drawnInView.length, "the premise: this view has hub names to draw").toBeGreaterThan(0);
+  expect(drawnInView).toContain("59 St-Columbus Circle");
+  // The three the rider saw, each two trunks at one stop, which is why F9 named them.
+  for (const id of ["A19", "A20", "A22"]) {
+    const label = labels.find((l) => l.id === id);
+    expect(label.perStopTrunks, `${label.name} (${id}) was a hub under F9`).toBe(2);
+    expect(label.inView, `${label.name} (${id}) is in this view`).toBe(true);
+    expect(label.drawn, `${label.name} (${id}) is not drawn at 13`).toBe(false);
+  }
+});
+
+// One subway stop's popup, opened on its marker and read THROUGH that marker. A closed popup
+// stays in the document under this suite's paused clock (tests/e2e/popup.js says why), so a
+// document-wide `.leaflet-popup-content` after a second open matches both, and D2i4's first
+// draft read the 725 popup's rows as the 127 popup's.
+async function openStationPopup(page, id) {
+  const key = `subway|${id}`;
+  await page.evaluate((k) => {
+    stationRegistry.find((entry) => entry.key === k).marker.openPopup();
+  }, key);
+  await page.waitForFunction(
+    (k) => !!stationRegistry.find((entry) => entry.key === k).marker.getPopup().getElement()?.querySelector(".pk"),
+    key,
+  );
+  return page.evaluate((k) => {
+    const el = stationRegistry.find((entry) => entry.key === k).marker.getPopup().getElement();
+    return {
+      spoken: el.querySelector(".pk .visually-hidden").textContent.split(", "),
+      marks: el.querySelectorAll(".pk .pmark").length,
+      more: el.querySelector(".pk .pmore")?.textContent ?? null,
+      alerts: [...el.querySelectorAll(".alert-block .alert-row")].map((row) => row.textContent).join(" | "),
+    };
+  }, key);
+}
+
+test("D2i3. the kicker at Times Square lists every trunk of the complex, the stop's own first", async ({
+  page,
+}) => {
+  /* THE MUTATION THIS KILLS is the kicker reading the stop's routes again: from the 7's platform
+     that is the 7 and the 7X, one trunk, in a station that serves five. */
+  await open(page, withRealStops, REAL_WORLD);
+  const want = [...new Set(REAL_STOPS.filter((s) => TIMES_SQUARE.includes(s.id)).flatMap((s) => s.routes))];
+  const popup = await openStationPopup(page, "725");
+  const spoken = popup.spoken;
+  expect([...spoken].sort()).toEqual([...want].sort());
+  expect(spoken.slice(0, 2), "the stop's own routes lead").toEqual(["7", "7X"]);
+  const trunks = await page.evaluate((routes) => stationTrunks(routes).size, spoken);
+  expect(trunks, "the 1/2/3, the 7, the shuttle, the N/Q/R/W and the A/C/E").toBe(5);
+  // The three plates the cap allows and the count of the rest, which is R3's overflow rule
+  // unchanged: the list grew, the rule did not.
+  expect(popup.marks).toBe(3);
+  expect(popup.more).toBe(`+${want.length - 3}`);
+});
+
+test("D2i4. the station alerts join still seeds from the stop's own routes, not the complex's", async ({
+  page,
+}) => {
+  /* THE RULING LEAVES THE ALERTS JOIN UNTOUCHED, and this is where that could quietly stop being
+     true: the kicker above lists the 1 on the 7's platform now, and an alert for the 1 must still
+     not land there. An alert belongs on the platform whose trains it is about. The board is EMPTY
+     so the arrivals half of F11's union cannot carry either route in, and what is measured is the
+     static half, the one this branch sits beside. */
+  await open(
+    page,
+    (ctx) => {
+      withRealStops(ctx);
+      ctx.overrides.subwayArrivals = (route) =>
+        json(route, { ...fx.subwayArrivals(), directions: { Northbound: [], Southbound: [] } });
+      ctx.overrides.alerts = (route) =>
+        json(route, {
+          ...fx.alerts(),
+          alerts: [
+            { id: "sub-7", system: "subway", header: "[7] runs local in Queens", description: null,
+              effect: "SIGNIFICANT_DELAYS", cause: "MAINTENANCE", routes: ["7"], stops: [],
+              starts_at: fx.FROZEN_S - 600, ends_at: null },
+            { id: "sub-1", system: "subway", header: "[1] suspended below 14 St", description: null,
+              effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["1"], stops: [],
+              starts_at: fx.FROZEN_S - 600, ends_at: null },
+          ],
+        });
+    },
+    REAL_WORLD,
+  );
+  await page.waitForFunction(() => alertsIndex.byRoute.size > 0);
+  const popup = await openStationPopup(page, "725");
+  // The premise: the kicker names the 1 here, so a join that read the kicker's list would match.
+  expect(popup.spoken).toContain("1");
+  expect(popup.alerts).toContain("[7] runs local in Queens");
+  expect(popup.alerts).not.toContain("[1] suspended");
+  // And at 127, the 1's own platform in the same complex, it is the other way round.
+  await page.evaluate(() => {
+    map.closePopup();
+  });
+  const other = await openStationPopup(page, "127");
+  expect(other.spoken).toContain("7");
+  expect(other.alerts).toContain("[1] suspended below 14 St");
+  expect(other.alerts).not.toContain("[7] runs local");
 });
 
 /* ---------------- the labels ---------------- */
@@ -1789,7 +2036,7 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
             if (!el) continue;
             const drawn = getComputedStyle(el).display !== "none";
             const hubs = document.querySelectorAll(".stn-label.hub").length;
-          const want = stationLabelShown(z, entry.routes ?? [], on, hubs > 0);
+          const want = stationLabelShown(z, entry.complex ?? entry.routes ?? [], on, hubs > 0);
             if (drawn !== want) out.push(`${entry.name}: drawn ${drawn}, oracle says ${want}`);
           }
           return out;

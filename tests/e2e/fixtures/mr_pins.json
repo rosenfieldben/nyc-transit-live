@@ -1337,6 +1337,15 @@
     "2",
     "3"
    ],
+   "complex": {
+    "id": "127",
+    "routes": [
+     "1",
+     "2",
+     "3"
+    ],
+    "stops": 1
+   },
    "wheelchair": false,
    "arrivalsUrl": "/api/subway-arrivals/127",
    "markerIsCircleMarker": true,

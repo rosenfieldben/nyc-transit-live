@@ -1,9 +1,28 @@
 # Subway hubs: a hub is a station complex, not a stop
 
-Backend and frontend, four commits, the ruling that followed the label-band diagnosis of
-2026-09-25: the backend half (`92636bc`), the frontend half (`ff030f0`), the adversarial
-review's fixes (`3ff5c49`) and this record. Nothing
-touches `njt_auth.py` or any credentialed path, so **no NJ Transit mint was spent**.
+Backend and frontend, the ruling that followed the label-band diagnosis of 2026-09-25 and
+three more the operator gave after reading the first record:
+
+| commit | |
+| --- | --- |
+| `92636bc` | backend: `transfers.txt` required, `complex_id` on `/api/subway-stops` |
+| `ff030f0` | frontend: the predicate reads the complex; ring, name and kicker follow |
+| `3ff5c49` | the adversarial review's fixes (findings H1, H3, H4, H6, H7, H10) |
+| `d4cefee` | the first record |
+| `fcbce7e` | **ruling 1**: one name per complex |
+| `b786b4f` | **ruling 2**: a floor of one cross-stop row; the monitor names every member |
+| `0c17079` | **ruling 3**: the Key row reads "Transfer station: change between lines here" |
+| this record | the census, the grid and the screenshots re-run at `0c17079` |
+
+Nothing touches `njt_auth.py` or any credentialed path, so **no NJ Transit mint was spent**.
+
+**A concurrent branch shares five of these files.** `claude/bus-zoom-rule` (another session,
+open at the same time) touches `frontend/helpers.js`, `frontend/index.html`,
+`frontend/systems/shared.js`, `tests/e2e/fixtures/mr_pins.json` and
+`docs/reviews/map-redesign-rounds.md`. `git merge-tree` reports a clean merge of the two tips,
+and the merged tree's shared suites are recorded under Gates. The one semantic meeting point:
+that branch lands the map at the City preset, zoom 13, which is this branch's hubs band, so
+the first view a rider sees carries the 48 complex names.
 
 ## The finding
 
@@ -39,6 +58,17 @@ pairs; a stop in no row is its own complex) and serves it on `/api/subway-stops`
 complex: **a hub is a complex serving three or more trunks, or two or more trunks across two
 or more stops.** The ring and the label class read the same predicate; the kicker lists the
 routes of the complex, not the stop. The station alerts join is untouched.
+
+## Three more rulings, after the first record
+
+1. **One name per complex.** The ring on every stop; the label only on the stop whose id is
+   the complex id, in its own name. No complex draws two labels; the census stays at 48.
+2. **A floor under `transfers.txt`.** A table with zero cross-stop rows fails the load (the
+   live archive has 150; the floor is one), the content checked and not only the presence, as
+   the bus probe checks its capture. The monitor's subway file list names every required
+   member.
+3. **The Key row reads "Transfer station: change between lines here."** P1e moves by that
+   wording, recorded.
 
 ## The change
 
@@ -94,6 +124,31 @@ for the station panel.
 `load_subway_station_routes` returned `{}`. Both now say it raises, and that the backend half
 has landed.
 
+**8. One name per complex (ruling 1).** `stationNamesItself(stationId, complex)` says yes for
+the stop whose id is the complex id and for any stop whose complex is not known, and
+`loadStations` binds a name only where it says yes. The other stops of a complex keep their
+ring, their popup and their kicker, and draw no name. Times Square is named once, "Times
+Sq-42 St" on `127`; the Port Authority stop `A27` is ringed and unnamed. At zoom 14, where the
+band draws every name there is, the real payload draws 444 names for 444 complexes.
+
+**9. The floor (ruling 2).** `validate_subway_archive` runs the loader's own transfer parser,
+split out as the stream parser `_parse_transfer_rows` the way `_parse_stops_rows` was, through
+`require_parsed`, the gate `stops.txt` already has. Headers only, self rows only, renamed
+columns, or only "no transfer possible" rows: each is refused, and the error names
+`transfers.txt` for `/api/status`. The committed 613-row live table passes it with 150 pairs.
+`stop_times.txt` keeps PR 116's presence-only rule, which the ruling did not reach. **And the
+monitor's `SUBWAY_REQUIRED_MEMBERS`**, which stayed `("stops.txt", "shapes.txt")` through PR 116,
+now names every member `static_data._REQUIRED_MEMBERS` does, and a test holds both to one
+hand-written list. The ruling said "all four"; the app requires five (`stops`, `shapes`,
+`trips`, `stop_times`, `transfers`), and the monitor names all five.
+
+**10. The Key (ruling 3).** "Subway transfer station: two or more route lines meet (click for
+arrivals)" was F9's rule in words, and 95 stops where two lines meet at one platform now draw a
+dot. The row reads **"Transfer station: change between lines here"**. P1e's golden moves by
+that one line of `legend/names`, regenerated for that key alone; `keyglyphs.test.js` finds the
+row by its new words. **A1x did not move**: the ruling named it, and it was run, but it
+measures each Key row's ink and the row count rather than the words, so it passes unchanged.
+
 ## One reading the ruling's words allow, measured
 
 "Two or more trunks across two or more stops" could mean the union of the complex's trunks,
@@ -105,7 +160,9 @@ interchanges under either reading, so the union is implemented and nothing turns
 ## The census
 
 On production's payload, **124 rings under F9 become 100 stops in 48 complexes**, all 48
-pinned by name in `subway.spec.js` **D2i1**:
+pinned by name in `subway.spec.js` **D2i1**. Since ruling 1 each complex is **named once**, so
+the hubs band draws 48 names, one per row below, on the stop whose id is the complex id (the
+id in brackets):
 
 | complex | stops | routes |
 | --- | --- | --- |
@@ -167,36 +224,37 @@ Hills-71 Av, Queens Plaza and Prospect Park are the other three single-stop hubs
 ## Before and after, the diagnosis's own grid
 
 The diagnosis's scripts, rerun unchanged except that the oracle reads the complex. Each cell
-is band, labels drawn / labels drawn with the hub class, and the City preset's in-view count.
-"Before" is the deployed build (`d49e9a7`) against production; "after" is this branch against
-the same payload plus `complex_id`, through the hermetic mocks.
+is band, names drawn / names drawn with the hub class, and the City preset's in-view count.
+"Before" is the deployed build (`d49e9a7`) against production; "after" is this branch at
+`0c17079` against the same payload plus `complex_id`, through the hermetic mocks.
 
-| zoom | Names | before: deployed, production | after: this branch, same payload |
+| zoom | Names | before: deployed, production | after: `0c17079`, same payload |
 | --- | --- | --- | --- |
 | 11 | on | none, 0 / 0, 0 in view | none, 0 / 0, 0 in view |
-| 12 | on | hubs, **124 / 124**, 88 in view | hubs, **100 / 100**, 92 in view |
-| 13 | on | hubs, **124 / 124**, 25 in view | hubs, **100 / 100**, 67 in view |
-| 14 | on | all, 496 / 124, 76 in view | all, 496 / 100, 76 in view |
-| 15 | on | all, 496 / 124, 36 in view | all, 496 / 100, 36 in view |
+| 12 | on | hubs, **124 / 124**, 88 in view | hubs, **48 / 48**, 44 in view |
+| 13 | on | hubs, **124 / 124**, 25 in view | hubs, **48 / 48**, 27 in view |
+| 14 | on | all, 496 / 124, 76 in view | all, **444 / 48**, 55 in view |
+| 15 | on | all, 496 / 124, 36 in view | all, 444 / 48, 25 in view |
 | 11 to 15 | off | the same bands, 0 / 0 | the same bands, 0 / 0 |
 
 `stationLabelShown`, D2j's oracle, disagreed with the page 0 times in every cell of both
-columns, and no local name is drawn in either hubs band. The other hermetic worlds are
-unchanged: the stock fixture (two one-trunk stations, no hub) still shows every name from 13,
-D2j's world still has its one hub at Fulton St (three trunks at one stop), and the
-`routes: []` world still reads F1's degraded band.
+columns, and no local name is drawn in either hubs band. 444 is the number of complexes: 496
+stops, 52 of them siblings of a named stop, each ringed or dotted as before and unnamed. The
+other hermetic worlds are unchanged: the stock fixture (two one-trunk stations, no hub) still
+shows every name from 13, D2j's world still has its one hub at Fulton St (three trunks at one
+stop), and the `routes: []` world still reads F1's degraded band (every name from 13, one per
+complex).
 
 **One transition world, measured because it is real for an hour.** A browser holding the
-pre-deploy payload runs the new frontend on stops with no `complex_id`. At `3ff5c49` that draws
+pre-deploy payload runs the new frontend on stops with no `complex_id`. At `0c17079` that draws
 exactly the "before" column: hubs, 124 / 124 at 12 and 13, 88 and 25 in view at the City
-preset, the oracle agreeing in every cell. At `ff030f0` it drew 14 / 14, which is review
-finding H1 and the reason for the change above.
+preset, 496 names at 14, the oracle agreeing in every cell. At `ff030f0` it drew 14 / 14, which
+is review finding H1 and the reason for the change above.
 
-## What a rider sees, and one finding for the operator
+## What a rider sees
 
 Zoom 13, Names on, production's payload through the hermetic mocks, 1280 wide. Left is
-`d49e9a7`, right is this branch at `ff030f0`; on this payload `3ff5c49` draws the same hundred
-rings and names (the grid above was rerun there).
+`d49e9a7`, right is this branch at `0c17079`.
 
 | before | after |
 | --- | --- |
@@ -205,24 +263,16 @@ rings and names (the grid above was rerun there).
 
 Before: 72 St and 81 St on Central Park West named, 7 Av and 5 Av/53 St named, and Times
 Square, Grand Central, Union Square, Herald Square, Canal St and Fulton St drawn as plain dots
-with no name. After: the reverse, which is the ruling.
+with no name. After: the reverse, which is the first ruling, and each of those stations named
+once, which is ruling 1.
 
-**FINDING FOR THE OPERATOR: a complex's name is now drawn once per stop, and they overprint.**
-The ruling puts the ring and the hub class on every stop of a hub complex, and a name label is
-per stop, so **32 of the 100 hub labels repeat a name another stop of the same complex already
-draws**: "Times Sq-42 St" four times, "Fulton St" four, "Canal St" four, "Grand Central-42
-St", "14 St-Union Sq", "Atlantic Av-Barclays Ctr" and "Broadway Junction" three each, and
-fifteen more twice. Under F9 it was 3. At zooms 12 and 13 they sit a few metres apart and
-overprint, visibly in both screenshots (Grand Central, Union Square, Canal St, and Chambers St
-against Brooklyn Bridge-City Hall), and the City preset's zoom 13 now carries 67 hub names in
-view where it carried 25.
-
-**Not changed here, because it is a design decision and the ruling made the other one**: "the
-ring and the label class read the same predicate". The narrowest remedy would keep the ring on
-every stop and give the `hub` class (and so the name at 12 and 13) to one stop per complex,
-the one whose id is the complex id, which is one predicate plus one comparison. Names at 14
-and above would still be per stop, as they are today for every local. That is the operator's
-to rule on; nothing in this branch depends on the answer.
+**What ruling 1 measured away.** At `3ff5c49`, with a name per stop, 32 of the 100 hub names
+repeated another stop of the same complex ("Times Sq-42 St" four times, "Fulton St" four,
+"Canal St" four) and overprinted at 12 and 13, and the City preset's zoom 13 carried 67 hub
+names in view. Now it is 27, none repeated. What remains is ordinary label collision between
+two DIFFERENT complexes that sit close together (Park Place against Brooklyn Bridge-City Hall
+downtown), which is the density MR2 measured for every zoom and not something a complex rule
+can decide.
 
 ## Tests
 
@@ -264,14 +314,23 @@ committed archive so the two fixtures cannot drift apart silently.
 | node: a closed sibling platform does not make a complex two stops (H4) | "hub definition: a stop nothing calls at does not make a complex two stops" |
 | backend: transfer types 3, 4 and 5 join nothing, a blank type joins (H7) | `test_a_transfer_type_that_says_no_change_joins_nothing` |
 | backend: the complex id is the smallest STATION id, whatever the row order and whatever non-station id links the complex (H10) | `test_the_complex_id_is_the_smallest_station_in_it_whatever_the_order` |
+| **ruling 1: no complex draws two names**, at zoom 14 where every name is drawn: 444 names for 444 complexes, each on the stop whose id is the complex id, in its own words; `A27` ringed and unnamed | **D2i6** |
+| ruling 1: the census stays at 48, one hub name per hub complex, every one on a ringed stop | **D2i1**; **D2i2** draws 48 at zoom 13 |
+| ruling 1, node: over the real payload one stop per complex names itself, 48 of them hubs; with no complex known every stop does | "hub definition: one name per complex, on the stop whose id is the complex id" |
+| **ruling 2: zero cross-stop rows fail the load**: headers only, self rows only, renamed columns, only type 3 | `test_validate_rejects_a_transfers_table_with_no_cross_stop_row`, four cases |
+| ruling 2: the same end to end, cache and redownload both refused | `test_a_publication_whose_transfers_say_nothing_fails_the_load` |
+| ruling 2: one pair passes, and so does the committed live table, with its 150 pairs | `test_validate_accepts_one_cross_stop_row_and_the_live_table` |
+| **ruling 2: the monitor names every required member**, each missing one a FAIL naming it, and the monitor's list equal to the app's | `test_contract_monitor.py::test_subway_static_missing_required_member_is_fail`, five cases, and `test_the_monitor_requires_what_the_app_requires` |
+| **ruling 3: the Key row's words** | `pins.spec.js` **P1e** (moved by one line) and `keyglyphs.test.js` test 7 |
 | **F11's alerts pin holds** | `pins.spec.js` **P3c**, its golden untouched |
 
 **Three node tests rewritten rather than deleted**, because the rule they asserted changed:
 "one trunk is a local dot and two or more is a transfer ring" became the complex rule's test,
 F9's pairs test keeps its one-trunk half and moves its two-trunk examples across two stops,
 and the label test gains the complex forms. **P2a's golden moves by one field**, `complex`,
-and against `main` the whole change to `mr_pins.json` is one line, `"complex": null`: the stock
-world names no complex, and its registry entry says so. Nothing else in the golden moved.
+and against `main` the change to `mr_pins.json` is two lines: `"complex": null` in P2a's
+registry entry (the stock world names no complex, and its entry says so), and P1e's one row of
+`legend/names`, moved by ruling 3's wording. Nothing else in the golden moved.
 D2i's title and D2's fixture comment now say three trunks at one stop, which is what makes
 Fulton St its world's one hub.
 
@@ -279,22 +338,27 @@ Fulton St its world's one hub.
 
 Each in a real `git worktree` detached at the commit under test, applied alone, the named tiers
 run against it, and the tree verified clean before and after. The four the ruling named ran at
-`ff030f0` and **again at `3ff5c49`**, with the review's guards added; the table is the second
-run.
+`ff030f0`, again at `3ff5c49` with the review's guards added, and **all sixteen at `0c17079`**,
+which is the table.
 
 | # | Guard reverted | Result | Killed by |
 | --- | --- | --- | --- |
-| M1 | the predicate counting per stop again (F9's `trunks >= 2`, the stop count ignored) | **killed** | node: **the diagnosis's stations** (96 St first) and six more; e2e **D2i1**, **D2i2** |
-| M1b | the same at the draw's call site: the ring and the label handed the stop's own routes | **killed** | e2e **D2i1**, **D2i2**. Node cannot see a call site, which is why the e2e tier exists |
-| M2 | `transfers.txt` removed from the required tuple | **killed** | the two `[transfers.txt]` F1 cases, the declared-set gate and `test_validator_rejects_an_archive_missing_a_required_member[subway-transfers.txt]` |
+| M1 | the predicate counting per stop again (F9's `trunks >= 2`, the stop count ignored) | **killed** | node: **the diagnosis's stations** (96 St first) and seven more; e2e **D2i1**, **D2i2** |
+| M1b | the same at the draw's call site: the ring and the label handed the stop's own routes | **killed** | e2e **D2i1**, **D2i2**, **D2i6**. Node cannot see a call site, which is why the e2e tier exists |
+| M2 | `transfers.txt` removed from the required tuple | **killed** | the declared-set gate and `test_the_monitor_requires_what_the_app_requires`. At `ff030f0` the missing-member cases killed it too; since ruling 2 the floor's own parser also refuses a missing `transfers.txt`, so those cases no longer tell the two apart and the declared-set gate is what does |
 | M3 | the kicker reading the stop's routes | **killed** | e2e **D2i3**, and **D2i4**'s premise |
 | M4 | union-find dropped for pairwise only (each station's own partners) | **killed** | **`test_a_three_stop_chain_is_one_complex`**, the non-station link test, and the H7 and H10 tests |
 | M5 | H1's fallback removed: a bare routes list read as a stop alone | **killed** | e2e **D2i5**; node, three tests |
 | M6 | the theme repaint asking the stop's routes | **killed** | e2e **D2i1**'s theme swap. At `ff030f0` this survived the whole suite, which is review finding H3 |
 | M7 | every stop counted toward "two stops", routed or not | **killed** | node, the H4 test |
-| M8 | the transfer-type filter removed | **killed** | `test_a_transfer_type_that_says_no_change_joins_nothing` |
+| M8 | the transfer-type filter removed | **killed** | the H7 test, and the floor's `no-transfer-possible-only` case |
 | M9 | the complex id as the first station stops.txt lists | **killed** | `test_the_complex_id_is_the_smallest_station_in_it_whatever_the_order` |
 | M9b | the complex id as the union-find root | **killed** | the same test, through the lower-sorting non-station id |
+| M10 | **ruling 1 at the call site**: a name bound on every stop | **killed** | e2e **D2i6**, **D2i1**, **D2i2** |
+| M10b | **ruling 1 in the helper**: `stationNamesItself` always yes | **killed** | node, the one-name test; e2e **D2i6** |
+| M11 | **ruling 2's floor removed** from `validate_subway_archive` | **killed** | the four no-cross-row cases and the end-to-end load test |
+| M12 | **ruling 2's monitor list** without `transfers.txt` | **killed** | `test_subway_static_missing_required_member_is_fail[transfers.txt]` and the equality test |
+| M13 | **ruling 3's words** reverted to F9's | **killed** | `pins.spec.js` **P1e**; `keyglyphs.test.js` test 7 |
 
 **What M1 did not kill at `ff030f0`, measured, and said so rather than hidden: D2j.** D2j's
 oracle and the page share `isTransferStation`, so a mutation to the rule moves both sides,
@@ -310,93 +374,82 @@ is why the synthetic chain exists.
 One round, over `92636bc..ff030f0`, run as the repository's `adversarial-review` workflow in
 its own worktree: five finders (silent failure, removed behaviour, boundary and type, test
 vacuity, operator reality), a triage that merged 17 candidates into 10, and batched verifiers.
-**Nine confirmed, one refuted.** Six are fixed in `3ff5c49`; three are the operator's. The
+**Nine confirmed, one refuted.** Six are fixed in `3ff5c49`; the other three went to the
+operator and are fixed on the rulings in `b786b4f` and `0c17079`. The
 findings are numbered H1 to H10 here, because this record already cites MR2's F1 and F9 and
 the review's own F-numbers collided with them.
 
 | # | Severity | Finding | Disposition |
 | --- | --- | --- | --- |
 | H1 | medium | A payload with no `complex_id` (a browser's cached copy for the hour after a deploy) read as "every stop alone": 14 rings, no subway name in Manhattan at 12 or 13, Names pressed | **Fixed.** A bare list gets F9's answer; **D2i5** |
-| H2 | medium | A `transfers.txt` that is present with no cross-stop rows loads as every stop alone under `ready`, and the comment claimed the requirement prevented that | **Comment fixed; the gap is for the operator**, below |
+| H2 | medium | A `transfers.txt` that is present with no cross-stop rows loads as every stop alone under `ready`, and the comment claimed the requirement prevented that | **Fixed on ruling 2** (`b786b4f`): a floor of one cross-stop row; four shapes of "says nothing" refused |
 | H3 | medium | No test repainted the rings on a theme swap where complex and stop disagree; the repaint mutated to per-stop survived | **Fixed.** D2i1 swaps to dark; M6 now dies |
 | H4 | low | A stop with no service counted toward "two or more stops" | **Fixed**, node test, M7 |
-| H5 | low | The Key still reads "Subway transfer station: two or more route lines meet", and 95 stops where two lines meet at one stop now draw a dot | **For the operator**, below |
+| H5 | low | The Key still reads "Subway transfer station: two or more route lines meet", and 95 stops where two lines meet at one stop now draw a dot | **Fixed on ruling 3** (`0c17079`): "Transfer station: change between lines here" |
 | H6 | low | The two corrected comments overclaimed: an absent `stop_times.txt` fails the load, a header-only one does not | **Fixed** |
 | H7 | low | `transfer_type` 3 (no transfer possible) and 4/5 (in-seat) joined stops | **Fixed**, test, M8 |
-| H8 | low | The contract monitor's `SUBWAY_REQUIRED_MEMBERS` is still `("stops.txt", "shapes.txt")`, so its drift check passes a publication production now refuses | **For the operator**, below |
+| H8 | low | The contract monitor's `SUBWAY_REQUIRED_MEMBERS` is still `("stops.txt", "shapes.txt")`, so its drift check passes a publication production now refuses | **Fixed on ruling 2** (`b786b4f`): the monitor names every member, held equal to the app's |
 | H9 | low | "Nothing covers paintZoomBand's hub count reading the complex" | **Refuted**: its premise that no e2e world carries `complex_id` is false (D2i1's does) |
 | H10 | low | Nothing held "the smallest station id" | **Fixed**, test, M9 and M9b |
 
-### For the operator: three decisions, none blocking
+### What went to the operator, and what came back
 
-1. **The repeated names (above), with the screenshots.** One remedy is one comparison: the
-   `hub` class on the stop whose id is the complex id.
-2. **H2 and H8, one question: how deep "required" goes.** The ruling reused PR 116's rule,
-   and that rule checks presence. A `transfers.txt` with headers only, or with only self rows,
-   passes it and loads as every stop alone under `ready`, with no signal but one INFO log line
-   ("496 stations, 496 complexes"). The same was already true of a header-only
-   `stop_times.txt`. A floor would be one `require_parsed` call per member, the gate
-   `stops.txt` already has; the hermetic archives that carry these files header-only (the
-   subway test builders and F08's four) would need one real row each. Separately, the
-   six-hourly monitor's subway tuple predates PR 116. Widening it to match
-   `_REQUIRED_MEMBERS` is one line plus its synthetic archives; F1's branch chose not to,
-   relying on `/healthz`, which sees a cold start but not a warm process refusing a new
-   publication.
-3. **H5, the Key's words.** "Two or more route lines meet" was F9's exact rule and is now true
-   of every ring, but not of every station where two lines meet. P1e allows an addition, so a
-   second clause is possible without moving the pin. Left alone because the words are the
-   Key's and the ruling did not reach them.
+The first record left three decisions open: the repeated names, how deep "required" goes
+(H2 and H8), and the Key's words (H5). The operator ruled on all three, and they are the
+three rulings at the top of this body, delivered in `fcbce7e`, `b786b4f` and `0c17079`. Nothing
+from the review is open.
 
 ## Gates
 
-At `3ff5c49`, the code tip, from the worktree, with the credentials scrubbed. This record's
+At `0c17079`, the code tip, from the worktree, with the credentials scrubbed. This record's
 commit adds documents and screenshots only.
 
 | Gate | |
 | --- | --- |
-| `pytest` (backend) | **1752** passed, from 1738 on `main` at `d49e9a7` |
+| `pytest` (backend) | **1763** passed, from 1738 on `main` at `d49e9a7` |
 | `ruff check`, `ruff format --check` | clean, 79 files |
 | `mypy` | clean, 30 source files |
-| node tier, `node --test "frontend/*.test.js" "tests/*.test.js"` | **402** passed |
-| hermetic e2e, the full suite | **323** passed (two workers; see below) |
+| node tier, `node --test "frontend/*.test.js" "tests/*.test.js"` | **403** passed |
+| hermetic e2e, the full suite | **324** passed, two workers |
 | contract-tier lint and format | clean |
 | contract API tier | **39** passed (38 before, plus the complex scenario) |
 | contract browser tier | **5** passed |
 | `run_all.sh` | **15 of 15** |
 
-**Three things about how they were run, because another session was working in the same
-repository at the same time.**
+**And the merge with the concurrent branch, tested rather than assumed.** `git merge-tree`
+of `0c17079` and `claude/bus-zoom-rule` at `6b447c2` is clean. The merged tree, committed as
+`18dab93` on no branch (a `commit-tree` object checked out in a scratch worktree, so no ref
+moved), passes backend **1763**, node **406** and the full hermetic e2e **354**. The two
+branches share `frontend/helpers.js`, `frontend/index.html`, `frontend/systems/shared.js`,
+`tests/e2e/fixtures/mr_pins.json` and `docs/reviews/map-redesign-rounds.md`, and each side's
+edits are additive to the other's. If that branch moves again before either merges, the
+second to merge should rerun this.
+
+**How they were run, because another session was working in the same repository at the same
+time.**
 
 - **Every run was in `/Users/benjaminrosenfield/nyc-transit-live-hubs`**, a worktree of its
   own. The first minutes of this branch were not: a `git switch` in the main checkout moved
   another session's HEAD, and its commit `8e30014` landed on this branch. It was moved back to
   `claude/bus-zoom-rule` with `git reset --keep`, this branch was reset to `d49e9a7`, and that
   session confirmed its tree intact. Nothing of either branch is in the other.
-- **The hermetic e2e ran on port 5184**, through a config that re-exports
-  `tests/e2e/playwright.config.js` unchanged but for the port, because the repository's config
-  reuses whatever already holds 5173 and the other session held it. The contract browser tier
-  cannot move (its spec reads the ports from its config), so it ran on 5174 and 5175 in a
-  window agreed with that session.
+- **The hermetic e2e ran on port 5184** (5188 for the merged tree), through a config that
+  re-exports `tests/e2e/playwright.config.js` unchanged but for the port, because the
+  repository's config reuses whatever already holds 5173 and the other session held it. The
+  contract browser tier cannot move (its spec reads the ports from its config), so it ran on
+  5174 and 5175 in windows agreed with that session, announced at start and finish.
 - **The node tier's `nodetier.test.js` needs `TMPDIR` resolved on macOS.** Its loader hook
   compares `/private/var/...` with `/var/...`, and it fails that way on untouched `main` too.
   CI runs on Linux, where the two are one path.
-
-**The e2e suite needed two workers to mean anything on this machine today**, and the runs that
-did not are recorded rather than dropped. The other session was running Playwright mutation
-passes back to back, and the load average sat between 20 and 33 on 8 cores. At the default
-four workers the full suite at `3ff5c49` failed 6 specs on one run and 17 on the next. All but
-two failed inside `boot`, before the page loads, on Playwright's "clock.pauseAt: Cannot
-fast-forward to the past", which is a race in the suite's frozen-clock boot. The other two
-were timing assertions (A1v3's announcement and A7h's superseded fetch). Rerun alone, the
-failures passed, A1y 4 of 4 on this branch and on `main`, and the whole suite then passed 323
-of 323 at two workers. Before the review commit was amended to renumber its findings (it was `47153da` then, and its
-code differed from `3ff5c49` only in eleven comment and test-title lines), the default-worker
-run had passed 323 of 323 at a lower load.
-
-**The merge with `claude/bus-zoom-rule` will meet in two files**, both additive on each side:
-`frontend/helpers.js` (that branch adds bus-band helpers; this one changes the station
-predicate) and `tests/e2e/fixtures/mr_pins.json` (that branch adds P6's pins; this one adds one
-line to P2a's).
+- **The e2e suite needed two workers to mean anything on this machine today**, and the runs
+  that did not are recorded rather than dropped. With the other session running Playwright
+  passes back to back, the load average reached 20 to 33 on 8 cores, and at the default four
+  workers full runs failed 6 and then 17 specs. All but two failed inside `boot`, before the
+  page loads, on Playwright's "clock.pauseAt: Cannot fast-forward to the past", a race in the
+  suite's frozen-clock boot; the other two were timing assertions (A1v3's announcement, A7h's
+  superseded fetch). At `0c17079` one two-worker run under that load failed three (A7h, and
+  A6n and P5e in `boot`); those passed 12 of 12 repeated alone, and the next full run passed
+  324 of 324 at a load average of 5 to 8.
 
 ---
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -12,7 +12,7 @@
 # with itself, so every gate the table uses runs against the unmutated tree, once before the rows
 # and once after them. On a machine that is also running other people's suites, a gate that fails
 # there would make every row gated on it look killed, so the controls are what make the other
-# thirty-three verdicts mean something; the closing one is there because contention that starts
+# thirty-four verdicts mean something; the closing one is there because contention that starts
 # partway through the table is invisible to a control that ran only at the start.
 #
 # THE EXIT STATUS SAYS ALL OF IT, which the first version did not: it exited 0 with a dead control
@@ -370,6 +370,18 @@ cat > "$WORK/r" <<'R'
   { id: "view-city", center: [40.7295, -73.99], zoom: 14 },
 R
 run M28 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7j"
+
+# ---- M28b: the hubs band draws every subway name, with the zoom left at 13 ----
+# M28 dies on D7j's zoom assertion before the names are read, so it cannot say whether the 48-names
+# half of D7j has teeth of its own. This row leaves the landing, the zoom and the band alone and
+# breaks only which names the band draws, so only that half can kill it.
+cat > "$WORK/a" <<'A'
+:root[data-label-band="hubs"] .stn-label:where(.subway.hub),
+A
+cat > "$WORK/r" <<'R'
+:root[data-label-band="hubs"] .stn-label:where(.subway),
+R
+run M28b frontend/style.css "$PW buszoom.spec.js --grep D7j"
 
 # ---- M0z: the closing control, the same identity and every gate again. MUST SURVIVE. ----
 cat > "$WORK/a" <<'A'

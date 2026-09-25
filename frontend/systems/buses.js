@@ -99,13 +99,16 @@ function busMarkerName(bus, now = correctedNow()) {
    disagree about which zoom counts, and a page whose script never wrote it leaves every bus
    drawn and reachable, which is the failure policy helpers.js gives.
 
-   WRITTEN ON THE ELEMENT, SO IT IS REWRITTEN WHENEVER LEAFLET BUILDS ONE. Hiding the Buses feed
-   removes every marker and showing it again builds a fresh element for each, which keeps the
-   icon's class (so the stylesheet still applies) and loses anything written as an attribute or
-   an inline style; labeledMarker's `add` hook is the same repair for the accessible name. The
-   hook is registered where the marker is made, in applyBuses. A setIcon today reuses the
-   element it is handed and so keeps both, and buszoom.spec.js D7c asserts that rather than
-   leaving it to a Leaflet detail. */
+   WRITTEN ON THE ELEMENT, SO IT IS WRITTEN WHEREVER AN ELEMENT CAN APPEAR BETWEEN ZOOMENDS. The
+   zoomend sweep (paintBusBand) reaches every bus that exists when it runs, and so does the feed
+   toggle, whose applyFeedVisibility calls paintZoomBand after putting the layer back. What
+   neither reaches is a bus the POLL adds while the map sits below City zoom: its element is
+   built by addTo and no zoomend follows, so without the `add` hook registered in applyBuses it
+   would be invisible and still read out and clickable until the rider next zoomed. Measured, not
+   assumed: with the hook removed, the feed-toggle half of buszoom.spec.js D7c still passes and
+   the new-arrival half fails (mutation M6). labeledMarker's own `add` hook is the same repair
+   for the accessible name. A setIcon today reuses the element it is handed and so keeps both
+   attributes, and D7c asserts that rather than leaving it to a Leaflet detail. */
 function busesDrawn() {
   return document.documentElement.getAttribute("data-bus-band") !== "hidden";
 }

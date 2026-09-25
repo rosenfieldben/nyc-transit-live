@@ -160,9 +160,12 @@ test("D7c. the band holds through everything that builds a bus's element again",
   await pressView(page, "view-rail");
 
   /* 1. THE FEED HIDDEN AND SHOWN, which destroys every bus element and builds a new one: the
-     class comes back with the icon, and aria-hidden and the inline pointer-events come back only
-     because the add hook writes them. The probe proves the element really is new; without it this
-     could pass on an element that was never rebuilt. */
+     class comes back with the icon, and aria-hidden and the inline pointer-events are written
+     twice over, by the add hook and by the band repaint applyFeedVisibility runs after it. So this
+     half cannot tell the two apart (mutation M6 removes the hook and this half passes); it is here
+     because a rebuilt element is a place the reach could be lost, and it holds the result. The
+     probe proves the element really is new; without it this could pass on an element that was
+     never rebuilt. */
   await page.evaluate(() => {
     for (const record of buses.values()) record.marker.getElement().dataset.probe = "before";
   });
@@ -175,7 +178,8 @@ test("D7c. the band holds through everything that builds a bus's element again",
   /* 2. A POLL THAT RE-ICONS A BUS, which is setIcon. Leaflet reuses the element it is handed today,
      so what was written on it survives; this asserts that directly, so the day an upgrade builds a
      new element here and the reach is lost, this fails rather than a rider finding it. And 3. A
-     BUS THAT ARRIVES WHILE THE MAP IS AT RAIL, which is born through the add hook. */
+     BUS THAT ARRIVES WHILE THE MAP IS AT RAIL, with no zoomend after it, which only the add hook
+     reaches: this is the half that fails when the hook is removed (mutation M6). */
   await page.evaluate(() => {
     for (const record of buses.values()) record.marker.getElement().dataset.probe = "before";
   });

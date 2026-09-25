@@ -403,11 +403,14 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
   /* MR2 ADDED A FOURTH BUTTON TO THIS STACK, and it is in these lists deliberately rather
      than filtered out: the Names toggle is a #view-stack button, it carries aria-pressed for
      the same reason the presets do, and a list that quietly excluded it would stop noticing
-     if it lost its state. It starts PRESSED because the station names start shown, which is
-     the one asymmetry with the three presets: a preset claims "the map is here now" and
-     nothing is true at load, while Names claims "the names are on" and that is true at load. */
-  expect(await pressed(), "nothing is active until the rider asks for a view").toEqual([
-    "view-city:false",
+     if it lost its state. It starts PRESSED because the station names start shown, and since
+     follow-up 1's landing ruling City starts pressed for the same reason: the map LANDS at the
+     City preset, so "the map is here now" is true at load for City and for nothing else.
+     BEFORE THE RULING this line read all three presets false ("nothing is active until the rider
+     asks for a view"), because the map opened at a zoom of its own; the ledger keeps that as the
+     before. buszoom.spec.js D7i is the ruling's own test. */
+  expect(await pressed(), "the map lands at the City preset, and only City says so").toEqual([
+    "view-city:true",
     "view-rail:false",
     "view-region:false",
     "names-toggle:true",

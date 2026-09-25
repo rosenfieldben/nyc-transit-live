@@ -26,21 +26,23 @@ is drawn old here.
 Written by the harness beside each frame (`<tag>-<preset>.json`). "Drawn" is Playwright's own
 visibility over every bus marker in the document, on screen or off it.
 
-| Frame | Buses served | Bus markers drawn |
-| --- | --- | --- |
-| `before-rail.png` | 2136 | 2136 |
-| `after-rail.png` | 2136 | 0 |
-| `before-city.png` | 2136 | 2136 |
-| `after-city.png` | 2136 | 2136 |
-| `before-open.png` | 2136 | 2136 |
-| `after-open.png` | 2136 | 0 |
+| Frame | Zoom | Buses served | Bus markers drawn |
+| --- | --- | --- | --- |
+| `before-rail.png` | 11 | 2136 | 2136 |
+| `after-rail.png` | 11 | 2136 | 0 |
+| `before-city.png` | 13 | 2136 | 2136 |
+| `after-city.png` | 13 | 2136 | 2136 |
+| `before-open.png` | 12 | 2136 | 2136 |
+| `after-open.png` | 13 | 2136 | 2136 |
 
 The Rail pair is the before and after the finding is about. The City pair should be the same
 picture twice, because City is where the rule draws every bus, and taking it shows that rather than
-saying it. **The opening pair is the view every rider meets first**: the map opens at zoom 12, one
-below City, so the rule as written draws no bus there. The review asked for it, because without it
-no picture showed the change a rider sees soonest, and it is the operator's question in the ledger.
-The feed strip reads **Buses 2,136** in all six frames.
+saying it. **The opening pair is the view every rider meets first.** The review asked for it,
+because no picture showed the change a rider sees soonest, and the first "after" frame it produced
+drew no bus at all: the map opened at zoom 12, one below City. That was the operator's question,
+and the ruling moved the landing to the City preset rather than moving the rule, so `after-open.png`
+is now the City preset with every bus drawn and the City button pressed, beside `before-open.png`
+at the old zoom 12. The feed strip reads **Buses 2,136** in all six frames.
 
 Before is `d49e9a7`, the commit this branch forks from (the pins commit after it changes no
 frontend file). After is this branch. Both at 1280 by 720, light theme, the clock running from the

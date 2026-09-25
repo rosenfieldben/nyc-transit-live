@@ -822,6 +822,13 @@ async function popupOnTheMapAt375(page) {
   await expect
     .poll(async () => page.evaluate(() => (typeof railroads === "undefined" ? 0 : railroads.size)), { timeout: 15_000 })
     .toBeGreaterThan(0);
+  /* AT THE VIEW THESE TWO SPECS WERE MEASURED AGAINST, set explicitly since follow-up 1's landing
+     ruling. Their premises are geometry: the drag, the popup's growth and whether a clearing move
+     exists were all measured with the map where it used to open (zoom 12, centred on lower
+     Manhattan), and at the City preset the map now lands on, the same drag leaves no clearing move
+     and both premise assertions fail. The landing is not their subject, so they keep their own
+     view rather than being re-measured against someone else's. */
+  await page.evaluate(() => map.setView([40.7128, -74.006], 12, { animate: false }));
   // A railroad train drawn ON its station, the same subject the gate's cross-link state
   // uses (railroadAtItsStation): it sits on its station rather than at a GPS fix, which
   // is what makes its popup reproducible.

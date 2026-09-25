@@ -12,7 +12,7 @@
 # with itself, so every gate the table uses runs against the unmutated tree, once before the rows
 # and once after them. On a machine that is also running other people's suites, a gate that fails
 # there would make every row gated on it look killed, so the controls are what make the other
-# thirty verdicts mean something; the closing one is there because contention that starts
+# thirty-two verdicts mean something; the closing one is there because contention that starts
 # partway through the table is invisible to a control that ran only at the start.
 #
 # THE EXIT STATUS SAYS ALL OF IT, which the first version did not: it exited 0 with a dead control
@@ -46,7 +46,7 @@ run() { # run <label> <file> <gate...>   (anchor in $WORK/a, replacement in $WOR
 CONTROL_GATES=("$NODE_ALL" "$PW buszoom.spec.js" "$PW a11y.spec.js --grep 'buses (undrawn|drawn) at'"
   "$PW pins.spec.js --grep 'P1e|P1g|P6'" "$PW layout.spec.js --grep A4b" "$PW families.spec.js --grep 'D4f|D4g'"
   "$PW smoke.spec.js --grep '7\. bus route'" "$PW theme.spec.js --grep D5d" "$PW pins.spec.js --grep 'P4c|P4d'"
-  "$PW busroute.spec.js --grep 'A7c|A7f'")
+  "$PW busroute.spec.js --grep 'A7c|A7f'" "$PW chrome.spec.js --grep D1j")
 
 # ---- M0: the control. Every gate below, once, on the tree as committed. MUST SURVIVE. ----
 cat > "$WORK/a" <<'A'
@@ -119,7 +119,9 @@ cat > "$WORK/a" <<'A'
 A
 printf '' > "$WORK/r"
 run M7 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7b"
-run M7b frontend/systems/shared.js "$PW a11y.spec.js --grep 'buses drawn at City'"
+# (Gated on the Rail state since the landing ruling: buses born at the City landing are drawn and
+# reachable without the sweep, so the sweep's absence shows where it would have hidden them.)
+run M7b frontend/systems/shared.js "$PW a11y.spec.js --grep 'buses undrawn at Rail'"
 
 # ---- M8 and M8b: the failure policy flipped to fail-closed, in each reader ----
 cat > "$WORK/a" <<'A'
@@ -172,23 +174,39 @@ cat > "$WORK/r" <<'R'
 R
 run M12 frontend/style.css "$PW buszoom.spec.js --grep D7f"
 
-# ---- M13 to M15: the three measuring sentinels put back at the opening zoom ----
+# ---- M13 to M15: the three measuring sentinels made to read where a bus is NOT drawn ----
+# Before the landing ruling these rows removed the move to City, which put the reading back at the
+# opening zoom 12. The map now LANDS at City, so removing the move reads a drawn bus and proves
+# nothing; the defect each guard exists for is a reading where the bus is undrawn, so each row now
+# moves the reading to Rail instead.
 cat > "$WORK/a" <<'A'
   await placeView(page, "view-city");
+
+  // Markers are sampled by system rather than exhaustively
 A
-printf '' > "$WORK/r"
+cat > "$WORK/r" <<'R'
+  await placeView(page, "view-rail");
+
+  // Markers are sampled by system rather than exhaustively
+R
 run M13 tests/e2e/layout.spec.js "$PW layout.spec.js --grep A4b"
 cat > "$WORK/a" <<'A'
   // At City, because a bus is not drawn below it (follow-up 1) and this reads the drawn mark.
   await pressView(page, "view-city");
 A
-printf '' > "$WORK/r"
+cat > "$WORK/r" <<'R'
+  // At City, because a bus is not drawn below it (follow-up 1) and this reads the drawn mark.
+  await pressView(page, "view-rail");
+R
 run M14 tests/e2e/families.spec.js "$PW families.spec.js --grep D4f"
 cat > "$WORK/a" <<'A'
   // At City, for D4f's reason: a dimmed bus is only a treatment where the bus is drawn.
   await pressView(page, "view-city");
 A
-printf '' > "$WORK/r"
+cat > "$WORK/r" <<'R'
+  // At City, for D4f's reason: a dimmed bus is only a treatment where the bus is drawn.
+  await pressView(page, "view-rail");
+R
 run M15 tests/e2e/families.spec.js "$PW families.spec.js --grep D4g"
 
 # ---- M16: the rule as a re-render, bus markers taken off the map below 13 (what P6a exists for) ----
@@ -203,13 +221,14 @@ cat > "$WORK/r" <<'R'
 R
 run M16 frontend/systems/buses.js "$PW pins.spec.js --grep P6a"
 
-# ---- M17: smoke 7 clicks a bus at the opening zoom again ----
+# ---- M17: smoke 7 clicks a bus where it is not drawn (Rail; the landing ruling put City at load) ----
 cat > "$WORK/a" <<'A'
      would have to go to do the same. buszoom.spec.js D7b is what says a click cannot land below. */
   await pressView(page, "view-city");
 A
 cat > "$WORK/r" <<'R'
      would have to go to do the same. buszoom.spec.js D7b is what says a click cannot land below. */
+  await pressView(page, "view-rail");
 R
 run M17 tests/e2e/smoke.spec.js "$PW smoke.spec.js --grep '7\. bus route'"
 
@@ -241,22 +260,24 @@ A
 printf '' > "$WORK/r"
 run M19 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7h"
 
-# ---- M20: theme.spec.js reads its families at the opening zoom again ----
+# ---- M20: theme.spec.js reads its families where the bus is not drawn (Rail) ----
 cat > "$WORK/a" <<'A'
   await placeView(page, "view-city");
 }
 A
 cat > "$WORK/r" <<'R'
+  await placeView(page, "view-rail");
 }
 R
 run M20 tests/e2e/theme.spec.js "$PW theme.spec.js --grep D5d"
 
-# ---- M21: P4c measures at the opening zoom again ----
+# ---- M21: P4c measures where the bus is not drawn (Rail) ----
 cat > "$WORK/a" <<'A'
   await busZoomViews.placeView(page, "view-city");
   const measured = {};
 A
 cat > "$WORK/r" <<'R'
+  await busZoomViews.placeView(page, "view-rail");
   const measured = {};
 R
 run M21 tests/e2e/pins.spec.js "$PW pins.spec.js --grep P4c"
@@ -306,17 +327,38 @@ cat > "$WORK/r" <<'R'
 R
 run M24 frontend/index.html "$PW buszoom.spec.js --grep D7e"
 
-# ---- M25: A7c clicks a bus at the opening zoom again ----
+# ---- M25: A7c clicks a bus where it is not drawn (Rail) ----
 cat > "$WORK/a" <<'A'
   await pressView(page, "view-city");
   const id = await firstBusId(page);
   const before = ctx.counts.busRoute ?? 0;
 A
 cat > "$WORK/r" <<'R'
+  await pressView(page, "view-rail");
   const id = await firstBusId(page);
   const before = ctx.counts.busRoute ?? 0;
 R
 run M25 tests/e2e/busroute.spec.js "$PW busroute.spec.js --grep A7c"
+
+# ROWS M26 AND M27 ARE THE LANDING RULING'S: the map lands at the City preset, pressed.
+
+# ---- M26: the map opens where it used to, zoom 12 over lower Manhattan ----
+cat > "$WORK/a" <<'A'
+}).setView(LANDING_PRESET.center, LANDING_PRESET.zoom);
+A
+cat > "$WORK/r" <<'R'
+}).setView([40.7128, -74.006], 12);
+R
+run M26 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7i"
+
+# ---- M27: the map lands at City and the City button does not say so ----
+cat > "$WORK/a" <<'A'
+let activeView = LANDING_PRESET.id;
+A
+cat > "$WORK/r" <<'R'
+let activeView = null;
+R
+run M27 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7i"
 
 # ---- M0z: the closing control, the same identity and every gate again. MUST SURVIVE. ----
 cat > "$WORK/a" <<'A'

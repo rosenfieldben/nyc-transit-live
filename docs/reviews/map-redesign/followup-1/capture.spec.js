@@ -17,9 +17,9 @@
    RAIL IS THE PAIR, AND TWO MORE RIDE ALONG. The Rail frames are the before and after the finding
    is about. The City frames should be the same picture twice, because City is where the rule
    draws every bus, and taking them is how that is shown rather than said. The OPENING frames are
-   the view every rider meets first, zoom 12 with no preset pressed, where the rule now draws no
-   bus at all; the review asked for them, because without them no picture showed the change a
-   rider sees soonest. */
+   the view every rider meets first, with no button pressed by the harness: zoom 12 in the before
+   tree, and the City preset since the operator's landing ruling. The review asked for them,
+   because without them no picture showed the change a rider sees soonest. */
 const fs = require("node:fs");
 const path = require("node:path");
 const { test, expect } = require("@playwright/test");
@@ -66,9 +66,10 @@ for (const preset of ["open", "view-rail", "view-city"]) {
       body.data.length,
       { timeout: 30_000 },
     );
-    if (preset === "open") {
-      expect(await page.evaluate(() => map.getZoom()), "the map opens at 12").toBe(12);
-    } else {
+    // The landing is NOT asserted, because it differs by tree: the before tree opens at zoom 12, and
+    // since the operator's landing ruling this branch opens at the City preset. It is recorded
+    // beside the frame instead, so each picture says where it was taken.
+    if (preset !== "open") {
       await page.locator(`#${preset}`).click();
       await expect(page.locator(`#${preset}`)).toHaveAttribute("aria-pressed", "true");
     }
@@ -77,7 +78,7 @@ for (const preset of ["open", "view-rail", "view-city"]) {
     // Recorded beside the frame, so MEASURING.md can say what each picture holds.
     fs.writeFileSync(
       path.join(OUT, `${TAG}-${preset.replace("view-", "")}.json`),
-      `${JSON.stringify({ tag: TAG, preset, buses: body.data.length, drawnAnywhere: drawn }, null, 1)}\n`,
+      `${JSON.stringify({ tag: TAG, preset, zoom: await page.evaluate(() => map.getZoom()), buses: body.data.length, drawnAnywhere: drawn }, null, 1)}\n`,
     );
     await page.screenshot({ path: path.join(OUT, `${TAG}-${preset.replace("view-", "")}.png`) });
   });

@@ -111,7 +111,9 @@ test("D7a. no bus is drawn at Region or Rail and every bus is at City, while the
   };
   await read("open");
   // Region and Rail first, then City from a hidden state, then back: both directions of the
-  // band, so neither "hides" nor "draws" can pass by never having been anything else.
+  // band, so neither "hides" nor "draws" can pass by never having been anything else. The map
+  // LANDS drawn since the operator's ruling (it opens at the City preset); before it, this row
+  // read {zoom: 12, drawn: 0}, which the ledger keeps as the before.
   for (const view of ["view-region", "view-rail", "view-city"]) {
     await pressView(page, view);
     await read(view);
@@ -120,7 +122,7 @@ test("D7a. no bus is drawn at Region or Rail and every bus is at City, while the
   await read("view-rail again");
 
   expect(seen).toEqual({
-    open: { zoom: 12, drawn: 0, inDocument: 2, registry: 2, strip: "2" },
+    open: { zoom: 13, drawn: 2, inDocument: 2, registry: 2, strip: "2" },
     "view-region": { zoom: 10, drawn: 0, inDocument: 2, registry: 2, strip: "2" },
     "view-rail": { zoom: 11, drawn: 0, inDocument: 2, registry: 2, strip: "2" },
     "view-city": { zoom: 13, drawn: 2, inDocument: 2, registry: 2, strip: "2" },
@@ -150,7 +152,9 @@ test("D7b. an undrawn bus is out of the accessibility tree and the click path, a
   page,
 }) => {
   await boot(page);
-  expectEveryBus(await busReach(page), HIDDEN, "open, zoom 12");
+  // The landing is the City preset (the operator's ruling), so the buses start drawn; before the
+  // ruling this line asserted HIDDEN at zoom 12.
+  expectEveryBus(await busReach(page), DRAWN, "landing, zoom 13");
   await pressView(page, "view-region");
   expectEveryBus(await busReach(page), HIDDEN, "Region");
   await pressView(page, "view-city");
@@ -394,4 +398,29 @@ test("D7h. a fly cut short leaves the band on the zoom the map actually rests at
   expect(up.dataZoom).toBe(String(up.rounded));
   expect(await drawnBuses(page)).toBe(2);
   for (const { id, hit, ...state } of await busReach(page)) expect(state, `Rail to City, stopped at ${up.zoom}: ${id}`).toEqual(DRAWN);
+});
+
+/* THE LANDING, BY THE OPERATOR'S RULING. The map used to open at a zoom of its own, 12, one below
+   the band, so a rider landed on a strip counting every bus and a map drawing none. The ruling moved
+   the landing to the City preset (the design's own default) and kept the band at 13, and asked for
+   exactly this: the landing view draws the buses, and the City button reads pressed.
+
+   READ AFTER THE FIRST POLL AND THE STATION LOAD, because both repaint things on the root and a
+   pressed state that did not survive them would be a pressed state for one frame. The zoom, the
+   root's attribute and the drawn page are all asked, so none of them can pass for another. */
+test("D7i. the map lands on the City preset: every bus drawn, and the City button pressed", async ({ page }) => {
+  await boot(page);
+  expect(
+    await page.evaluate(() => ({
+      zoom: map.getZoom(),
+      dataZoom: document.documentElement.getAttribute("data-zoom"),
+      busBand: document.documentElement.getAttribute("data-bus-band"),
+      atCity: mapIsAt(VIEW_PRESETS.find((preset) => preset.id === "view-city")),
+    })),
+  ).toEqual({ zoom: 13, dataZoom: "13", busBand: "drawn", atCity: true });
+  await expect(page.locator("#view-city")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#view-rail")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#view-region")).toHaveAttribute("aria-pressed", "false");
+  expect(await drawnBuses(page)).toBe(2);
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `landing: ${id}`).toEqual(DRAWN);
 });

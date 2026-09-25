@@ -691,8 +691,13 @@ test("17. PATH click targets: the station dot opens arrivals, the diamond above 
 
   // WTC has a train placed on it in the fixtures (p-1 shares its coords).
   // Zoom in so neighboring fixture markers cannot straddle the click point.
+  // UNANIMATED, which is what this spec always relied on and never said. From where the map
+  // used to open (zoom 12) the animated zoom had not finished either when the first click was
+  // made, and nothing at 12 was under the click; from the City preset the map now lands on
+  // (follow-up 1's ruling) the unfinished zoom put the click beside the station. The view is
+  // this spec's premise, and a premise should arrive whole.
   await page.evaluate(() => {
-    map.setView([40.71271, -74.01193], 14);
+    map.setView([40.71271, -74.01193], 14, { animate: false });
   });
   // Container-point lookups are recomputed before EACH click: opening a popup
   // auto-pans the map, so a point captured earlier goes stale and a click at

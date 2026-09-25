@@ -20,6 +20,23 @@
 // carries the same limitation in full, and the README states it for riders.
 const motionAtLoad = motionAllowed();
 
+/* THE THREE VIEW PRESETS, declared here rather than beside their buttons further down, because the
+   map LANDS on one of them and has to be constructed at it. The controls, the fly and the pressed
+   state are the "MR1: the view presets" section below, which says what each part is for.
+
+   THE LANDING IS THE CITY PRESET, by the operator's ruling on follow-up 1. The map opened at a
+   zoom of its own, 12, one below the zoom the bus markers are drawn from, so a rider landed on a
+   strip counting every bus and a map drawing none. The ruling moved the landing rather than the
+   rule: City is the design's own default view, the bus band stays at 13, and the button that names
+   the view the rider lands on reads pressed from the first frame. Read out of this one table, so the
+   landing cannot drift from the preset it claims to be. */
+const VIEW_PRESETS = [
+  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
+  { id: "view-rail", center: [40.76, -73.96], zoom: 11 },
+  { id: "view-region", center: [40.79, -73.9], zoom: 10 },
+];
+const LANDING_PRESET = VIEW_PRESETS.find((preset) => preset.id === "view-city");
+
 const map = L.map("map", {
   zoomAnimation: motionAtLoad,
   fadeAnimation: motionAtLoad,
@@ -31,7 +48,7 @@ const map = L.map("map", {
   // header now owns the top edge, so the control moves out from under it rather than the
   // chrome being nudged around it.
   zoomControl: false,
-}).setView([40.7128, -74.006], 12);
+}).setView(LANDING_PRESET.center, LANDING_PRESET.zoom);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 
 // Everything this app owns follows the preference LIVE. One class on the root element
@@ -897,14 +914,14 @@ paintZoomBand();
    arithmetic, so at zoom 10 it arrived 0.0007 degrees off its target and a 1e-4 allowance
    read that as the rider having moved: the button went dark at the instant it became true.
    Two pixels is a rounding allowance at any zoom, and a rider's pan is orders of magnitude
-   more than two pixels. */
-const VIEW_PRESETS = [
-  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
-  { id: "view-rail", center: [40.76, -73.96], zoom: 11 },
-  { id: "view-region", center: [40.79, -73.9], zoom: 10 },
-];
+   more than two pixels.
+
+   THE TABLE ITSELF IS AT THE TOP OF THIS FILE, because the map is constructed at LANDING_PRESET.
+   And the active preset STARTS as that one, so the button naming the view a rider lands on reads
+   pressed before they touch anything; the moveend and zoomend handler below clears it the moment
+   the map stops being there, exactly as it does after a press. */
 const VIEW_EPSILON_PX = 2;
-let activeView = null;
+let activeView = LANDING_PRESET.id;
 
 function mapIsAt(preset) {
   if (map.getZoom() !== preset.zoom) return false;

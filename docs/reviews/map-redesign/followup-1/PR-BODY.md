@@ -26,11 +26,23 @@ frames were taken.
 
 ## Concurrent branch
 
-**`claude/subway-hub-definition` is in flight at the same time and also edits
+**`claude/subway-hub-definition` (#122) is in flight at the same time and also edits
 `frontend/helpers.js`.** It changes `isTransferStation`'s signature, so that a hub becomes a
 station complex. This branch adds the bus band beside the other zoom bands, a few hundred lines
-away, and also touches `FEEDS` and `feedTooltip`. Whichever merges second should expect to
-rebase through that file, and should re-run its gates after the rebase.
+away, and also touches `FEEDS` and `feedTooltip`.
+
+The two branches share five files: `frontend/helpers.js`, `frontend/index.html`,
+`frontend/systems/shared.js`, `tests/e2e/fixtures/mr_pins.json` and
+`docs/reviews/map-redesign-rounds.md`.
+
+**The merge is clean.** I checked it with `git merge-tree --write-tree` of #122 at `81d1ac3`
+against this branch at `c8ff8ba`, which moves no refs. #122's session also reports that the
+merged tree passes backend 1763, node 406 and the full hermetic e2e 354. That is their run, not
+mine.
+
+**One interaction to know about.** This branch lands the map at zoom 13, which is #122's hubs
+band, so the first view shows #122's 48 station-complex names. Whichever branch merges second
+should re-run that check after rebasing.
 
 ## The change
 

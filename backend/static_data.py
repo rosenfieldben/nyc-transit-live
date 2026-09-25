@@ -93,6 +93,13 @@ MAX_AGE_DAYS = 30
 # class (the same predicate), and the kicker, which lists the routes of the complex
 # rather than of the stop. Without the file every stop is its own complex, Times
 # Square's ring and name go again, and the status would say "ready" over it.
+#
+# WHAT THIS DOES NOT COVER, said because the first draft of this comment implied it
+# did (review finding H2): a transfers.txt that is PRESENT with no cross-stop rows
+# (headers only, self rows only, a renamed column) passes require_members and loads
+# as every stop alone, under "ready". That is the same presence-only limit
+# stop_times.txt has had since PR 116, whose rule this reuses; the load logs the
+# complex count, and the PR record for this branch names the gap for the operator.
 _REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt", "transfers.txt")
 
 
@@ -427,22 +434,31 @@ def load_subway_station_routes() -> dict[str, list[str]]:
     return index
 
 
+# The GTFS transfer types that mean "a rider can change here": 0 recommended (and a
+# blank, which the spec reads as 0), 1 timed, 2 with a minimum time. Type 3 says a
+# transfer is NOT possible, and 4 and 5 are in-seat continuations between trips, which
+# name a vehicle rather than a station; none of those joins two stops into a complex
+# (review finding H7). The live table is type 2 throughout, so this is a guard.
+_COMPLEX_TRANSFER_TYPES = frozenset({"", "0", "1", "2"})
+
+
 def _parse_transfer_pairs(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
     """transfers.txt -> the CROSS-STOP rows as (from_stop_id, to_stop_id) pairs.
 
     The MTA publishes two kinds of row here. A row from a stop to itself (101 -> 101)
     is a minimum transfer time within one stop, which says nothing about which stops
-    form a complex, so it is dropped. A row between two stops (127 -> 725) is the
-    complex: the two stops are one station a rider can change within. Rows with a
+    form a complex, so it is dropped. A row between two stops (127 -> 725) of a type
+    a rider can change by is the complex: the two stops are one station. Rows with a
     blank id on either side are skipped as data, the way the other parsers here skip
-    a malformed row."""
+    a malformed row, and so are the transfer types that say no change is possible."""
     pairs: list[tuple[str, str]] = []
     with zf.open("transfers.txt") as raw:
         reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
         for row in reader:
             source = (row.get("from_stop_id") or "").strip()
             target = (row.get("to_stop_id") or "").strip()
-            if source and target and source != target:
+            kind = (row.get("transfer_type") or "").strip()
+            if source and target and source != target and kind in _COMPLEX_TRANSFER_TYPES:
                 pairs.append((source, target))
     return pairs
 

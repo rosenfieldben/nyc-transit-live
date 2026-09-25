@@ -611,6 +611,40 @@ def test_a_non_station_id_links_the_closure_but_is_never_a_key():
     assert index == {"101": "101", "103": "101"}
 
 
+def test_a_transfer_type_that_says_no_change_joins_nothing():
+    """Review finding H7. GTFS type 3 says a transfer between the two stops is NOT
+    possible, and 4 and 5 are in-seat continuations that name a vehicle, so none of
+    them makes one station of two stops. A blank type is the spec's 0 and does."""
+    body = (
+        "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+        "101,103,3,\n103,101,3,\n"
+        "101,105,4,\n105,107,5,\n"
+        "107,109,,\n109,111,0,\n111,113,1,\n"
+    )
+    pairs = static_data._parse_transfer_pairs(_zip_of({"transfers.txt": body}))
+    assert pairs == [("107", "109"), ("109", "111"), ("111", "113")]
+    index = static_data.derive_subway_station_complexes(
+        pairs, ["101", "103", "105", "107", "109", "111", "113"], {}
+    )
+    assert index["103"] == "103" and index["105"] == "105"
+    assert {index[s] for s in ("107", "109", "111", "113")} == {"107"}
+
+
+def test_the_complex_id_is_the_smallest_station_in_it_whatever_the_order():
+    """The rule the docstring states and review finding H10 found no test holding: the
+    SMALLEST STATION id, not the first one stops.txt lists (station order is the
+    MTA's, and an id that moved with it would move every complex it names) and not
+    the union-find's root, which can be a non-station id that sorts lower."""
+    # Stations listed out of order: the id is still "101".
+    index = static_data.derive_subway_station_complexes([("103", "101")], ["103", "101"], {})
+    assert index == {"103": "101", "101": "101"}
+    # A non-station id that sorts below both links them and is never the id.
+    index = static_data.derive_subway_station_complexes(
+        [("0X", "103"), ("0X", "101")], ["103", "101"], {}
+    )
+    assert index == {"103": "101", "101": "101"}
+
+
 def _zip_of(members: dict[str, str]) -> zipfile.ZipFile:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

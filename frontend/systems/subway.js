@@ -519,10 +519,15 @@ async function loadStations() {
     const stationRoutes = station.routes ?? [];
     /* AND OF ITS COMPLEX, NOT OF THE STOP (claude/subway-hub-definition). The routes above are
        still the stop's own, and they stay the station alerts join's seed, which is untouched: an
-       alert for the 7 belongs on the 7's platform, not on the 1's across the passageway. */
-    const complex = complexes.get(String(station.id)) ?? stationRoutes;
+       alert for the 7 belongs on the 7's platform, not on the 1's across the passageway.
+
+       NULL WHEN THE PAYLOAD NAMES NO COMPLEX, and then the draw is asked with the stop's bare
+       routes, which isTransferStation answers the way F9 did (helpers.js says why: a browser's
+       cached payload from before the deploy is exactly this, for up to an hour). */
+    const complex = complexes.get(String(station.id)) ?? null;
+    const ringFrom = complex ?? stationRoutes;
     const marker = L.circleMarker([station.lat, station.lon], {
-      ...stationMarkStyle(complex, ink, paper),
+      ...stationMarkStyle(ringFrom, ink, paper),
       renderer: stationRenderer,
     });
     /* THE NAME, as a permanent tooltip, and OUT OF THE ACCESSIBILITY TREE.
@@ -546,7 +551,7 @@ async function loadStations() {
       permanent: true,
       direction: "right",
       offset: [7, 0],
-      className: stationLabelClass(complex),
+      className: stationLabelClass(ringFrom),
       interactive: false,
       // BELOW THE VEHICLES, not above them: the default tooltipPane is 650 and markerPane is
       // 600, so a name painted over the bullet that identifies a train. shared.js says what
@@ -582,8 +587,9 @@ async function loadStations() {
       lat: station.lat,
       lon: station.lon,
       routes: station.routes ?? [],
-      // The complex the ring and the hub label were drawn from, kept beside the stop's own
-      // routes so the theme repaint and the zoom band ask the same question the draw did.
+      // The complex the ring and the hub label were drawn from (null when the payload named
+      // none), kept beside the stop's own routes so the theme repaint and the zoom band ask the
+      // same question the draw did: `entry.complex ?? entry.routes`, which is `ringFrom` above.
       complex,
       wheelchair: false, // the subway stops endpoint carries no accessibility field
       arrivalsUrl,

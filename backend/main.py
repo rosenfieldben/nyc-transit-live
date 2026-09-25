@@ -216,7 +216,8 @@ async def lifespan(app: FastAPI):
     app.state.subway_station_routes = {}
     # Station complex index (transfers.txt): parent station_id -> complex_id. Empty
     # until the warmup loads it, and the endpoint serves complex_id None meanwhile,
-    # which the frontend reads as "a stop alone" without claiming that it is.
+    # which the frontend reads as "no complex named" and answers with F9's per-stop
+    # rule, rather than claiming each stop is a complex of one.
     app.state.subway_station_complexes = {}
     app.state.subway_static_status = "loading"
     app.state.railroad_static = {}  # {system: {stops, trips, shapes, routes} | None}

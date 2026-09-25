@@ -1631,7 +1631,7 @@ test("D2i. a transfer ring where three trunks call at one stop, a local dot wher
 
 /* ---------------- the station complex (claude/subway-hub-definition) ----------------
 
-   A HUB IS A STATION COMPLEX NOW, and these four read the real network to say so. The world is
+   A HUB IS A STATION COMPLEX NOW, and these five read the real network to say so. The world is
    tests/e2e/fixtures/subway_stops_real.json: production's /api/subway-stops payload of 2026-09-25,
    496 stations with their routes, plus the complex_id the branch serves (the backend's
    test_the_e2e_census_fixture_agrees_with_this_archive holds it to the committed transfers.txt).
@@ -1737,6 +1737,58 @@ test("D2i1. the ring census on the real payload: 124 rings by stop become 100 in
   expect(census.labelKeys).toEqual(census.ringKeys);
   // And every one of Times Square's five stops is ringed, none of which F9 rang.
   expect(census.timesSquare).toEqual([true, true, true, true, true]);
+
+  /* AND A THEME SWAP REPAINTS THE SAME RINGS (review finding H3). The repaint is its own call site
+     (registerCanvasFamily in subway.js), and it asked the stop's routes where the draw asked the
+     complex, nothing here would notice: D5b swaps the stock world, where the two agree. */
+  await page.locator("#theme-toggle").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  const repainted = await page.evaluate(() =>
+    stationRegistry
+      .filter((entry) => entry.kind === "subway" && entry.marker.options.stroke === true)
+      .map((entry) => entry.key),
+  );
+  expect(repainted, "the dark theme rings the same hundred").toEqual(census.ringKeys);
+});
+
+test("D2i5. a payload with no complex_id draws F9's map, not a narrower one", async ({ page }) => {
+  /* THE HOUR AFTER A DEPLOY, which this branch's review found (finding H1). /api/subway-stops is
+     served max-age=3600 and the scripts are revalidated, so a returning rider runs this code on
+     yesterday's payload, which names no complex. Read as "every stop alone" it rang the 14 stops
+     where three trunks call and named no subway station in Manhattan at 12 or 13 while Names read
+     pressed. Read as what it is, a payload that names no complex, it draws F9's map until the next
+     fetch: yesterday's, which a rider cannot be surprised by. */
+  await open(
+    page,
+    (ctx) => {
+      ctx.overrides.subwayStops = (route) =>
+        json(
+          route,
+          REAL_STOPS.map(({ complex_id, ...stop }) => stop),
+        );
+    },
+    REAL_WORLD,
+  );
+  const drawn = await page.evaluate(() => {
+    const subway = stationRegistry.filter((entry) => entry.kind === "subway");
+    return {
+      complexes: subway.filter((entry) => entry.complex !== null).length,
+      rings: subway.filter((entry) => entry.marker.options.stroke === true).length,
+      hubLabels: subway.filter((entry) => entry.marker.getTooltip().getElement().classList.contains("hub")).length,
+      centralParkWest: ["A19", "A20", "A22"].map(
+        (id) => subway.find((entry) => entry.id === id).marker.options.stroke,
+      ),
+    };
+  });
+  expect(drawn.complexes, "the premise: nothing in this payload names a complex").toBe(0);
+  expect(drawn.rings, "F9's 124, the diagnosis's number").toBe(124);
+  expect(drawn.hubLabels).toBe(124);
+  expect(drawn.centralParkWest).toEqual([true, true, true]);
+  // And the band still has hubs to reveal, so Manhattan is not blank at the City preset.
+  await page.evaluate(() => {
+    map.setView([40.7295, -73.99], 13, { animate: false });
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
 });
 
 test("D2i2. at zoom 13 over the Upper West Side the band draws no local", async ({ page }) => {

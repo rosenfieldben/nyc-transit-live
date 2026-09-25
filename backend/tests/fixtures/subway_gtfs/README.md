@@ -25,8 +25,9 @@ station as production's `/api/subway-stops` served that day. Nothing here is inv
   answer, and the union-find in `derive_subway_station_complexes` is exercised by a synthetic
   three-stop chain rather than by this file. It is there because the table's shape is the
   MTA's to change, and a chain is still one complex.
-- **All 613 rows are `transfer_type` 2** (a minimum time is required), which the loader does
-  not read: the complex is who is joined to whom, not how long the walk is.
+- **All 613 rows are `transfer_type` 2** (a minimum time is required). The loader reads the
+  type only to refuse the ones that say no change is possible (3) or name a vehicle rather
+  than a station (4 and 5); the complex is who is joined to whom, not how long the walk is.
 
 ## What is not here
 

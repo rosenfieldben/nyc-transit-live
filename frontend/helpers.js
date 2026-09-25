@@ -352,9 +352,18 @@ function stationTrunks(routes) {
    and this one does not.
 
    `complex` is { routes, stops }, the complex's routes unioned and its stop count, as
-   subwayComplexIndex builds it. A BARE ROUTES LIST IS A STOP ALONE, which is exactly what PATH's
-   `[]` and a payload without complex_id both are, so every caller that never knew about complexes
-   still asks the question it meant. */
+   subwayComplexIndex builds it.
+
+   A BARE ROUTES LIST NAMES NO COMPLEX, and it gets F9's per-stop answer, which is the question
+   every caller that hands one meant: PATH's `[]` (no routes, so a dot either way), every caller
+   written before complexes, and a station the payload gives no complex_id. THE LAST IS REAL FOR
+   AN HOUR after a deploy, and this branch's review measured it (finding H1): /api/subway-stops
+   is served max-age=3600 while the scripts are revalidated, so a returning rider runs this code
+   on yesterday's payload. Read as "a stop alone", that payload rang 14 stations and named no
+   subway station in Manhattan at zoom 12 or 13 while Names read pressed; read as F9's answer, it
+   draws yesterday's map until the next fetch, which is the least a rider can be surprised by.
+   The backend keeps the same distinction on the wire (complex_id None is "no index loaded",
+   never "a complex of one"). */
 const HUB_TRUNKS_AT_ONE_STOP = 3;
 const HUB_TRUNKS_ACROSS_STOPS = 2;
 
@@ -366,35 +375,38 @@ function asStationComplex(complex) {
 }
 
 function isTransferStation(complex) {
+  // No complex named: F9's per-stop count, trunks at this stop alone (see above).
+  if (Array.isArray(complex) || !complex || typeof complex !== "object") {
+    return stationTrunks(complex ?? []).size >= HUB_TRUNKS_ACROSS_STOPS;
+  }
   const { routes, stops } = asStationComplex(complex);
   const trunks = stationTrunks(routes).size;
   return trunks >= HUB_TRUNKS_AT_ONE_STOP || (trunks >= HUB_TRUNKS_ACROSS_STOPS && stops >= 2);
 }
 
 /* EVERY STATION'S COMPLEX, from the stops payload: station id -> { id, routes, stops }, one
-   object shared by every stop in it. The key is the served complex_id, and a station without one
-   is a complex of its own id, which is the backend's rule for a stop transfers.txt names in no row
-   and the honest reading of a payload that predates the field.
+   object shared by every stop in it, keyed by the served complex_id. A station alone arrives with
+   its own id as its complex_id (the backend's rule for a stop transfers.txt names in no row), so
+   it is a complex of one here too. A station with NO complex_id is left out of the index: nothing
+   has said which complex it is in, and the caller hands isTransferStation its bare routes, which
+   is F9's answer (the comment above says why that is the right one).
 
    THE ROUTES ARE THE UNION IN PAYLOAD ORDER, each station's own list in its own order, so the
-   answer does not depend on which stop was asked. */
+   answer does not depend on which stop was asked. A STOP COUNTS ONLY IF SOMETHING CALLS THERE
+   (review finding H4): a sibling stop the archive lists no trip for is a closed platform, not a
+   second place to change, and counting it would ring a shared-track stop beside it. */
 function subwayComplexIndex(stations) {
   const groups = new Map();
-  for (const station of stations ?? []) {
-    if (!station || station.id == null) continue;
-    const key = String(station.complex_id ?? station.id);
-    if (!groups.has(key)) groups.set(key, { id: key, routes: [], stops: 0 });
-    const complex = groups.get(key);
-    complex.stops += 1;
-    for (const route of station.routes ?? []) {
-      const id = String(route ?? "");
-      if (id && !complex.routes.includes(id)) complex.routes.push(id);
-    }
-  }
   const index = new Map();
   for (const station of stations ?? []) {
-    if (!station || station.id == null) continue;
-    index.set(String(station.id), groups.get(String(station.complex_id ?? station.id)));
+    if (!station || station.id == null || station.complex_id == null) continue;
+    const key = String(station.complex_id);
+    if (!groups.has(key)) groups.set(key, { id: key, routes: [], stops: 0 });
+    const complex = groups.get(key);
+    const routes = (station.routes ?? []).map((route) => String(route ?? "")).filter(Boolean);
+    if (routes.length) complex.stops += 1;
+    for (const id of routes) if (!complex.routes.includes(id)) complex.routes.push(id);
+    index.set(String(station.id), complex);
   }
   return index;
 }
@@ -468,10 +480,11 @@ const LABEL_ALL_ZOOM = 14;
 
    THE BACKEND HALF HAS LANDED SINCE (claude/subway-static-station-routes): stop_times.txt and
    trips.txt are required members, load_subway_station_routes RAISES on a parse problem, and a
-   reduced publication fails the load instead of serving an empty index; transfers.txt joined
-   them for the station complexes (claude/subway-hub-definition). The fallback stays for what no
-   required member can rule out, a PARTIAL index or a network with no interchange at all, which
-   is what the hermetic stock fixture is.
+   publication WITHOUT either file fails the load; transfers.txt joined them for the station
+   complexes (claude/subway-hub-definition). What a required member cannot rule out is a file
+   that is present and says nothing: a header-only stop_times.txt still loads as {} under
+   "ready", and so does a partial index. The fallback stays for those, and for a network with no
+   interchange at all, which is what the hermetic stock fixture is.
 
    So with no hubs the band skips the hubs step and shows every name from 13: one zoom later
    than the hub band, because with no hub to thin the field 12 is the zoom the collision
@@ -537,9 +550,10 @@ function ferryLabelBand(zoom) {
    any failure, and the endpoint then served routes: [] for all 496 stations while the status
    stayed "ready". Every station was a local, no label carried the hub class, and at the
    opening zoom 12 and the City preset's 13 nothing rendered while the button read pressed.
-   That path is closed now: the file is a required member and load_subway_station_routes
-   RAISES (backend/static_data.py), so a reduced archive fails the load instead. The sentence
-   below still earns its place for a partial index and for a network with no interchange.
+   An ABSENT file fails the load now (it is a required member, and load_subway_station_routes
+   RAISES on a table it cannot read), but a present one with headers and no rows still loads as
+   {} under "ready", so the state is narrower than it was and not gone. The sentence below earns
+   its place for that, for a partial index, and for a network with no interchange.
 
    The band's arithmetic is not the bug and is not changed here: "hubs from 12" showing no
    hubs is the right answer to that data. What was wrong is a control claiming otherwise in

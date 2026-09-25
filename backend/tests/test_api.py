@@ -660,8 +660,9 @@ async def test_subway_stops_routes_default_empty_when_index_absent(client, subwa
 async def test_subway_stops_complex_id_is_none_when_no_index_is_loaded(client, subway_state):
     """None, not the stop's own id, when no complex index is loaded: "a complex of one"
     is a claim about the network, and before the warmup has read transfers.txt nothing
-    has made it. The frontend treats both as a stop alone, and the wire keeps them apart
-    so an operator reading the payload can tell which it is."""
+    has made it. The frontend keeps the two apart as well (a complex of one takes the
+    complex rule, a missing complex_id takes F9's per-stop answer), which is why the wire
+    must, and an operator reading the payload can tell which it is."""
     app_module.app.state.subway_station_complexes = {}
     res = await client.get("/api/subway-stops")
     assert [row["complex_id"] for row in res.json()] == [None]

@@ -12,7 +12,7 @@
 # with itself, so every gate the table uses runs against the unmutated tree, once before the rows
 # and once after them. On a machine that is also running other people's suites, a gate that fails
 # there would make every row gated on it look killed, so the controls are what make the other
-# thirty-two verdicts mean something; the closing one is there because contention that starts
+# thirty-three verdicts mean something; the closing one is there because contention that starts
 # partway through the table is invisible to a control that ran only at the start.
 #
 # THE EXIT STATUS SAYS ALL OF IT, which the first version did not: it exited 0 with a dead control
@@ -359,6 +359,17 @@ cat > "$WORK/r" <<'R'
 let activeView = null;
 R
 run M27 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7i"
+
+# ROW M28 IS THE REBASE ONTO #122's: the landing and #122's hub names, together.
+
+# ---- M28: the City preset, and so the landing, at zoom 14, the band where every name shows ----
+cat > "$WORK/a" <<'A'
+  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
+A
+cat > "$WORK/r" <<'R'
+  { id: "view-city", center: [40.7295, -73.99], zoom: 14 },
+R
+run M28 frontend/systems/shared.js "$PW buszoom.spec.js --grep D7j"
 
 # ---- M0z: the closing control, the same identity and every gate again. MUST SURVIVE. ----
 cat > "$WORK/a" <<'A'

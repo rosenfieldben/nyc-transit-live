@@ -424,3 +424,49 @@ test("D7i. the map lands on the City preset: every bus drawn, and the City butto
   expect(await drawnBuses(page)).toBe(2);
   for (const { id, hit, ...state } of await busReach(page)) expect(state, `landing: ${id}`).toEqual(DRAWN);
 });
+
+/* THE LANDING AND #122's HUB NAMES, TOGETHER. #122 (claude/subway-hub-definition, merged before this
+   branch was rebased onto it) made a hub a station COMPLEX and names each hub complex once, and on
+   production's payload that is 48 names in the hubs band, which is zoom 12 and 13. This branch's
+   landing ruling puts the map at the City preset, zoom 13, so the view a rider lands on is where
+   the two changes meet: every bus drawn by this branch's band, and the 48 complex names drawn by
+   #122's. Asked at the landing itself, with nothing moved.
+
+   THE REAL PAYLOAD, as #122's own D2i specs boot it (tests/e2e/fixtures/subway_stops_real.json,
+   496 stations with their complex ids). Its override is one line here rather than borrowed,
+   because a spec file cannot be required without registering its tests. */
+const REAL_SUBWAY_STOPS = require("./fixtures/subway_stops_real.json");
+
+test("D7j. the landing view draws every bus and #122's 48 complex names together", async ({ page }) => {
+  const ctx = await installMocks(page);
+  ctx.overrides.subwayStops = (route) => json(route, REAL_SUBWAY_STOPS);
+  await page.clock.install({ time: new Date(fx.FROZEN_MS - 1000) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await page.waitForFunction(
+    (want) => buses.size === 2 && stationRegistry.filter((entry) => entry.kind === "subway").length === want,
+    REAL_SUBWAY_STOPS.length,
+    { timeout: 20_000 },
+  );
+  await page.clock.runFor(1000);
+
+  // The landing, untouched: the City preset, pressed, in the hubs band.
+  await expect(page.locator("#view-city")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-zoom", "13");
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
+
+  // Every bus drawn and reachable.
+  expect(await drawnBuses(page)).toBe(2);
+  for (const { id, hit, ...state } of await busReach(page)) expect(state, `landing: ${id}`).toEqual(DRAWN);
+
+  // And the 48 complex names, each a hub's, off the drawn page: the label's own computed display.
+  const names = await page.evaluate(() =>
+    stationRegistry
+      .filter((entry) => entry.kind === "subway")
+      .map((entry) => entry.marker.getTooltip()?.getElement() ?? null)
+      .filter((el) => el && getComputedStyle(el).display !== "none")
+      .map((el) => ({ hub: el.classList.contains("hub"), text: el.textContent })),
+  );
+  expect(names.length, "one name per hub complex").toBe(48);
+  expect(names.filter((n) => !n.hub), "no local name in the hubs band").toEqual([]);
+});

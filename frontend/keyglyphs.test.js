@@ -235,7 +235,8 @@ test("6. the AirTrain guideway row is airtrainLineStyle's dash, weight and opaci
 
 test("7. the two subway station rows are stationMarkStyle's two branches, one each", () => {
   const dot = row("Subway station (click for arrivals)");
-  const ring = row("Subway transfer station: two or more route lines meet (click for arrivals)");
+  // The operator's words since claude/subway-hub-definition: what the ring means, not its rule.
+  const ring = row("Transfer station: change between lines here");
 
   // ONE MARK PER ROW, which is finding F16 in one assertion: the defect was a glyph drawing two
   // marks beside a caption describing one thing.

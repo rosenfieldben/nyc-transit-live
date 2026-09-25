@@ -622,7 +622,7 @@
    "Subway train, at/approaching the stop shown",
    "Subway route line",
    "Subway station (click for arrivals)",
-   "Subway transfer station: two or more route lines meet (click for arrivals)",
+   "Transfer station: change between lines here",
    "LIRR / Metro-North / NJ Transit train (live GPS)",
    "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is always this",
    "Commuter train heading: filled when it is trusted, outlined when it is not",

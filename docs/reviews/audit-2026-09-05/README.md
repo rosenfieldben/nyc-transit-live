@@ -17,9 +17,14 @@ the fixes start landing. A script therefore measures what the code DOES and neve
 where it lives, so a behavior-preserving refactor cannot turn a row red. Run one on
 its own with `.venv/bin/python <script>` or `node <script>`.
 
-None of them is wired into CI. They pin the state of a set of open defects, so they
-are expected to start failing as those defects are fixed, and a check that is
-supposed to go red is a bad gate.
+They run in CI, as the `audit-records` job in `.github/workflows/ci.yml`, since PR
+#117 made them one: three records had sat red on `main` for a whole stage because
+nothing ran them. That a record goes red when its defect is fixed does not make it a
+bad gate, because the branch that fixes a finding rewrites its script in the same
+change to pin the repair, which is how every FIXED row here landed; a red job means a
+record no branch updated. The same job runs the 2026-10-12 harness, and both end with
+a tally of the passing rows by disposition, since a green run of open records is not
+good news.
 
 **Fourteen of the fifteen are reproductions; the fifteenth is a PROBE and the
 difference is worth keeping straight.** `probe_bus_observation_clock.py` re-derives

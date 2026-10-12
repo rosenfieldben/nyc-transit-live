@@ -134,3 +134,4 @@ jobs:
       - run: bash docs/reviews/audit-2026-09-05/run_all.sh
         env:
           PY: python
+      - { if: "!cancelled()", run: PY=python bash docs/reviews/audit-2026-10-12/run_all.sh }

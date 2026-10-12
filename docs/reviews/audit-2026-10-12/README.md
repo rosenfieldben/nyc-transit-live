@@ -29,6 +29,10 @@ health"), and it is right: the count says the record is current, the tally says 
 the record is. As fixes land, rows move to FIXED and their scripts are rewritten to
 pin the repair, the way the 2026-09-05 scripts were.
 
+CI runs this harness in the `audit-records` job, beside the 2026-09-05 one and under the
+same `PY`, and runs it even when the 2026-09-05 step has gone red, so one harness's red
+row cannot hide the other's.
+
 ## What they need, and what they cannot do
 
 - A Python environment with `backend/requirements-dev.txt` installed. `run_all.sh`

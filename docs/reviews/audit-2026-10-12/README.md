@@ -16,10 +16,13 @@ records it, and non-zero the moment the code stops matching, so these are regres
 checks on the audit record rather than one-off prints. A script measures what the code
 DOES and never where it lives: none asserts a line number, a symbol name or the text
 of a comment, so a behavior-preserving refactor cannot turn a row red, and a fix will.
+One class of refactor is the exception, and it fails closed rather than open: A02, A02b
+and A13 observe the static warmup's backoff through `asyncio.sleep`, so a backoff
+rewritten to wait some other way turns those three rows red, never green.
 Run one on its own with `backend/.venv/bin/python <script>` or `node <script>`.
 
 **Read the tally, not the count.** `run_all.sh` ends with a line like
-`10 passed: 10 VERIFIED, 0 PARTLY, 0 REFUTED, 0 FIXED`. Every script here records an
+`11 passed: 11 VERIFIED, 0 PARTLY, 0 REFUTED, 0 FIXED`. Every script here records an
 open defect, so a green run means the defects are all still there. The audit makes
 the point about the 2026-09-05 job ("a green audit-record job is not a clean bill of
 health"), and it is right: the count says the record is current, the tally says what

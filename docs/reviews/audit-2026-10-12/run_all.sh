@@ -11,8 +11,8 @@
 #
 # A GREEN RUN IS NOT A CLEAN BILL OF HEALTH, and the summary says so in its own
 # words. A record of an open defect passes for exactly as long as the defect is
-# still there, so "10 passed" on its own reads as good news when it means ten open
-# findings. The summary therefore tallies the passing rows by the first word after
+# still there, so "11 passed" on its own reads as good news when it means eleven open
+# records. The summary therefore tallies the passing rows by the first word after
 # DISPOSITION: (VERIFIED, PARTLY, REFUTED, FIXED, and any other word a script
 # prints, counted rather than dropped), and that tally is the line to read.
 #

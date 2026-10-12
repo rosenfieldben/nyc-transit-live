@@ -58,6 +58,12 @@ WHAT THIS SCRIPT MEASURES
   preflight in the deploy start command or a different server entry point. No
   in-process script observes those.
 
+  ONE REFACTOR THIS SCRIPT DOES NOT SURVIVE, and it fails closed: the retry delays are
+  read through the asyncio.sleep observer in injection 4 below, so a warmup backoff
+  rewritten to wait some other way (asyncio.wait_for on an event, say) leaves C with
+  no recorded delays and turns this script red, never green. A02 and A02b share the
+  same dependency; the directory README says so.
+
 WHAT IS PRODUCTION CODE HERE (nothing is re-implemented): env_seams.seconds and
 env_seams.seconds_tuple; their production call sites, reached by importing main;
 main.app and everything its lifespan starts, including the feed and alert poll loops

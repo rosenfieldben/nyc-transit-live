@@ -1,0 +1,1089 @@
+"""A09 (Medium), "Upstream resource use is not sufficiently bounded": reproduction.
+
+THE AUDIT'S CLAIM (report of 2026-10-12, finding A09, verbatim):
+
+    Risk. "Static transfers have no byte ceiling, archive validation lacks
+    member-count/uncompressed-size limits, and some parsing runs synchronously on
+    the serving event loop. NJT's transport buffers the whole response. Timeouts do
+    not preempt synchronous CPU work, so an oversized or pathological agency
+    publication can impair all layers sharing the process."
+
+    Evidence and boundary. "A harmless local validator taking 80 ms completed and
+    promoted a stage inside an asyncio.timeout(10 ms) block after approximately
+    81 ms, without a timeout. This demonstrates a resource-control gap; it does not
+    demonstrate a public-user exploit or malicious provider."
+
+    Repair. "Set source-specific compressed and expanded byte limits, archive
+    member/row ceilings and finite-coordinate validation before publication. Move
+    expensive work off the serving loop; use a killable subprocess where a hard CPU
+    deadline is required. Test oversized downloads and members, malformed numeric
+    values, last-good preservation and health responsiveness during validation."
+
+    Code evidence (where to LOOK at 1e3e73d; nothing here asserts on any of them):
+        backend/static_shared.py:159
+        backend/static_shared.py:272
+        backend/static_shared.py:338
+        backend/njt_auth.py:568
+        backend/bus_static.py:193
+
+THE BOUNDARY, the way the audit states it. This is a resource-control gap, not a
+public-user exploit and not a malicious provider: every input below is a harmless
+local publication. The adjacent row in the 2026-09-05 ledger is F09 (nonfinite
+coordinates); the Repair's "finite-coordinate validation" is F09 territory and is
+not re-measured here.
+
+NOT DRIVEN BY THIS SCRIPT, left to the ledger as confirmed from source only:
+  - NJT's whole-response buffering (njt_auth.py:568). No NJ Transit module is driven.
+  - The bus borough transfer (bus_static.py:193): a synchronous httpx.Client run in a
+    worker thread, bounded by a whole-transfer time deadline and by no byte count.
+  - The transport below httpx.AsyncClient. The fake wire replaces the client's
+    transport, so httpcore, h11 and the socket are never exercised, and "no ceiling
+    in the transport" is read from their source, not measured: h11's
+    max_incomplete_event_size (16 KiB by default; httpcore passes 100 KiB) bounds an
+    INCOMPLETE event, in practice the status line and headers, while body bytes are
+    handed out as Data events as they arrive; neither httpx nor httpcore has a body
+    limit. Python 3.12's zipfile has no member-count or ratio limit on read (its
+    ZIP_FILECOUNT_LIMIT and ZIP64_LIMIT only decide when a WRITER switches to zip64).
+
+FOUR CHECK GROUPS, each over the real static_shared staged path:
+
+  ARM 1  The deadline that does not preempt.
+         1a/1b: the audit's own experiment. A validator that runs the real subway
+         validator and then busy-waits to 80 ms, inside asyncio.timeout(0.01), through
+         the real staged_fetch and its real default transfer. Measured: elapsed time,
+         promotion, whether TimeoutError left the block, how long the event loop was
+         held, and what the expired deadline does at the boundary afterwards.
+         1c: the PRODUCTION attempt the serving loop runs, with nothing injected into
+         the pipeline. The real subway warmup, its whole-attempt deadline set to the
+         same 10 ms through the documented test seam, loads a valid publication whose
+         transfers.txt has 150,000 rows, so the real validator's own parse is the
+         synchronous work. Measured: whether the publication was promoted before the
+         attempt ended, and how long a 1 ms heartbeat sharing the loop was stalled.
+         This is the check that sees a repair made ABOVE staged_fetch (in the subway
+         loader or in the warmup), which 1a cannot, because 1a calls staged_fetch on
+         the script's own loop. One level higher is out of its reach: a repair in
+         main.lifespan that ran the whole warmup coroutine on another event loop
+         would leave 1c green, because 1c schedules the warmup itself.
+  ARM 2  No byte ceiling on a transfer. A valid subway publication padded to 512 MiB
+         with one stored member, generated as it is served (no upstream file), through
+         the real default transfer, the real subway loader and the real validator.
+         Measured: every byte accepted by the transfer (2.1: in-transfer ceilings,
+         declared-length checks), and the whole publication validated and promoted
+         (2.2: also any size gate between the transfer and the promotion). 512 MiB is
+         about 13x the ~40 MB live publication the repository describes, so a ceiling
+         with ordinary headroom sits below it. The row states 512 MiB as the bound.
+  ARM 3  No member-count or expanded-size limit at validation. A valid subway archive
+         plus 70,000 empty members (past the 65,535 entries of a classic zip, so the
+         archive is zip64), and a valid subway archive with one member declaring
+         2 GiB expanded from about 2 MB on the wire. Measured: both promoted, the
+         member count and the declared expanded size.
+  H      Hermetic and harness checks: the generated-archive builder reads back intact
+         at small scale, and no socket was attempted.
+
+WHAT IS PRODUCTION CODE HERE, unmodified and called directly:
+    static_shared.staged_fetch          sweep, stage, validate, promote (1a, 1b)
+    static_shared's default transfer    the streaming GET, its asyncio.timeout and its
+                                        write loop (every arm; it is NOT replaced)
+    static_shared.validate_archive      the zip-open boundary (every arm)
+    static_data.validate_subway_archive the real subway publication validator
+    static_data.load_subway_stops       the loader the subway warmup awaits (arms 2, 3)
+    warmups._warm_subway_static         the subway warmup main.lifespan schedules (1c),
+                                        with the inline loaders it calls after the stops
+    static_shared.archive_status        the operator surface /api/status reads
+
+WHAT IS INJECTED, and this is the whole of it:
+    1. DATA_DIR points at a fresh temp directory and SUBWAY_GTFS_URL at the loopback
+       discard port, both before the backend imports (env_seams reads them once).
+    2. THE WIRE, one layer UNDER the production transfer: httpx.AsyncClient is
+       replaced, before any backend import, by a subclass that forces an
+       httpx.MockTransport and trust_env=False. The transfer function itself runs
+       for real, because arm 2 asks whether IT has a byte ceiling and replacing it
+       would replace the code under test. The mock serves only what this script
+       publishes, sends a Content-Length like a real origin, yields to the loop
+       between chunks like a real socket read, and hard-fails on any URL naming
+       njtransit or raildata.
+    3. 1a/1b's validator: the real subway validator followed by a busy-wait to 80 ms,
+       standing in for a larger publication's parse time.
+    4. 1c: main.STATIC_ATTEMPT_DEADLINE_S set for the one attempt and restored (the
+       name main documents as the test seam) to 10 ms, or to a tenth of the
+       publication's own standalone validation time where that is shorter, so the
+       deadline expires during validation on a faster machine too; and a bare FastAPI app
+       whose state starts "loading", as main.lifespan sets it.
+    5. Archives built here: small ones with zipfile, the 512 MiB and 2 GiB ones by a
+       short zip writer below that generates them as they are served (stored zeros,
+       and one MiB of zeros deflated once and repeated). H.0 proves that writer's
+       output reads back intact with zipfile.testzip.
+
+HERMETIC. _hermetic.contain() before the first backend import and verify() after
+it; no credentials; an audit hook refuses any socket connect or name resolution,
+and the run asserts none was attempted. Nothing reaches the network, no NJ Transit
+module is driven, no mint is spent, data/ is never touched. Arm 2 writes one
+512 MiB stage file under the temp directory and the run deletes it. Timing is the
+only wall-clock dependence, and only arm 1 measures it, with bounds that hold by
+construction: 1a's validator itself spends the 80 ms, and 1c compares the stall with
+the same validation timed standalone in the same run.
+
+RUN IT, from the repository root:
+    backend/.venv/bin/python docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py
+
+RECORDED DISPOSITION: VERIFIED. Exits 0 while A09 behaves as recorded; exits 1,
+naming the failed checks, the moment the code stops matching.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import csv
+import hashlib
+import io
+import logging
+import os
+import shutil
+import struct
+import sys
+import tempfile
+import time
+import zipfile
+import zlib
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[3]
+BACKEND = REPO / "backend"
+
+# ---------------------------------------------------------------------------
+# Seams that env_seams reads once, at import: set before the backend imports.
+# ---------------------------------------------------------------------------
+
+_TMP = Path(tempfile.mkdtemp(prefix="a09-audit-2026-10-12-"))
+SUBWAY_URL = "http://127.0.0.1:9/a09/gtfs_subway.zip"  # discard port; nothing listens
+os.environ["DATA_DIR"] = str(_TMP / "data")
+os.environ["SUBWAY_GTFS_URL"] = SUBWAY_URL
+
+# ---------------------------------------------------------------------------
+# No sockets, enforced rather than hoped for.
+# ---------------------------------------------------------------------------
+
+SOCKET_ATTEMPTS: list[str] = []
+
+
+def _refuse_sockets(event: str, args: tuple) -> None:
+    if event in ("socket.connect", "socket.getaddrinfo", "socket.gethostbyname"):
+        SOCKET_ATTEMPTS.append(f"{event} {args!r}"[:160])
+        raise RuntimeError(f"a09: {event} refused; this script opens no sockets")
+
+
+sys.addaudithook(_refuse_sockets)
+
+# ---------------------------------------------------------------------------
+# Archives the fake origin can serve. Small ones are bytes built with zipfile; the
+# large ones are generated as they are served, so they never exist as a file here.
+# ---------------------------------------------------------------------------
+
+MiB = 1 << 20
+_ZERO_MIB = bytes(MiB)
+_ZERO_CRC = [0]  # _ZERO_CRC[k] is the CRC-32 of k MiB of zeros, extended on demand
+
+
+def zeros_crc(mib: int) -> int:
+    while len(_ZERO_CRC) <= mib:
+        _ZERO_CRC.append(zlib.crc32(_ZERO_MIB, _ZERO_CRC[-1]))
+    return _ZERO_CRC[mib]
+
+
+# One MiB of zeros as raw deflate, ending on a full flush so the block is
+# self-contained and can be repeated; _DEFLATE_END is the empty final block.
+_compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+_DEFLATED_ZERO_MIB = _compressor.compress(_ZERO_MIB) + _compressor.flush(zlib.Z_FULL_FLUSH)
+_DEFLATE_END = zlib.compressobj(9, zlib.DEFLATED, -15).flush(zlib.Z_FINISH)
+del _compressor
+
+_DOS_DATE = ((2026 - 1980) << 9) | (10 << 5) | 12  # 2026-10-12, 00:00:00
+
+
+class _Member:
+    """One zip member: its header fields and a callable yielding its data chunks."""
+
+    def __init__(self, name: str, method: int, crc: int, csize: int, usize: int, parts):
+        self.name = name.encode("ascii")
+        self.method, self.crc, self.csize, self.usize, self.parts = method, crc, csize, usize, parts
+
+
+def member_text(name: str, text: str) -> _Member:
+    data = text.encode("utf-8")
+    comp = zlib.compressobj(6, zlib.DEFLATED, -15)
+    body = comp.compress(data) + comp.flush()
+    return _Member(name, zipfile.ZIP_DEFLATED, zlib.crc32(data), len(body), len(data),
+                   lambda: iter((body,)))
+
+
+def member_zeros(name: str, mib: int, *, deflate: bool) -> _Member:
+    """`mib` MiB of zeros: stored (wire size == expanded size) or deflated (~1000:1)."""
+    if deflate:
+        body = _DEFLATED_ZERO_MIB * mib + _DEFLATE_END
+        return _Member(name, zipfile.ZIP_DEFLATED, zeros_crc(mib), len(body), mib * MiB,
+                       lambda: iter((body,)))
+    return _Member(name, zipfile.ZIP_STORED, zeros_crc(mib), mib * MiB, mib * MiB,
+                   lambda: (_ZERO_MIB for _ in range(mib)))
+
+
+class ZipStream:
+    """A classic (non-zip64) archive written in order, as it is served."""
+
+    def __init__(self, members: list[_Member]) -> None:
+        self.members = members
+        self.offsets: list[int] = []
+        offset = 0
+        for m in members:
+            self.offsets.append(offset)
+            offset += 30 + len(m.name) + m.csize
+        central = b"".join(
+            struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, 0, m.method, 0, _DOS_DATE,
+                        m.crc, m.csize, m.usize, len(m.name), 0, 0, 0, 0, 0, off) + m.name
+            for m, off in zip(members, self.offsets)
+        )
+        self.tail = central + struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(members),
+                                          len(members), len(central), offset, 0)
+        self.size = offset + len(self.tail)
+
+    def chunks(self):
+        for m in self.members:
+            yield struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, m.method, 0, _DOS_DATE,
+                              m.crc, m.csize, m.usize, len(m.name), 0) + m.name
+            yield from m.parts()
+        yield self.tail
+
+    def table(self) -> list[tuple]:
+        """What zipfile's central directory read must report for this archive."""
+        return [(m.name.decode("ascii"), m.crc, m.usize, m.csize, off)
+                for m, off in zip(self.members, self.offsets)]
+
+
+def central_directory(path: Path) -> list[tuple] | None:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return [(i.filename, i.CRC, i.file_size, i.compress_size, i.header_offset)
+                    for i in zf.infolist()]
+    except Exception:
+        return None
+
+
+def file_digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(MiB), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+class Publication:
+    """One archive as the fake origin publishes it."""
+
+    def __init__(self, *, data: bytes | None = None, stream: ZipStream | None = None):
+        self.data, self.stream = data, stream
+        self.size = len(data) if data is not None else stream.size
+        self.digest = hashlib.sha256(data).hexdigest()[:16] if data is not None else None
+
+    def chunks(self):
+        if self.data is not None:
+            for i in range(0, len(self.data), MiB):
+                yield self.data[i:i + MiB]
+        else:
+            yield from self.stream.chunks()
+
+    def is_cache(self, path: Path) -> bool:
+        """Is `path` this publication? Byte for byte for small ones; by size and the
+        full central directory (names, CRCs, sizes, offsets) for generated ones, so a
+        512 MiB comparison does not hash 512 MiB twice."""
+        if not path.exists() or path.stat().st_size != self.size:
+            return False
+        if self.data is not None:
+            return file_digest(path) == self.digest
+        return central_directory(path) == self.stream.table()
+
+
+# ---------------------------------------------------------------------------
+# The wire: installed BEFORE any backend import, so however a backend module
+# spells its httpx import, the client it builds is this one.
+# ---------------------------------------------------------------------------
+
+import httpx  # noqa: E402
+
+PUBLISHED: dict[str, Publication] = {}
+WIRE = {"requests": 0, "bytes_served": 0, "bodies_completed": 0}
+
+
+class _Body(httpx.AsyncByteStream):
+    """Serves a publication chunk by chunk, yielding to the loop like a socket read."""
+
+    def __init__(self, pub: Publication) -> None:
+        self._pub = pub
+
+    async def __aiter__(self):
+        for chunk in self._pub.chunks():
+            await asyncio.sleep(0)  # a real socket read suspends here
+            WIRE["bytes_served"] += len(chunk)
+            yield chunk
+        WIRE["bodies_completed"] += 1
+
+
+def _route(request: httpx.Request) -> httpx.Response:
+    url = str(request.url)
+    lowered = url.lower()
+    if "njtransit" in lowered or "raildata" in lowered:
+        raise AssertionError(f"refusing a request naming NJ Transit: {url!r}")
+    pub = PUBLISHED.get(url)
+    if pub is None:
+        raise AssertionError(f"the pipeline asked for an unpublished URL: {url!r}")
+    WIRE["requests"] += 1
+    return httpx.Response(
+        200,
+        headers={"content-type": "application/zip", "content-length": str(pub.size)},
+        stream=_Body(pub),
+    )
+
+
+_FAKE_WIRE = httpx.MockTransport(_route)
+
+
+class _FakeWireAsyncClient(httpx.AsyncClient):
+    """Every async client in this process talks to the mock, never to a socket."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs["transport"] = _FAKE_WIRE
+        kwargs["trust_env"] = False  # no proxy mounts from the environment
+        super().__init__(*args, **kwargs)
+
+
+httpx.AsyncClient = _FakeWireAsyncClient
+
+# ---------------------------------------------------------------------------
+# Containment, then the backend.
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, str(REPO / "docs" / "reviews" / "audit-2026-09-05"))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+sys.path.insert(0, str(BACKEND))
+from fastapi import FastAPI  # noqa: E402
+
+import main  # noqa: E402
+import static_data  # noqa: E402
+import static_shared  # noqa: E402
+import warmups  # noqa: E402
+
+_hermetic.verify()
+
+CACHE = static_data.SUBWAY_GTFS_ZIP
+
+# ---------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------
+
+RESULTS: list[tuple[str, bool]] = []
+
+
+def check(name: str, ok: bool, measured: str, audit: str) -> bool:
+    RESULTS.append((name, ok))
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
+    print(f"         measured: {measured}")
+    print(f"         audit   : {audit}")
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# Subway publications
+# ---------------------------------------------------------------------------
+
+
+def csv_text(columns: list[str], rows) -> str:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({c: row.get(c, "") for c in columns})
+    return buf.getvalue()
+
+
+def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
+    """The members the real subway validator requires, minimal and valid.
+
+    `tag` goes into a station name so each publication has its own bytes and a
+    promotion is observable as a change of cache contents. `heavy_transfers` adds
+    that many valid cross-stop rows to transfers.txt, which the validator parses.
+    """
+    stops = csv_text(
+        ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station"],
+        [
+            {"stop_id": "101", "stop_name": f"Alpha {tag}", "stop_lat": "40.70000",
+             "stop_lon": "-74.00000", "location_type": "1"},
+            {"stop_id": "101N", "stop_name": f"Alpha {tag}", "stop_lat": "40.70000",
+             "stop_lon": "-74.00000", "location_type": "0", "parent_station": "101"},
+        ],
+    )
+    transfers = [{"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2",
+                  "min_transfer_time": "180"}]
+    transfers += (
+        {"from_stop_id": f"T{i}", "to_stop_id": f"T{i + 1}", "transfer_type": "2",
+         "min_transfer_time": "180"}
+        for i in range(heavy_transfers)
+    )
+    return {
+        "stops.txt": stops,
+        "trips.txt": csv_text(["route_id", "service_id", "trip_id", "shape_id"], []),
+        "shapes.txt": csv_text(
+            ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
+            [
+                {"shape_id": "A..N01R", "shape_pt_sequence": "1",
+                 "shape_pt_lat": "40.70000", "shape_pt_lon": "-74.00000"},
+                {"shape_id": "A..N01R", "shape_pt_sequence": "2",
+                 "shape_pt_lat": "40.71000", "shape_pt_lon": "-74.00100"},
+            ],
+        ),
+        "stop_times.txt": csv_text(
+            ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], []
+        ),
+        "transfers.txt": csv_text(
+            ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"], transfers
+        ),
+    }
+
+
+def built_archive(tag: str, *, extra_members: int = 0, heavy_transfers: int = 0) -> Publication:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for member, text in subway_members(tag, heavy_transfers=heavy_transfers).items():
+            zf.writestr(member, text)
+        for i in range(extra_members):
+            zf.writestr(f"extra/{i:05d}.txt", b"")
+    return Publication(data=buf.getvalue())
+
+
+def streamed_archive(tag: str, extra: _Member) -> Publication:
+    members = [member_text(name, text) for name, text in subway_members(tag).items()]
+    return Publication(stream=ZipStream(members + [extra]))
+
+
+def fresh_start() -> None:
+    """Cold start: no cache, no status, so each publication stands alone."""
+    CACHE.unlink(missing_ok=True)
+    static_shared.reset_archive_status()
+
+
+def subway_status() -> dict:
+    return static_shared.archive_status().get("subway", {})
+
+
+def cache_label(pub: Publication) -> str:
+    if not CACHE.exists():
+        return "absent"
+    return "== published" if pub.is_cache(CACHE) else "a different archive"
+
+
+async def _ticker(stop: asyncio.Event, stamps: list[float]) -> None:
+    """A 1 ms heartbeat: any other coroutine sharing the loop (pollers, /healthz)."""
+    while not stop.is_set():
+        stamps.append(time.perf_counter())
+        await asyncio.sleep(0.001)
+
+
+def longest_gap_ms(stamps: list[float]) -> float:
+    return max((b - a for a, b in zip(stamps, stamps[1:])), default=0.0) * 1000
+
+
+async def quiesce(limit_s: float = 10.0) -> None:
+    """Harness hygiene, not a measurement: wait until the cache directory holds no
+    file but the cache. On the unmodified code nothing is in flight. Under a repair
+    that moves the publication off the loop, an abandoned worker may still be
+    validating a stage file after an attempt ended, and its late promotion must not
+    land in the next publication's measurement."""
+    deadline = time.perf_counter() + limit_s
+    clear = 0
+    while clear < 5 and time.perf_counter() < deadline:
+        busy = CACHE.parent.exists() and any(p != CACHE for p in CACHE.parent.iterdir())
+        clear = 0 if busy else clear + 1
+        await asyncio.sleep(0.01)
+
+
+# ---------------------------------------------------------------------------
+# H.0: the generated-archive writer, proved at small scale
+# ---------------------------------------------------------------------------
+
+
+def builder_selfcheck() -> None:
+    print("-" * 78)
+    print("H.0  the generated-archive writer reads back intact")
+    print("-" * 78)
+    stream = ZipStream(
+        [member_text(n, t) for n, t in subway_members("selfcheck").items()]
+        + [member_zeros("stored.bin", 3, deflate=False),
+           member_zeros("deflated.bin", 5, deflate=True)]
+    )
+    data = b"".join(stream.chunks())
+    path = _TMP / "selfcheck.zip"
+    path.write_bytes(data)
+    with zipfile.ZipFile(path) as zf:
+        bad = zf.testzip()
+        contents_ok = (zf.read("stored.bin") == bytes(3 * MiB)
+                       and zf.read("deflated.bin") == bytes(5 * MiB))
+    verdict = "accepted"
+    try:
+        static_shared.validate_archive(path, static_data.validate_subway_archive)
+    except static_shared.StaticValidationError as exc:
+        verdict = f"REJECTED ({exc})"
+    path.unlink()
+    check(
+        "H.0 a generated archive (stored and repeated-deflate zeros) passes zipfile.testzip, "
+        "reads back exactly, matches its own central directory and passes the real validator",
+        bad is None and contents_ok and len(data) == stream.size
+        and central_directory_of_bytes(data) == stream.table() and verdict == "accepted",
+        f"testzip={bad!r}, contents {'exact' if contents_ok else 'WRONG'}, "
+        f"{len(data):,} of {stream.size:,} bytes, validator {verdict}",
+        "not stated (harness)",
+    )
+    print()
+
+
+def central_directory_of_bytes(data: bytes) -> list[tuple]:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        return [(i.filename, i.CRC, i.file_size, i.compress_size, i.header_offset)
+                for i in zf.infolist()]
+
+
+# ---------------------------------------------------------------------------
+# ARM 1: the deadline that does not preempt
+# ---------------------------------------------------------------------------
+
+DEADLINE_S = 0.010  # the audit's asyncio.timeout(10 ms)
+# 1c's attempt deadline is DEADLINE_S, or a tenth of the heavy publication's own
+# standalone validation time where that is shorter. A fixed 10 ms would turn 1c.0 red
+# on a machine about four times faster than the one this was measured on (215 to 378 ms
+# here) for a reason that has nothing to do with the finding; the tenth keeps the
+# deadline expiring well inside the validation wherever this runs. The floor is where a
+# deadline stops meaning anything against event-loop scheduling.
+ATTEMPT_DEADLINE_FLOOR_S = 0.002
+VALIDATOR_S = 0.080  # the audit's 80 ms validator
+TRANSFER_RETRIES = 5
+HEAVY_TRANSFERS = 150_000  # 1c's transfers.txt rows; the live table has 613
+
+_VALIDATOR = {"started": None, "finished": None}
+
+
+def slow_validator(zf: zipfile.ZipFile) -> None:
+    """The real subway validator, then a busy-wait to 80 ms: synchronous CPU work."""
+    started = time.perf_counter()
+    _VALIDATOR["started"] = started
+    try:
+        static_data.validate_subway_archive(zf)
+        while time.perf_counter() - started < VALIDATOR_S:
+            pass
+    finally:
+        _VALIDATOR["finished"] = time.perf_counter()
+
+
+async def validator_settled(limit_s: float = 2.0) -> None:
+    """Harness hygiene: a repair that runs the validator on a worker thread leaves it
+    running after the deadline; let it finish before the next run resets the record."""
+    deadline = time.perf_counter() + limit_s
+    while (_VALIDATOR["started"] is not None and _VALIDATOR["finished"] is None
+           and time.perf_counter() < deadline):
+        await asyncio.sleep(0.005)
+
+
+async def run_under_deadline(pub: Publication, *, then_suspend: bool) -> dict:
+    """Publish `pub`, then run the real staged_fetch inside asyncio.timeout(10 ms).
+
+    then_suspend=False: staged_fetch is the last statement in the block.
+    then_suspend=True : the block continues with one await that suspends, as the
+                        subway warmup's block does (its next await is a to_thread).
+
+    A run in which the 10 ms expired during the TRANSFER, before the validator
+    started, measures nothing about the validator; it is repeated, up to
+    TRANSFER_RETRIES times, and the repeat count is reported.
+    """
+    PUBLISHED[SUBWAY_URL] = pub
+    for attempt in range(1, TRANSFER_RETRIES + 1):
+        fresh_start()
+        _VALIDATOR["started"] = _VALIDATOR["finished"] = None
+        stop = asyncio.Event()
+        stamps: list[float] = []
+        ticker = asyncio.create_task(_ticker(stop, stamps))
+        await asyncio.sleep(0.005)  # let the heartbeat establish itself
+        returned = False
+        cache_at_return = None
+        outcome = "completed"
+        t0 = time.perf_counter()
+        try:
+            async with asyncio.timeout(DEADLINE_S):
+                await static_shared.staged_fetch(
+                    SUBWAY_URL,
+                    CACHE,
+                    slow_validator,
+                    key="subway",
+                    label="static subway GTFS (a09 arm 1)",
+                )
+                returned = True
+                cache_at_return = cache_label(pub)
+                if then_suspend:
+                    await asyncio.sleep(0.001)
+        except TimeoutError:
+            outcome = "TimeoutError"
+        except Exception as exc:  # a repair may refuse the stage outright; report it
+            outcome = f"raised {type(exc).__name__}: {exc}"
+        elapsed = time.perf_counter() - t0
+        # The boundary afterwards: does the expired deadline reach a later await?
+        late = "slept normally"
+        try:
+            await asyncio.sleep(0.005)
+        except asyncio.CancelledError:
+            late = "CANCELLED"
+            current = asyncio.current_task()
+            if current is not None:
+                current.uncancel()
+        stop.set()
+        await ticker
+        await validator_settled()
+        await quiesce()
+        if outcome == "TimeoutError" and _VALIDATOR["started"] is None and attempt < TRANSFER_RETRIES:
+            continue
+        started = _VALIDATOR["started"]
+        return {
+            "attempts": attempt,
+            "outcome": outcome,
+            "returned": returned,
+            "elapsed_ms": elapsed * 1000,
+            "validator_start_ms": None if started is None else (started - t0) * 1000,
+            "validator_ran_ms": (
+                None
+                if started is None or _VALIDATOR["finished"] is None
+                else (_VALIDATOR["finished"] - started) * 1000
+            ),
+            "max_gap_ms": longest_gap_ms(stamps),
+            "cache_at_return": cache_at_return,
+            "cache_after": cache_label(pub),
+            "status": subway_status(),
+            "late": late,
+        }
+    raise AssertionError("unreachable")
+
+
+def validator_note(run: dict) -> str:
+    if run["validator_start_ms"] is None:
+        return (f"the validator never started (the deadline expired during the transfer "
+                f"on all {run['attempts']} attempt(s))")
+    return (f"the validator began {run['validator_start_ms']:.1f} ms into the block and ran "
+            f"{run['validator_ran_ms'] or 0:.1f} ms")
+
+
+class _LogTap(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+async def run_warmup_attempt(pub: Publication, deadline_s: float) -> dict:
+    """One attempt of the real subway warmup under a whole-attempt deadline of deadline_s.
+
+    The attempt has ended when the app's subway status leaves "loading" ("failed" or
+    "ready", whichever the warmup reaches); the warmup is then cancelled in its
+    back-off sleep. An attempt whose deadline expired before the fake origin finished
+    serving the body measured the transfer, not the validation; it is repeated, up
+    to TRANSFER_RETRIES times, and the repeat count is reported.
+    """
+    PUBLISHED[SUBWAY_URL] = pub
+    tap = _LogTap()
+    warm_log = logging.getLogger("main")  # the logger the warmups write to
+    saved = (main.STATIC_ATTEMPT_DEADLINE_S, warm_log.propagate)
+    warm_log.addHandler(tap)
+    warm_log.propagate = False
+    try:
+        for attempt in range(1, TRANSFER_RETRIES + 1):
+            fresh_start()
+            tap.lines.clear()
+            app = FastAPI()
+            app.state.subway_static_status = "loading"  # what main.lifespan sets
+            completed_before = WIRE["bodies_completed"]
+            stop = asyncio.Event()
+            stamps: list[float] = []
+            ticker = asyncio.create_task(_ticker(stop, stamps))
+            await asyncio.sleep(0.005)
+            main.STATIC_ATTEMPT_DEADLINE_S = deadline_s
+            t0 = time.perf_counter()
+            task = asyncio.create_task(warmups._warm_subway_static(app))
+            try:
+                while app.state.subway_static_status == "loading" and time.perf_counter() - t0 < 30:
+                    await asyncio.sleep(0.001)
+                ended_ms = (time.perf_counter() - t0) * 1000
+                at_end = cache_label(pub)
+                status = app.state.subway_static_status
+            finally:
+                main.STATIC_ATTEMPT_DEADLINE_S = saved[0]
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            stop.set()
+            await ticker
+            transfer_done = WIRE["bodies_completed"] > completed_before
+            await quiesce()
+            if not transfer_done and attempt < TRANSFER_RETRIES:
+                continue
+            return {
+                "attempts": attempt,
+                "ended_ms": ended_ms,
+                "status": status,
+                "cache_at_end": at_end,
+                "max_gap_ms": longest_gap_ms(stamps),
+                "transfer_done": transfer_done,
+                "log": [line for line in tap.lines if "subway_static_status" in line],
+            }
+    finally:
+        warm_log.removeHandler(tap)
+        warm_log.propagate = saved[1]
+    raise AssertionError("unreachable")
+
+
+async def arm1() -> dict:
+    print("-" * 78)
+    print("ARM 1  the deadline that does not preempt")
+    print("-" * 78)
+
+    # Control: the same kind of publication, no deadline. Proves the archive is a
+    # valid subway publication, so the arm measures the deadline and not the bytes.
+    control = built_archive("control")
+    PUBLISHED[SUBWAY_URL] = control
+    fresh_start()
+    control_error = None
+    try:
+        await static_shared.staged_fetch(
+            SUBWAY_URL, CACHE, slow_validator, key="subway", label="a09 arm 1 control"
+        )
+    except Exception as exc:
+        control_error = f"{type(exc).__name__}: {exc}"
+    await validator_settled()
+    check(
+        "1.0 control: the slow-validator publication, with no deadline, is promoted",
+        control_error is None
+        and control.is_cache(CACHE)
+        and subway_status().get("last_promoted_at") is not None,
+        f"cache {cache_label(control)}" + (f"; RAISED {control_error}" if control_error else ""),
+        "not stated (control)",
+    )
+
+    a = await run_under_deadline(built_archive("a"), then_suspend=False)
+    print(f"  run 1a: {a['attempts']} attempt(s); {validator_note(a)}")
+    check(
+        "1a.1 no TimeoutError leaves asyncio.timeout(0.01) around the real staged_fetch",
+        a["outcome"] == "completed",
+        f"block outcome: {a['outcome']}; {validator_note(a)}",
+        "completed ... without a timeout",
+    )
+    check(
+        "1a.2 the block took at least the validator's 80 ms",
+        a["elapsed_ms"] >= VALIDATOR_S * 1000,
+        f"{a['elapsed_ms']:.1f} ms against a {DEADLINE_S * 1000:.0f} ms deadline",
+        "after approximately 81 ms",
+    )
+    check(
+        "1a.3 the stage was promoted over the cache, and status says so",
+        a["cache_after"] == "== published"
+        and a["status"].get("last_promoted_at") is not None
+        and a["status"].get("last_download_error") is None,
+        f"cache {a['cache_after']}, last_download_error={a['status'].get('last_download_error')!r}",
+        "completed and promoted a stage",
+    )
+    check(
+        "1a.4 the event loop was held for the whole validation (1 ms heartbeat gap)",
+        a["max_gap_ms"] >= VALIDATOR_S * 1000,
+        f"longest heartbeat gap {a['max_gap_ms']:.1f} ms",
+        "not stated (Risk: can impair all layers sharing the process)",
+    )
+    check(
+        "1a.5 the expired deadline is discarded at block exit: a later await is not cancelled",
+        a["late"] == "slept normally",
+        f"a 5 ms sleep after the block: {a['late']}",
+        "not stated (boundary record)",
+    )
+
+    b = await run_under_deadline(built_archive("b"), then_suspend=True)
+    print(f"  run 1b: {b['attempts']} attempt(s); block continued with one await that suspends")
+    check(
+        "1b.1 with a suspending await after the stage, TimeoutError is raised THERE",
+        b["outcome"] == "TimeoutError" and b["returned"],
+        f"block outcome: {b['outcome']}; staged_fetch had returned: {b['returned']}; "
+        f"elapsed {b['elapsed_ms']:.1f} ms; {validator_note(b)}",
+        "not stated (boundary record)",
+    )
+    check(
+        "1b.2 ...and the promotion had already happened, so the late timeout undoes nothing",
+        b["cache_at_return"] == "== published"
+        and b["cache_after"] == "== published"
+        and b["status"].get("last_promoted_at") is not None,
+        f"cache when staged_fetch returned: {b['cache_at_return']}; after the TimeoutError: "
+        f"{b['cache_after']}",
+        "not stated (boundary record)",
+    )
+
+    # 1c: the production attempt, nothing injected into the pipeline.
+    heavy = built_archive("heavy", heavy_transfers=HEAVY_TRANSFERS)
+    heavy_path = _TMP / "heavy.zip"
+    heavy_path.write_bytes(heavy.data)
+    standalone: list[float] = []
+    standalone_error = None
+
+    def time_standalone(runs: int) -> None:
+        """The real validator alone, synchronously; the SHORTEST run of the three (two
+        before the attempt, one after, so one load burst cannot inflate it) is the
+        yardstick for 1c.2."""
+        nonlocal standalone_error
+        for _ in range(runs):
+            t0 = time.perf_counter()
+            try:
+                static_shared.validate_archive(heavy_path, static_data.validate_subway_archive)
+            except static_shared.StaticValidationError as exc:  # e.g. a row ceiling
+                standalone_error = str(exc)
+            standalone.append((time.perf_counter() - t0) * 1000)
+
+    time_standalone(2)
+    attempt_deadline_s = max(
+        ATTEMPT_DEADLINE_FLOOR_S, min(DEADLINE_S, min(standalone) / 1000 / 10)
+    )
+    c = await run_warmup_attempt(heavy, attempt_deadline_s)
+    c["deadline_ms"] = attempt_deadline_s * 1000
+    time_standalone(1)
+    heavy_path.unlink()
+    v_ms = min(standalone)
+    print(f"  run 1c: {c['attempts']} attempt(s); the real subway warmup, attempt deadline "
+          f"{attempt_deadline_s * 1000:.1f} ms, publication of {heavy.size:,} bytes with "
+          f"{HEAVY_TRANSFERS + 1:,} transfers.txt rows")
+    print(f"          attempt ended after {c['ended_ms']:.1f} ms with status {c['status']!r}; "
+          f"warmup log: {c['log'] or 'nothing'}")
+    check(
+        "1c.0 the publication is valid and heavy against the deadline: its real validation, "
+        "timed standalone, accepts it and takes at least 5x the attempt deadline",
+        standalone_error is None and v_ms >= 5 * attempt_deadline_s * 1000,
+        f"{v_ms:.1f} ms standalone (runs {', '.join(f'{x:.1f}' for x in standalone)} ms) "
+        f"against a {attempt_deadline_s * 1000:.1f} ms deadline"
+        + (f"; REJECTED: {standalone_error}" if standalone_error else ""),
+        "not stated (precondition for 1c)",
+    )
+    check(
+        "1c.1 the production warmup promoted the publication before its expired attempt "
+        "deadline was delivered (cache == publication when the attempt ended)",
+        c["cache_at_end"] == "== published",
+        f"cache when the attempt ended: {c['cache_at_end']}; transfer finished: "
+        f"{c['transfer_done']}",
+        "completed and promoted a stage ... without a timeout",
+    )
+    # A quarter, not the whole: the in-attempt run and the standalone runs see different
+    # moments of machine load. A repair that moves the work off this loop stalls it for
+    # a scheduling slice (1.6 to 9.3 ms measured), not for a validation.
+    check(
+        "1c.2 the warmup held the loop it shares for the real validation: the 1 ms "
+        "heartbeat stalled for at least a quarter of the shortest standalone validation",
+        c["max_gap_ms"] >= v_ms / 4,
+        f"longest heartbeat gap {c['max_gap_ms']:.1f} ms against {v_ms:.1f} ms standalone "
+        f"({c['max_gap_ms'] / max(v_ms, 1e-9):.2f}x)",
+        "not stated (Risk: can impair all layers sharing the process)",
+    )
+    print()
+    return {"a": a, "b": b, "c": c, "v_ms": v_ms}
+
+
+# ---------------------------------------------------------------------------
+# ARM 2: no byte ceiling on a transfer
+# ---------------------------------------------------------------------------
+
+TRANSFER_MIB = 512
+
+
+async def arm2() -> dict:
+    print("-" * 78)
+    print(f"ARM 2  no byte ceiling on a transfer ({TRANSFER_MIB} MiB stored member)")
+    print("-" * 78)
+    pub = streamed_archive("large", member_zeros("padding.bin", TRANSFER_MIB, deflate=False))
+    fresh_start()
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(CACHE.parent).free
+    if not check(
+        "2.0 scratch space for one stage file of the publication",
+        free >= pub.size + 256 * MiB,
+        f"{free:,} bytes free beside the cache for a {pub.size:,}-byte stage",
+        "not stated (harness)",
+    ):
+        print()
+        return {"size": pub.size}
+    PUBLISHED[SUBWAY_URL] = pub
+    served_before = WIRE["bytes_served"]
+    completed_before = WIRE["bodies_completed"]
+    error = None
+    stops: dict = {}
+    t0 = time.perf_counter()
+    try:
+        stops = await static_data.load_subway_stops()
+    except Exception as exc:  # a refusal is a legitimate outcome to report
+        error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - t0
+    served = WIRE["bytes_served"] - served_before
+    completed = WIRE["bodies_completed"] - completed_before
+    status = subway_status()
+    cache_size = CACHE.stat().st_size if CACHE.exists() else 0
+    promoted = pub.is_cache(CACHE)
+    print(f"  body {pub.size:,} bytes; served {served:,}; load took {elapsed:.2f} s"
+          + (f"; RAISED {error}" if error else ""))
+    check(
+        f"2.1 the real transfer accepted every byte of the {pub.size:,}-byte body",
+        served == pub.size and completed == 1,
+        f"{served:,} of {pub.size:,} bytes left the fake origin; body read to its end: "
+        f"{completed == 1}",
+        "Static transfers have no byte ceiling",
+    )
+    check(
+        "2.2 the oversized publication was validated and promoted as the subway cache",
+        error is None
+        and promoted
+        and len(stops) > 0
+        and status.get("last_promoted_at") is not None
+        and status.get("last_download_error") is None,
+        f"cache {cache_size:,} bytes, identical to the publication: {promoted}, "
+        f"last_download_error={status.get('last_download_error')!r}, stops loaded {len(stops)}",
+        "Static transfers have no byte ceiling",
+    )
+    fresh_start()  # release the 512 MiB now
+    print()
+    return {"size": pub.size, "served": served}
+
+
+# ---------------------------------------------------------------------------
+# ARM 3: no member-count or expanded-size limit at validation
+# ---------------------------------------------------------------------------
+
+EXTRA_MEMBERS = 70_000
+EXPANDED_MIB = 2048
+
+
+async def load_and_report(pub: Publication) -> tuple[str | None, dict]:
+    PUBLISHED[SUBWAY_URL] = pub
+    fresh_start()
+    error = None
+    try:
+        await static_data.load_subway_stops()
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    return error, subway_status()
+
+
+async def arm3() -> dict:
+    print("-" * 78)
+    print("ARM 3  no member-count or expanded-size limit at validation")
+    print("-" * 78)
+    many = built_archive("many", extra_members=EXTRA_MEMBERS)
+    with zipfile.ZipFile(io.BytesIO(many.data)) as zf:
+        offered = len(zf.infolist())
+    error, status = await load_and_report(many)
+    promoted_members = len(central_directory(CACHE) or [])
+    check(
+        f"3.1 an archive of {offered:,} members passes the real subway validator and is promoted",
+        error is None
+        and many.is_cache(CACHE)
+        and status.get("last_promoted_at") is not None
+        and status.get("last_download_error") is None,
+        f"cache {cache_label(many)}, last_download_error="
+        f"{status.get('last_download_error')!r}" + (f", RAISED {error}" if error else ""),
+        "archive validation lacks member-count ... limits",
+    )
+    check(
+        "3.2 the promoted cache holds every offered member",
+        promoted_members == offered,
+        f"{promoted_members:,} members in the cache, {offered:,} offered",
+        "archive validation lacks member-count ... limits",
+    )
+
+    wide = streamed_archive("expanded", member_zeros("expanded.bin", EXPANDED_MIB, deflate=True))
+    declared = sum(m.usize for m in wide.stream.members)
+    error, status = await load_and_report(wide)
+    table = central_directory(CACHE) or []
+    cache_declares = sum(row[2] for row in table)
+    check(
+        f"3.3 an archive declaring {declared:,} expanded bytes in {wide.size:,} passes the "
+        "real subway validator and is promoted",
+        error is None
+        and wide.is_cache(CACHE)
+        and status.get("last_promoted_at") is not None
+        and status.get("last_download_error") is None,
+        f"cache {cache_label(wide)}, last_download_error="
+        f"{status.get('last_download_error')!r}" + (f", RAISED {error}" if error else ""),
+        "archive validation lacks ... uncompressed-size limits",
+    )
+    check(
+        "3.4 the promoted cache declares the whole expanded size",
+        cache_declares == declared,
+        f"{cache_declares:,} bytes declared by the cache's central directory "
+        f"({cache_declares / max(wide.size, 1):,.0f}:1 against the archive)",
+        "archive validation lacks ... uncompressed-size limits",
+    )
+    fresh_start()
+    print()
+    return {"members": offered, "expanded": declared, "wide_size": wide.size}
+
+
+# ---------------------------------------------------------------------------
+# The run
+# ---------------------------------------------------------------------------
+
+
+async def amain() -> int:
+    print("=" * 78)
+    print("A09  Upstream resource use is not sufficiently bounded")
+    print("=" * 78)
+    print(f"repo      : {REPO}")
+    print(f"DATA_DIR  : {os.environ['DATA_DIR']}")
+    print(f"upstream  : {SUBWAY_URL} (served by an in-process mock; no socket)")
+    print()
+    builder_selfcheck()
+    one = await arm1()
+    two = await arm2()
+    three = await arm3()
+
+    check(
+        "H.1 no socket connect or name resolution was attempted",
+        not SOCKET_ATTEMPTS,
+        f"{len(SOCKET_ATTEMPTS)} attempt(s) {SOCKET_ATTEMPTS[:2]}",
+        "not stated (hermetic)",
+    )
+
+    failed = [name for name, ok in RESULTS if not ok]
+    print()
+    if failed:
+        print("FAILED CHECKS:")
+        for name in failed:
+            print(f"  - {name}")
+        print("DISPOSITION: NOT AS RECORDED, see the failed checks above")
+        return 1
+    a, c = one["a"], one["c"]
+    print(
+        "DISPOSITION: VERIFIED  An 80 ms synchronous validator inside asyncio.timeout(10 ms) "
+        f"ran through the real staged_fetch and promoted the stage after {a['elapsed_ms']:.1f} ms "
+        f"with no TimeoutError (audit: about 81 ms), and the production subway warmup under a "
+        f"{c['deadline_ms']:.0f} ms attempt deadline held its event loop {c['max_gap_ms']:.0f} ms on the real "
+        "validation and promoted before the deadline was delivered; the real transfer and "
+        f"subway validator accepted and promoted a {two['size']:,}-byte publication, an archive "
+        f"of {three['members']:,} members and one declaring {three['expanded']:,} expanded "
+        "bytes, so no byte, member-count or expanded-size ceiling exists at or below those sizes."
+    )
+    return 0
+
+
+def main_() -> int:
+    try:
+        return asyncio.run(amain())
+    finally:
+        shutil.rmtree(_TMP, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main_())

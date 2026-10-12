@@ -38,7 +38,12 @@ WHAT IS PRODUCTION CODE HERE (unmodified, called as the app calls it):
 
 WHAT IS INJECTED (and nothing else):
   1. DATA_DIR points at a fresh temp directory before any backend import, so the NJT
-     cache path is a temp path and data/ is never read or written.
+     cache path is a temp path and data/ is never read or written. And the record is
+     taken at the shipped retry schedule or not at all: after the backend import,
+     STATIC_RETRY_S and STATIC_RETRY_SCHEDULE_S, as env_seams parses them from the
+     environment and from the .env its load_dotenv reads, are compared with env_seams'
+     own registry defaults, and an override stops the run with a message naming the
+     variable (exit 1, no DISPOSITION line) instead of a red that blames the finding.
   2. njt_auth.njt_post, the ONE call _download_via_token makes, is replaced by a fake
      RailData static endpoint that returns the publication staged for the phase,
      counts every request (a request here IS a download attempt), and hard-fails on
@@ -213,12 +218,46 @@ sys.path.insert(0, str(BACKEND))
 import main  # noqa: E402
 import warmups  # noqa: E402
 
+import env_seams  # noqa: E402
 import httpx  # noqa: E402
 import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
 import static_shared  # noqa: E402
 
 _hermetic.verify()
+
+
+# The record is measured at the shipped retry schedule. The three attempts and their
+# times (14.72 s, 46.45 s) are the warmup's own backoff, which these two env seams
+# set, and env_seams' load_dotenv fills them from a developer's .env, where an
+# override would change what this script measures and blame the finding for it. So
+# each is compared with env_seams' own registry default, through env_seams' own parser
+# (the value the backend read at import, wherever it keeps it), and a difference stops
+# the run naming the variable instead.
+TIMING_SEAMS = ("STATIC_RETRY_S", "STATIC_RETRY_SCHEDULE_S")
+
+
+def timing_overrides() -> list[str]:
+    found = []
+    for name in TIMING_SEAMS:
+        if name not in env_seams.DEFAULTS or os.environ.get(name) is None:
+            continue
+        default = env_seams.DEFAULTS[name]
+        parse = env_seams.seconds_tuple if isinstance(default, tuple) else env_seams.seconds
+        if parse(name, default) != default:
+            found.append(f"{name}={os.environ[name]!r} (shipped default {default!r})")
+    return found
+
+
+_OVERRIDDEN = timing_overrides()
+if _OVERRIDDEN:
+    raise SystemExit(
+        "A02b NOT RUN: this record is measured at the shipped retry schedule, and the "
+        f"environment (or a .env file, which env_seams loads) overrides "
+        f"{'; '.join(_OVERRIDDEN)}. The attempts and the times it prints are walked off "
+        "that schedule, so a run under the override says nothing about the finding. "
+        "Unset it and run again."
+    )
 
 NY = ZoneInfo("America/New_York")
 # The audit's date, noon in New York. Inside the committed fixture's service span,
@@ -658,6 +697,9 @@ async def amain() -> int:
     print(f"DATA_DIR seam   : {os.environ['DATA_DIR']}")
     print(f"static URL      : {njt_static.NJT_STATIC_URL}  (answered by the in-process fake)")
     print("service clock   : load_njt_static(now=2026-10-12 12:00 America/New_York)")
+    print("retry seams     : "
+          + ", ".join(f"{n}={env_seams.DEFAULTS.get(n, '(not a seam)')}" for n in TIMING_SEAMS)
+          + " (the shipped defaults)")
 
     # ---- 1. the damage, proved before it is used ---------------------------
     rule("1  THE DAMAGE: inside the deflate stream, and what reading it raises")

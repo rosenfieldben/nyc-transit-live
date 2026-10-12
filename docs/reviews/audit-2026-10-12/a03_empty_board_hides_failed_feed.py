@@ -71,15 +71,22 @@ WHAT IS INJECTED (the faults, stated plainly):
     way the endpoint's own selectors date one contributor (fetched_at its block's, or
     the aggregate when the block has none; feed_timestamp its block's). Each one is
     validated, round trip, by the endpoint's response model, which is found through the
-    app's own served /openapi.json rather than by name.
+    app's own served /openapi.json rather than by name. It answers the board's URL, and
+    any query string on it the app answers identically; a query the app answers
+    differently keeps the app's answer.
   * app.state is the f03 fixture's, plus the station-route index for 219, taken from
     the routes the capture's trips call there, so /api/subway-stops serves 219 with its
     routes and a repair that reads static station-to-route coverage has something to
     read.
   * THE PAGE'S ALERT STORE is empty and current: the world primes no alert index, so
-    /api/alerts is answered with an empty alert list dated at the poll, in the shape the
-    /api/alerts response model accepts. This measures the board, not the alert join
-    (f03's choice).
+    where main.app does not serve /api/alerts (HTTP 200) the page is answered with an
+    empty alert list dated at the poll, in the shape the /api/alerts response model
+    accepts. This measures the board, not the alert join (f03's choice). Where the app
+    DOES serve /api/alerts, the page gets the app's own answer. BOUNDARY, documented and
+    not closed: in this world the app answers /api/alerts with an error (no lifespan
+    built its alert index), so a repair that speaks ONLY through a synthesized service
+    alert is not measured here. Priming that index would mean naming private state,
+    which the world's rule (the f03 fixture primes app.state) does not do.
 
 WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented): main.fetch_subway_trains
 (the real decoder and fan-out) and pollers._refresh_subways (merge, retention, expiry,
@@ -89,11 +96,23 @@ every backend number is read out of SERVED JSON and no private attribute is read
 
 THE FRONTEND IS THE WHOLE PAGE, booted fresh for each board in node:vm: every script
 index.html loads, in index.html's order (helpers, systems/shared.js, every system file,
-stations.js, map.js), with only Leaflet, the DOM and fetch stubbed. The stub fetch
-answers every path the page asks for with what main.app SERVES in that world at that
-poll (each parameterless GET path in the app's /openapi.json, read through ASGI, and the
-station's board), so the page's own boot fills the station registry from the served
-/api/subway-stops and ingests the served /api/subways through map.js's own source loop.
+stations.js, map.js), with only Leaflet, the DOM and fetch stubbed. The stub fetch is
+CLOSED: it answers a request only with what main.app SERVED for that exact URL in that
+world at that poll (status, headers and body, read through ASGI, handed over as a real
+fetch Response, so a repair carried in a response header reaches the page), or with
+the two stand-ins above (the built board, the empty alert store), so the page's own boot
+fills the station registry from the served /api/subway-stops and ingests the served
+/api/subways through map.js's own source loop. What is read at every poll: every
+parameterless GET path in the app's /openapi.json, and every TEMPLATED one with each
+parameter filled by each id this world knows (the station, its two platforms, its
+routes, its group 1-7+S and the system name "subway"), so a per-station endpoint a fix
+branch adds is answered by that branch's app. A URL the page asks for beyond those (a
+query string, an id the fill did not guess) is REPLAYED: the five worlds are run again
+with that exact URL read from the app at every poll, up to PASSES times in all.
+Anything still unanswered after that, and anything the harness cannot ask the app at
+all (another origin, a method other than GET, XMLHttpRequest, EventSource, WebSocket,
+sendBeacon), is refused, never invented, and is a [world] check that must count 0, so
+a repair the harness cannot serve turns the script red with the URL named.
 The POPUP is opened the way a click opens it: the marker the page drew at the station's
 served coordinates fires the popupopen handler the page's own loader bound to it, which
 runs the station descriptor's real render through the real popup fetch. The PANEL is
@@ -137,10 +156,13 @@ unchanged at the end; the stub client hard-fails on any URL naming njtransit or
 raildata; the page's fetch reaches nothing but the served snapshot. No network, no
 credential, no mint. The real fetch logs one warning per failed poll; logging at WARNING
 and below is disabled because the script reads the same failure off /api/status instead.
+The page runs under the node named by the NODE environment variable (run_all.sh's
+override), else the first node on PATH.
 
 RECORDED DISPOSITION: VERIFIED. Exit 0 while the finding behaves as recorded; exit 1
 with the failed checks named the moment it stops, including a read that is not served
-(HTTP 200), a page that does not boot, and an import that fails. Each check is tagged
+(HTTP 200), a page that does not boot, a request of the page's that the harness could
+not answer from the app, and an import that fails. Each check is tagged
 [backend], [frontend], [rider] or [world]. [rider] checks are end to end: the board the
 backend served, rendered by the page, so a repair of either half that reaches the rider
 turns them red, while a [backend] or [frontend] check moves only with its own half.
@@ -151,14 +173,17 @@ from __future__ import annotations
 import asyncio
 import atexit
 import inspect
+import itertools
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
@@ -210,6 +235,10 @@ LAST_CALL_S = 200.0  # trips calling at 219 later than T0 + this are removed
 POLL_S = 20.0  # the production default cadence (pollers.POLL_INTERVAL_S), a world choice
 MAX_POLLS = 720  # four hours of polls: the bound on any "poll until the board empties"
 BOARD_PATH = f"/api/subway-arrivals/{STATION}"
+SYSTEM = "subway"  # the system's name, one of the ids a templated path is filled with
+PASSES = 3  # the first run of the worlds, then up to two replays of what the page asked
+NODE = os.environ.get("NODE") or "node"  # run_all.sh's NODE override, else PATH's node
+JSON_HEADERS = [["content-type", "application/json"]]
 
 failures: list[str] = []
 BREACHES: list[str] = []
@@ -353,11 +382,12 @@ def asgi() -> httpx.AsyncClient:
 
 
 class Contract:
-    """What the app says it serves, from its own /openapi.json: every parameterless GET
-    path (what the page may ask for) and the models two of them are served with, found
-    by the schema the app names rather than by a name this script holds."""
+    """What the app says it serves, from its own /openapi.json: every GET path (what the
+    page may ask for), parameterless or templated, and the models two of them are served
+    with, found by the schema the app names rather than by a name this script holds."""
 
-    paths: list[str] = []
+    paths: list[str] = []  # parameterless GET paths
+    templates: list[str] = []  # GET paths with {parameters}
     board_model = None
     alerts_model = None
 
@@ -372,6 +402,7 @@ class Contract:
             halt("world", "the app serves its /openapi.json", f"HTTP {resp.status_code}")
         spec = resp.json()["paths"]
         cls.paths = sorted(p for p, ops in spec.items() if "get" in ops and "{" not in p)
+        cls.templates = sorted(p for p, ops in spec.items() if "get" in ops and "{" in p)
 
         def model(path: str):
             ok = spec[path]["get"]["responses"]["200"]["content"]["application/json"]
@@ -380,41 +411,96 @@ class Contract:
         cls.board_model = model("/api/subway-arrivals/{station_id}")
         cls.alerts_model = model("/api/alerts")
 
+    @classmethod
+    def filled(cls, ids: list[str]) -> list[str]:
+        """Every templated GET path with each parameter filled by each id this world
+        knows, percent-encoded the way the page's encodeURIComponent sends it."""
+        out = set()
+        for template in cls.templates:
+            names = re.findall(r"\{([^}]+)\}", template)
+            for combo in itertools.product(ids, repeat=len(names)):
+                path = template
+                for name, value in zip(names, combo):
+                    path = path.replace("{" + name + "}", quote(value, safe=""), 1)
+                out.add(path)
+        return sorted(out)
 
-def body_of(resp: httpx.Response):
-    try:
-        return resp.json()
-    except ValueError:
-        return resp.text
+
+class Capture:
+    """The URLs serve() reads for the page at every poll, beyond the parameterless GET
+    paths: the templated ones filled with this world's ids, and every further URL (its
+    query string included) that a previous pass's page asked for and no read answered."""
+
+    filled: list[str] = []
+    extra: set[str] = set()
 
 
-async def serve(at: float, page: bool) -> dict:
-    """The three served reads every check uses and, with `page`, everything the page
-    may fetch, as main.app serves it now."""
+def captured(resp: httpx.Response) -> dict:
+    """One served response as the page's fetch hands it over: status, headers (less the
+    transport's content-length) and the body text, exactly as served."""
+    return {
+        "status": resp.status_code,
+        "headers": [[k, v] for k, v in resp.headers.multi_items() if k.lower() != "content-length"],
+        "text": resp.text,
+    }
+
+
+async def serve(at: float) -> dict:
+    """The three served reads every check uses, as main.app serves them now."""
     async with asgi() as http:
         reads = {
             "board": await http.get(BOARD_PATH),
             "vehicles": await http.get("/api/subways"),
             "status": await http.get("/api/status"),
         }
-        snap = {"at": at}
-        for name, resp in reads.items():
-            if resp.status_code != 200:
-                halt(
-                    "backend",
-                    f"{resp.request.url.path} is served (HTTP 200) at T0{at - T0:+.0f} s",
-                    f"HTTP {resp.status_code}: {resp.text[:300]}",
-                )
-            snap[name] = resp.json()
-        if page:
-            served = {}
-            for path in Contract.paths:
-                resp = await http.get(path)
-                served[path] = {"status": resp.status_code, "body": body_of(resp)}
-            served[BOARD_PATH] = {"status": 200, "body": snap["board"]}
-            served["/api/alerts"] = {"status": 200, "body": empty_alerts(at)}
-            snap["page"] = served
+    snap = {"at": at, "board_served": captured(reads["board"])}
+    for name, resp in reads.items():
+        if resp.status_code != 200:
+            halt(
+                "backend",
+                f"{resp.request.url.path} is served (HTTP 200) at T0{at - T0:+.0f} s",
+                f"HTTP {resp.status_code}: {resp.text[:300]}",
+            )
+        snap[name] = resp.json()
     return snap
+
+
+async def page_reads(snap: dict) -> None:
+    """Everything the page may fetch, as main.app serves it at the same poll as `snap`'s
+    reads: the parameterless GET paths, the templated ones filled with this world's ids,
+    and every URL a previous pass's page asked for beyond those."""
+    served = {}
+    async with asgi() as http:
+        for url in [*Contract.paths, *Capture.filled, *sorted(Capture.extra)]:
+            try:
+                served[url] = captured(await http.get(url))
+            except Exception:  # a URL httpx cannot send stays unanswered, and is named
+                continue
+    # The board the page renders is the very response the checks measured.
+    served[BOARD_PATH] = snap["board_served"]
+    alerts = served.get("/api/alerts")
+    snap["alerts_status"] = alerts["status"] if alerts else None
+    if not alerts or alerts["status"] != 200:
+        empty = {
+            "status": 200,
+            "headers": JSON_HEADERS,
+            "text": json.dumps(empty_alerts(snap["at"])),
+        }
+        stand_in(served, "/api/alerts", alerts, empty)
+    snap["page"] = served
+
+
+def stand_in(served: dict, path: str, plain: dict | None, replacement: dict) -> None:
+    """Answer `path` with `replacement`, and with it every URL on that path (a query
+    string added) whose served answer is the plain path's own, so a query the app
+    ignores changes nothing; one the app answers differently keeps the app's answer."""
+    served[path] = replacement
+    if plain is None:
+        return
+    for url, answer in served.items():
+        if url.split("?", 1)[0] == path and answer["status"] == plain["status"]:
+            if answer["text"] == plain["text"]:
+                served[url] = replacement
 
 
 def empty_alerts(at: float) -> dict:
@@ -423,11 +509,13 @@ def empty_alerts(at: float) -> dict:
     return Contract.alerts_model.model_validate(body).model_dump(mode="json")
 
 
-def run_world(schedule, station_routes: dict, until_empty: bool = False) -> list[dict]:
+def run_world(
+    schedule, station_routes: dict, until_empty: bool = False, keep: int = 1
+) -> list[dict]:
     """Real polls at the scheduled (instant, 1-7+S body, 1-7+S failing) entries, each
-    followed by the served reads. The page's snapshot is kept for the last two polls
-    only. With until_empty, stops at the first poll after the first whose board at 219
-    is empty."""
+    followed by the served reads. With until_empty, stops at the first poll after the
+    first whose board at 219 is empty. What the page may fetch is read at the last `keep`
+    polls only (at every poll when the end is not known in advance and keep > 1)."""
     snaps: list[dict] = []
     with pytest.MonkeyPatch.context() as mp:
         # The acceptance test's own fixture primes app.state and patches the clock, and
@@ -436,7 +524,7 @@ def run_world(schedule, station_routes: dict, until_empty: bool = False) -> list
         mp.setattr(main.app.state, "subway_station_routes", station_routes, raising=False)
 
         async def go() -> None:
-            for at, body, failing in schedule:
+            for k, (at, body, failing) in enumerate(schedule):
                 clock[0] = at
                 try:
                     await world._poll_and_serve(upstream(at, body, failing))
@@ -448,10 +536,14 @@ def run_world(schedule, station_routes: dict, until_empty: bool = False) -> list
                         f"the poll at T0{at - T0:+.0f} s and its reads complete",
                         f"{type(exc).__name__}: {exc}",
                     )
-                snaps.append(await serve(at, page=True))
-                if len(snaps) > 2:
-                    snaps[-3].pop("page", None)
-                if until_empty and len(snaps) > 1 and not rows(snaps[-1]["board"]):
+                snap = await serve(at)
+                ends = k == len(schedule) - 1 or (until_empty and k > 0 and not rows(snap["board"]))
+                if ends or k >= len(schedule) - keep or (until_empty and keep > 1):
+                    await page_reads(snap)
+                snaps.append(snap)
+                if len(snaps) > keep:
+                    snaps[-keep - 1].pop("page", None)
+                if ends:
                     break
 
         asyncio.run(go())
@@ -708,29 +800,56 @@ async function page(item) {
   const intervals = new Map();
   let timerId = 0;
   const requested = new Set();
+  const unanswered = new Set(); // same-origin GETs no read answered: the next pass replays them
+  const refused = new Set(); // anything the harness cannot ask the app: never answered
   const created = [];
-  const respond = (status, body) => {
-    const text = typeof body === "string" ? body : JSON.stringify(body);
-    return {
-      ok: status >= 200 && status < 300, status,
-      json: async () => JSON.parse(text),
-      text: async () => text,
-    };
+  const ORIGIN = "http://page";
+  // A real fetch Response carrying what the app served: status, headers and body text.
+  const respond = (hit) => new Response(
+    [204, 205, 304].includes(hit.status) ? null : hit.text,
+    { status: hit.status, headers: hit.headers },
+  );
+  const refuse = (what) => { refused.add(what); return new TypeError("Failed to fetch"); };
+  // THE CLOSED FETCH: an exact URL (path and query string) the app was read for, or a
+  // network failure that is recorded. Nothing is invented on the app's behalf.
+  const fetchStub = async (input, init) => {
+    const req = input && typeof input === "object" ? input : null;
+    const raw = String(req && "url" in req ? req.url : input);
+    const method = String((init && init.method) || (req && req.method) || "GET").toUpperCase();
+    let url;
+    try { url = new URL(raw, `${ORIGIN}/`); } catch { throw refuse(`${method} ${raw}`); }
+    const key = url.origin === ORIGIN ? url.pathname + url.search : url.href;
+    requested.add(method === "GET" ? key : `${method} ${key}`);
+    if (url.origin !== ORIGIN || method !== "GET") throw refuse(`${method} ${key}`);
+    const hit = item.responses[key];
+    if (!hit) { unanswered.add(key); throw new TypeError("Failed to fetch"); }
+    return respond(hit);
   };
   const sandbox = {
     console: { log() {}, info() {}, debug() {}, warn() {}, error() {} },
     URL, URLSearchParams, TextEncoder, TextDecoder, structuredClone, queueMicrotask,
     document: doc, L: makeLeaflet(created),
-    location: { search: "", hash: "", href: "http://page/", pathname: "/", origin: "http://page" },
+    location: { search: "", hash: "", href: `${ORIGIN}/`, pathname: "/", origin: ORIGIN },
     history: { replaceState() {}, pushState() {} },
-    navigator: { userAgent: "node", language: "en-US", languages: ["en-US"] },
+    navigator: {
+      userAgent: "node", language: "en-US", languages: ["en-US"],
+      sendBeacon: (url) => { refused.add(`sendBeacon ${url}`); return false; },
+    },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    fetch: async (url) => {
-      const p = new URL(String(url), "http://page").pathname;
-      requested.add(p);
-      const hit = item.responses[p];
-      return hit ? respond(hit.status, hit.body) : respond(404, { detail: "Not Found" });
+    fetch: fetchStub,
+    // Every other way a page can reach a server is refused and recorded.
+    XMLHttpRequest: class {
+      open(method, url) { refused.add(`XMLHttpRequest ${method} ${url}`); }
+      send() {} setRequestHeader() {} addEventListener() {} abort() {}
+    },
+    EventSource: class {
+      constructor(url) { refused.add(`EventSource ${url}`); }
+      addEventListener() {} close() {}
+    },
+    WebSocket: class {
+      constructor(url) { refused.add(`WebSocket ${url}`); }
+      addEventListener() {} send() {} close() {}
     },
     AbortSignal: { timeout: () => ({}) },
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
@@ -763,7 +882,7 @@ async function page(item) {
   await settle(); // the page's own boot: its static loaders, its first poll, its alerts
   // THE POPUP, opened the way a click opens it: the marker the page drew at the station's
   // served coordinates fires its own popupopen handler.
-  const stops = item.responses["/api/subway-stops"].body || [];
+  const stops = JSON.parse(item.responses["/api/subway-stops"].text) || [];
   const stop = stops.find((s) => s.id === input.station_id);
   const at = (layer) => {
     const ll = layer.__own.args[0];
@@ -803,6 +922,8 @@ async function page(item) {
     // What is COMPARED: each surface whole, markup included.
     surfaces: { popup: popupHtml, panel: tree(detail), spoken: tree(announce) },
     requested: [...requested].sort(),
+    unanswered: [...unanswered].sort(),
+    refused: [...refused].sort(),
   };
 }
 
@@ -827,9 +948,17 @@ def render(cases: dict[str, tuple[float, dict]]) -> dict[str, dict]:
         driver.write_text(PAGE_DRIVER)
         data = Path(tmp) / "cases.json"
         data.write_text(json.dumps(payload))
-        proc = subprocess.run(
-            ["node", str(driver), str(FRONTEND), str(data)], capture_output=True, text=True
-        )
+        try:
+            proc = subprocess.run(
+                [NODE, str(driver), str(FRONTEND), str(data)], capture_output=True, text=True
+            )
+        except OSError as exc:
+            halt(
+                "frontend",
+                "the page boots and renders every board",
+                f"cannot run node as {NODE!r} ({type(exc).__name__}: {exc}); "
+                "set NODE=/path/to/node",
+            )
     if proc.returncode != 0:
         head = (proc.stderr or proc.stdout).strip().splitlines()[:3]
         halt("frontend", "the page boots and renders every board", " | ".join(head))
@@ -868,7 +997,8 @@ def page_at(snap: dict, board: dict | None = None) -> tuple[float, dict]:
     """The page's view of one poll, with the board replaced when one is given."""
     served = dict(snap["page"])
     if board is not None:
-        served[BOARD_PATH] = {"status": 200, "body": board}
+        plain = snap["board_served"]
+        stand_in(served, BOARD_PATH, plain, {**plain, "status": 200, "text": json.dumps(board)})
     return snap["at"], served
 
 
@@ -887,12 +1017,52 @@ def main_script() -> None:
     kept_calls = station_calls_in(fresh_last)
     last_call = max(kept_calls)
 
-    # The five worlds. (b) first, because it measures the retention window (a) needs.
-    capped = run_world(outage(fresh_full), routes_219, until_empty=True)
-    expiry = run_world(outage(fresh_last), routes_219, until_empty=True)
-    stale = run_world([(T0, stale_last, False), (T0 + POLL_S, stale_last, False)], routes_219)
-    never = run_world([(T0, None, True), (T0 + POLL_S, None, True)], routes_219)
-    fresh = run_world([(T0, None, False), (T0 + POLL_S, None, False)], routes_219)
+    # The ids a templated path is filled with: the station, its platforms, its routes,
+    # its group and the system's name.
+    ids = list(dict.fromkeys([STATION, *sorted(PLATFORMS), *routes_219[STATION], FAILED, SYSTEM]))
+    Capture.filled = Contract.filled(ids)
+
+    # The five worlds, (b) first because it measures the retention window (a) needs, and
+    # the page over the boards they served. Every URL the page asked for that no read
+    # answered is read from the app on the next pass, at every poll of every world.
+    fresh_name = f"fresh empty: every group ok and current, nothing running at {STATION}"
+    for passes in range(1, PASSES + 1):
+        capped = run_world(outage(fresh_full), routes_219, until_empty=True)
+        expiry = run_world(outage(fresh_last), routes_219, until_empty=True, keep=2)
+        stale = run_world([(T0, stale_last, False), (T0 + POLL_S, stale_last, False)], routes_219)
+        never = run_world([(T0, None, True), (T0 + POLL_S, None, True)], routes_219)
+        fresh = run_world([(T0, None, False), (T0 + POLL_S, None, False)], routes_219)
+        before, after = expiry[-2], expiry[-1]
+        built = {
+            fresh_name: with_contributor(fresh[-1]),
+            "A: stale content behind a current poll": with_contributor(stale[-1]),
+            "B: never-decoded failed contributor": with_contributor(never[-1]),
+            "C: failed after decoding (control)": with_contributor(after),
+        }
+        world_of = {
+            fresh_name: fresh[-1],
+            "A: stale content behind a current poll": stale[-1],
+            "B: never-decoded failed contributor": never[-1],
+            "C: failed after decoding (control)": after,
+        }
+        served = {
+            "fresh empty, as served": fresh[-1],
+            "before expiry, as served": before,
+            "after expiry, as served": after,
+            "at the cap, as served": capped[-1],
+            "A (stale content), as served": stale[-1],
+            "B (never decoded), as served": never[-1],
+        }
+        views = render(
+            {
+                **{n: page_at(world_of[n], board) for n, (board, _) in built.items()},
+                **{n: page_at(snap) for n, snap in served.items()},
+            }
+        )
+        new = {url for view in views.values() for url in view["unanswered"]} - Capture.extra
+        if not new:
+            break
+        Capture.extra |= new
     cap_before, cap_after = capped[-2], capped[-1]
     failed_from = T0 + POLL_S
 
@@ -920,6 +1090,20 @@ def main_script() -> None:
     print(
         f"  retention window, measured (b): from T0+{failed_from - T0:.0f} s "
         f"to T0{cap_after['at'] - T0:+.0f} s ({cap_after['at'] - failed_from:.0f} s)"
+    )
+    print(
+        f"  the page's reads at each poll : {len(Contract.paths)} parameterless GET paths and "
+        f"{len(Contract.templates)} templated ones in /openapi.json, each parameter filled with "
+        f"{ids}: {len(Contract.paths) + len(Capture.filled)} URLs"
+    )
+    alert_statuses = sorted({snap["alerts_status"] for snap in served.values()}, key=str)
+    print(
+        f"  /api/alerts from main.app     : HTTP {alert_statuses}; "
+        + (
+            "the page got the app's own answer"
+            if alert_statuses == [200]
+            else "where not 200, the page got the empty, current alert store"
+        )
     )
     check(
         rows(cap_after["board"]) == [] and full_calls[-1] > cap_after["at"],
@@ -1076,38 +1260,27 @@ def main_script() -> None:
         )
 
     # ---- the boards, on the page ------------------------------------------
-    fresh_name = f"fresh empty: every group ok and current, nothing running at {STATION}"
-    built = {
-        fresh_name: with_contributor(fresh[-1]),
-        "A: stale content behind a current poll": with_contributor(stale[-1]),
-        "B: never-decoded failed contributor": with_contributor(never[-1]),
-        "C: failed after decoding (control)": with_contributor(after),
-    }
-    world_of = {
-        fresh_name: fresh[-1],
-        "A: stale content behind a current poll": stale[-1],
-        "B: never-decoded failed contributor": never[-1],
-        "C: failed after decoding (control)": after,
-    }
-    served = {
-        "fresh empty, as served": fresh[-1],
-        "before expiry, as served": before,
-        "after expiry, as served": after,
-        "at the cap, as served": cap_after,
-        "A (stale content), as served": stale[-1],
-        "B (never decoded), as served": never[-1],
-    }
-    views = render(
-        {
-            **{n: page_at(world_of[n], board) for n, (board, _) in built.items()},
-            **{n: page_at(snap) for n, snap in served.items()},
-        }
-    )
     fresh_view = views[fresh_name]
     served_fresh = views["fresh empty, as served"]
 
     rule("(c) THE RIDER, on the boards the backend served, through the real page")
-    print(f"  the page fetched: {', '.join(views['after expiry, as served']['requested'])}")
+    asked = sorted({url for view in views.values() for url in view["requested"]})
+    unserved = sorted(
+        {url for view in views.values() for url in view["unanswered"] + view["refused"]}
+    )
+    print(f"  the page asked for ({len(asked)} URLs over {len(views)} boards): {', '.join(asked)}")
+    print(
+        f"  replayed from the app        : {sorted(Capture.extra) or 'none'} "
+        f"({passes} pass{'es' if passes > 1 else ''} of the five worlds)"
+    )
+    check(
+        not unserved,
+        "world",
+        "every request the page made on every board was answered by what main.app served for "
+        "that exact URL at that poll (or by the built board or the empty alert store above); "
+        "unanswered or refused requests: 0",
+        f"{len(unserved)}: {unserved}" if unserved else "0",
+    )
     for name in served:
         show(name, views[name])
     for name, road in (

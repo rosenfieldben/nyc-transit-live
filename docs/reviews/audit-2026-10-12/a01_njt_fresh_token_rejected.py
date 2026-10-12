@@ -68,15 +68,23 @@ FOUR ARMS, and what each one is for:
   --as-shipped-process) enters the real main.lifespan, which starts the real
   poll loops pollers._poll_feeds and pollers._poll_alerts, against
   njt_auth.TOKEN_CACHE exactly as the module built it at import (never replaced,
-  never re-clocked; nothing else has run in that interpreter to touch it), and
-  through njt_auth's own transport: nothing in njt_auth is swapped, and the fake
-  answers UNDER _httpx_post, at the httpx client it builds. The process first
-  runs healthy on one token, then NJ Transit starts refusing every token it is
-  shown. Measured: the getToken POSTs each scheduler cycle costs after that,
-  credited to a consumer by the minted token its next data POST carries. This
-  is the arm that sees a repair carried by how TOKEN_CACHE is constructed, by
-  the lifespan's wiring, by a gate in the poll loops, or by the transport, none
-  of which arms 1 to 3 execute.
+  never re-clocked; nothing else has run in that interpreter to touch it). The
+  process first runs healthy on one token, then NJ Transit starts refusing every
+  token it is shown. Measured: the getToken POSTs each scheduler cycle costs
+  after that, credited to a consumer by the minted token its next data POST
+  carries. This is the arm that sees a repair carried by how TOKEN_CACHE is
+  constructed, by the lifespan's wiring, or by a gate in the poll loops, none of
+  which arms 1 to 3 execute.
+
+  EVERY ARM POSTS THROUGH njt_auth's OWN TRANSPORT, and the fake answers at the
+  socket layer beneath it (httpx.AsyncHTTPTransport.handle_async_request, where
+  an httpx client hands a request to its connection pool, as a02 fakes it).
+  Nothing in njt_auth is swapped and no httpx client is replaced: _httpx_post
+  builds its own client, and any httpx transport it composes and hands that
+  client (a rejection latch wrapping AsyncHTTPTransport, say) runs above the
+  fake, in all four arms. So a repair carried by the transport, in _httpx_post's
+  own body or in a transport object it builds, changes the counts of arms 1, 2
+  and 4 alike.
 
 WHY THE COUNTS, NOT THE COOLDOWN SURFACE, CARRY THE VERDICT. "Cooldown remained
 unset" is read twice (TokenCache.cooldown() and /api/status njt_mint_cooldown),
@@ -84,19 +92,24 @@ but a repair can stop the storm with a breaker of its own that never reaches
 that surface, and both reads would then stay null while the minting stopped.
 Every arm therefore also counts what the fake upstream received. WHAT THOSE
 COUNTS COVER, AND WHAT THEY DO NOT: a repair changes them if it lives anywhere
-on the paths the four arms execute: njt_post and TokenCache (arm 1, on a cache
-this script builds), the refreshers and the feed and alert fetchers (arm 2), and
-in ARM 4 the import-time TOKEN_CACHE, njt_auth's transport, main.lifespan, the
-real poll loops and everything they call. A repair that lives off those paths
-is not measured here: outside the process (an operator, a supervisor, a
-deployment override of an environment seam), or in a static loader (arm 4 idles
-the four non-NJT warmups and hands the real NJT warmup a stub load, so the only
-NJ Transit requests are the pollers'). That residual is stated, not claimed
-away.
+on the paths the four arms execute: njt_post, TokenCache and njt_auth's
+transport with every httpx object it builds (arm 1, on a cache this script
+builds), the refreshers and the feed and alert fetchers (arm 2), and in ARM 4
+the import-time TOKEN_CACHE, main.lifespan, the real poll loops and everything
+they call. A repair that lives off those paths is not measured here: outside the
+process (an operator, a supervisor, a deployment override of an environment
+seam), in a static loader (arm 4 idles the four non-NJT warmups and hands the
+real NJT warmup a stub load, so the only NJ Transit requests are the pollers'),
+or one that recognises NJ Transit by its literal host name rather than by the
+configured URLs, which no request here may name. That residual is stated, not
+claimed away.
 
 WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
 
   * njt_auth.njt_post, the one door, including its single re-mint branch.
+  * njt_auth._httpx_post, the real transport, in every arm: the httpx client it
+    builds, whatever transport it composes, the multipart body, and the client's
+    whole send path down to the connection pool's hand-off.
   * njt_auth.TokenCache: real instances with an injected clock pair (the
     constructor's own seams) in arms 1 to 3, and in arm 4 the module's own
     TOKEN_CACHE as import built it. njt_auth.mint reads the fake's bytes, so
@@ -108,8 +121,8 @@ WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
     njt_post path.
   * Arm 4: main.lifespan (the app state it builds, the tasks it starts and how
     it stops them), warmups._warm_njt_static, pollers._poll_feeds with its real
-    TaskGroup cycle, pollers._poll_alerts, the NJ Transit consumers they run,
-    and njt_auth._httpx_post, the real transport, multipart body and all.
+    TaskGroup cycle, pollers._poll_alerts, and the NJ Transit consumers they
+    run.
   * routes.status /api/status (its njt_mint_cooldown key and the njt feed's
     last_error) and /healthz, served through the real ASGI app.
   * The cadences and the budget, read live: pollers.POLL_INTERVAL_S,
@@ -128,34 +141,39 @@ WHAT IS INJECTED (the faults, stated plainly):
     recognises and backend/tests/test_njt_auth.py pins as INVALID_TOKEN. Arm 2's
     warm-up poll and arm 4's healthy phase are answered with an empty, valid
     GTFS-Realtime FeedMessage.
-  * Arms 1 to 3: njt_auth._httpx_post (the module's default transport, the seam
-    every consumer reaches) is replaced by the fake for a drive and by a
-    transport that hard-exits between drives; in arms 2 and 3, njt_auth.TOKEN_CACHE
-    is replaced by a fresh instance per drive so each drive starts from a state
-    it chose on a clock it cranks, which is how F05 puts one clock in front of
-    every consumer at once. Arm 4 replaces neither: the fake answers the real
-    transport's POSTs from under it (FakeRailData.answer, reading the form fields
-    out of the multipart body).
+  * THE SOCKET LAYER, in both interpreters, before any backend import:
+    httpx.AsyncHTTPTransport.handle_async_request and its sync twin,
+    httpx.HTTPTransport.handle_request, are replaced by one fake (SocketLayer).
+    Nothing in this backend reaches a socket except through an httpx client, so
+    every request lands there, however the client and its transports were
+    built. A URL naming "njtransit" or "raildata" hard-exits; a POST to the
+    loopback fake host is NJ Transit and is answered by the drive's
+    FakeRailData (reading the form fields out of the multipart body), and with
+    no drive's fake installed it hard-exits too; a GET to the fake host is a
+    keyless alert feed and gets an empty, valid FeedMessage, so an alert poll is
+    an ordinary poll in which only NJ Transit fails; any other host is an
+    unreachable network (httpx.ConnectError).
+  * Arms 2 and 3: njt_auth.TOKEN_CACHE is replaced by a fresh instance per drive
+    so each drive starts from a state it chose on a clock it cranks, which is
+    how F05 puts one clock in front of every consumer at once. Arm 4 does not
+    replace it.
+  * No proxy: HTTP(S)_PROXY and ALL_PROXY, both spellings, are set empty before
+    any import, so every client has the transports it would have in a container
+    with no proxy, wherever this runs.
   * A hand-cranked clock in arms 1 to 3. Every timeline is relative to t = 0 of
     the simulated rejection, and the wall clock is fixed at 2026-10-12 12:00
     EDT, so the output does not depend on the day this runs. Arm 4 runs on the
     real clocks the import-time cache was built with; it measures counts, not
-    times, its drive lasts well under a second, and every hold in play (a 60s
+    times, its drive lasts a few seconds, and every hold in play (a 60s
     cooldown, any breaker a repair adds) is far longer than that.
-  * The five keyless alert feeds are an httpx.MockTransport answering an empty,
-    valid FeedMessage, so an alert poll is an ordinary poll in which only NJ
-    Transit fails.
   * Arm 4 only, F07's precedent for driving the real loops: the poll cadences
     are scaled by CADENCE_SCALE (ratio kept); the five non-NJT feed refreshers
     named in pollers.FEED_REFRESHERS are no-ops (one of them marks each feed
     cycle); pollers._refresh_alerts is wrapped by a pass-through that marks each
     alert cycle and forwards every argument unchanged; the four non-NJT static
-    warmups and the bus index build idle until shutdown; njt_static's loader
+    warmups and the bus index build idle until shutdown; and njt_static's loader
     returns F07's stub tables so the REAL NJT warmup reaches ready without a
-    request; and every httpx client the interpreter constructs (async and sync,
-    njt_auth's own included) is forced onto an in-process MockTransport that
-    hard-fails on NJ Transit hosts, answers a POST from the fake and a GET (a
-    keyless alert feed) with an empty FeedMessage.
+    request.
   * DATA_DIR is a fresh temporary directory; the repository's data/ is never
     written. The app gets a new starlette State before each drive in arms 2 and
     3, so nothing one drive leaves on app.state can decide the next drive's
@@ -169,17 +187,19 @@ NjtMintCooldownError, NjtMintQuotaError, NjtUpstreamError), so a subclass of
 NjtAuthError for the refused fresh token, or any rename of the private names the
 mechanism lives in (TokenCache._start_cooldown, _serve_through_cooldown,
 _live_token, _cooldown_until, _cooldown_reason, _backoff_s, njt_post's _mint,
-_post, _body_or_raise), leaves it green. The names it writes are INJECTION
-SEAMS: in arms 1 to 3 njt_auth._httpx_post and njt_auth.TOKEN_CACHE, the two F05
-uses; in arm 4 httpx.AsyncClient and httpx.Client, the two cadence constants,
-the FEED_REFRESHERS registry, pollers._refresh_alerts (wrapped, not replaced) and
-njt_static.load_njt_static, which are REQUIRED (a missing one raises, and the
-script goes red without leaving the machine), and the four main._warm_* warmups
-and bus_static.ensure_index, which are OPTIONAL: a rename of those leaves the
-real warmup running against the in-process client, where it fails its download
-and makes no NJ Transit request, so the counts and the verdict do not move
-(measured: renaming _warm_subway_static, _warm_ferry_static and ensure_index
-throughout backend/ leaves the script green, with zero sockets).
+_post, _body_or_raise, _httpx_post), leaves it green. The names it writes are
+INJECTION SEAMS: in every arm httpx's own two socket-layer methods (named in
+WHAT IS INJECTED; httpx's, not the backend's, so no backend rename can move
+them); in arms 2 and 3 njt_auth.TOKEN_CACHE, as F05 does; in arm 4 the two
+cadence constants, the FEED_REFRESHERS registry, pollers._refresh_alerts
+(wrapped, not replaced) and njt_static.load_njt_static, which are REQUIRED (a
+missing one raises, and the script goes red without leaving the machine), and
+the four main._warm_* warmups and bus_static.ensure_index, which are OPTIONAL: a
+rename of those leaves the real warmup running into the unreachable network at
+the socket layer, where it fails its download and makes no NJ Transit request,
+so the counts and the verdict do not move (measured: renaming
+_warm_subway_static, _warm_ferry_static and ensure_index throughout backend/
+leaves the script green, with zero sockets).
 
 HERMETIC, AND WHY THE CREDENTIALS START "f05-". The consumers check
 njt_auth.is_configured(), so this script must look CONFIGURED, which is the case
@@ -190,11 +210,11 @@ configured deployment). Widening that list is an edit to the 09-05 harness,
 which this branch does not make, so the pair here is "f05-a01-...". Wall 1 is
 what keeps it safe: every NJT URL seam, and the two keyless alert seams
 (ALERTS_RT_BASE, FERRY_ALERTS_URL), is a loopback address set before the first
-backend import, and every fake hard-fails on any URL naming "njtransit" or
-"raildata". In arms 1 to 3 the real transport is never reachable; in arm 4 it
-runs, but every httpx client it can build is the in-process one. No socket is
-opened and no mint is spent, in either interpreter (the 09-05 _tracer records
-two interpreters, zero resolutions, zero connections).
+backend import, and the socket layer and FakeRailData both hard-fail on any URL
+naming "njtransit" or "raildata". The real transport runs in every arm, and
+beneath it, in both interpreters, every connection pool's hand-off is the fake.
+No socket is opened and no mint is spent, in either interpreter (the 09-05
+_tracer records two interpreters, zero resolutions, zero connections).
 
 RUN IT (from the repository root):
 
@@ -202,10 +222,13 @@ RUN IT (from the repository root):
 
 RECORDED DISPOSITION: VERIFIED. The script exits 0 while the code behaves the
 way the audit says and the ledger records, and 1 the moment it stops. A repair
-on any path the arms execute (the door, the cache, the transport, the
-refreshers, the poll loops, the lifespan, or how TOKEN_CACHE is built) that
-stops a refused fresh token from buying the next mint changes the counts and
-turns arm 1, 2 or 4 red, while arm 3 stays green under it.
+on any path the arms execute (the door, the cache, the transport and any httpx
+transport it composes, the refreshers, the poll loops, the lifespan, or how
+TOKEN_CACHE is built) that stops a refused fresh token from buying the next mint
+changes the counts and turns arm 1, 2 or 4 red. Arm 3 stays green under a repair
+that keeps F05's failed-mint path as it is; a repair whose hold is process-wide
+on the real clock, once armed by arm 1, also withholds arm 3's getToken POSTs
+and turns it red with the rest.
 """
 
 from __future__ import annotations
@@ -237,8 +260,8 @@ os.environ["NJT_TOKEN_URL"] = f"{FAKE_HOST}/a01-fake/getToken"
 os.environ["NJT_TU_URL"] = f"{FAKE_HOST}/a01-fake/{FEED_ENDPOINT}"
 os.environ["NJT_ALERTS_URL"] = f"{FAKE_HOST}/a01-fake/{ALERT_ENDPOINT}"
 os.environ["NJT_STATIC_URL"] = f"{FAKE_HOST}/a01-fake/getStatic"
-# The keyless alert feeds too: arm 4's loops build their own clients, so these
-# are a second wall behind the in-process client they are forced onto.
+# The keyless alert feeds too, so their GETs address the fake host, where the
+# socket layer answers them with an empty FeedMessage (and a second wall behind it).
 os.environ["ALERTS_RT_BASE"] = f"{FAKE_HOST}/a01-fake/alerts-rt"
 os.environ["FERRY_ALERTS_URL"] = f"{FAKE_HOST}/a01-fake/ferry-alerts"
 # Fabricated, and "f05-" for the allow-list reason given in the docstring.
@@ -248,6 +271,15 @@ os.environ["NJT_USERNAME"] = FAKE_USERNAME
 os.environ["NJT_PASSWORD"] = FAKE_PASSWORD
 _TMP_DATA_DIR = tempfile.mkdtemp(prefix="a01-njt-data-")
 os.environ["DATA_DIR"] = _TMP_DATA_DIR
+# No proxy, in either interpreter: set empty (urllib and httpx read an empty value
+# as unset, and load_dotenv never overrides a key that is set). Every client
+# production builds then has the same transports here as in a container with no
+# proxy, wherever this runs, and none of them has a proxy route out. It also halves
+# the cost of each client njt_auth builds per request (one transport, one TLS
+# context, instead of two when a developer machine sets HTTPS_PROXY).
+for _proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+    os.environ[_proxy_var] = ""
+    os.environ[_proxy_var.lower()] = ""
 
 sys.path.insert(0, str(REPO / "docs" / "reviews" / "audit-2026-09-05"))
 import _hermetic  # noqa: E402
@@ -261,10 +293,67 @@ import time  # noqa: E402
 from datetime import datetime  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
+import httpx  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# The fake socket layer (WHAT IS INJECTED), installed in BOTH interpreters
+# before any backend import. Faked here, and not at njt_auth._httpx_post or at a
+# client's transport= argument, so that every object production composes above
+# the connection pool (njt_auth's transport function, the client it builds, any
+# httpx transport a repair wraps around AsyncHTTPTransport) runs in every arm.
+# ---------------------------------------------------------------------------
+
+
+class SocketLayer:
+    """Who answers at the socket layer (`upstream`, the current drive's
+    FakeRailData, or None between drives), and what reached it. The routing
+    rules are the docstring's THE SOCKET LAYER bullet."""
+
+    upstream = None  # the FakeRailData answering NJ Transit for the current drive
+    methods: list[str] = []
+    unreachable: list[str] = []
+
+
+def _socket_route(request: httpx.Request) -> str:
+    url = str(request.url)
+    guard(url)
+    SocketLayer.methods.append(request.method)
+    if not url.startswith(FAKE_HOST + "/"):
+        SocketLayer.unreachable.append(url)
+        raise httpx.ConnectError("A01: no network is reachable from this script", request=request)
+    if request.method != "POST":
+        return "alert-feed"
+    if SocketLayer.upstream is None:
+        raise SystemExit(
+            f"A01 CONTAINMENT BREACH: an NJ Transit POST to {url!r} reached the socket layer "
+            "with no fake upstream installed"
+        )
+    return "njt"
+
+
+async def _fake_async_socket_layer(self, request: httpx.Request) -> httpx.Response:
+    await request.aread()
+    if _socket_route(request) == "alert-feed":
+        return httpx.Response(200, content=EMPTY_FEED, request=request)
+    status, body = await SocketLayer.upstream.respond(str(request.url), form_fields(request))
+    return httpx.Response(status, content=body, request=request)
+
+
+def _fake_sync_socket_layer(self, request: httpx.Request) -> httpx.Response:
+    request.read()
+    if _socket_route(request) == "alert-feed":
+        return httpx.Response(200, content=EMPTY_FEED, request=request)
+    status, body = SocketLayer.upstream.answer(str(request.url), form_fields(request))
+    return httpx.Response(status, content=body, request=request)
+
+
+# Every httpx client with a pooled transport, async or sync, however it is built.
+httpx.AsyncHTTPTransport.handle_async_request = _fake_async_socket_layer
+httpx.HTTPTransport.handle_request = _fake_sync_socket_layer
+
 import bus_static  # noqa: E402
 import cache as cache_module  # noqa: E402
 import env_seams  # noqa: E402
-import httpx  # noqa: E402
 import main as main_module  # noqa: E402
 import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
@@ -399,8 +488,10 @@ class FakeRailData:
     def data_posts(self) -> int:
         return len(self.data_log)
 
-    async def __call__(self, url: str, form: dict, timeout_s: float, **_: object):
-        """The fake as njt_auth's transport seam sees it (arms 1 to 3)."""
+    async def respond(self, url: str, form: dict) -> tuple[int, bytes]:
+        """One NJ Transit request as the socket layer hands it over, from under
+        njt_auth's own transport in every arm: the simulated latency, the held
+        first mint, then the answer."""
         guard(url)
         for _ in range(self.latency_ticks):
             await asyncio.sleep(0)
@@ -410,8 +501,8 @@ class FakeRailData:
         return self.answer(url, form)
 
     def answer(self, url: str, form: dict) -> tuple[int, bytes]:
-        """One request's answer, synchronously. Arm 4 reaches this from UNDER the real
-        njt_auth transport, through the in-process httpx client it is forced onto."""
+        """One request's answer, synchronously (the sync socket layer calls this
+        directly; nothing in the NJ Transit path is sync today)."""
         guard(url)
         if _is_token_url(url):
             self.token_posts += 1
@@ -451,27 +542,19 @@ def _is_token_url(url: str) -> bool:
 OVERLAP_TICKS = 200
 
 
-async def _forbidden_transport(url: str, form: dict, timeout_s: float, **_: object):
-    raise SystemExit(f"A01 CONTAINMENT BREACH: the real njt_auth transport was called for {url!r}")
-
-
-# Arm 4's fresh interpreter runs this same file with this flag, and in it njt_auth's
-# own transport is left exactly as the module defines it (the fake sits UNDER it).
 AS_SHIPPED_FLAG = "--as-shipped-process"
 AS_SHIPPED = sys.argv[1:] == [AS_SHIPPED_FLAG]
 
-# The default between drives in arms 1 to 3. A drive installs its own fake and
-# restores this.
-if not AS_SHIPPED:
-    njt_auth._httpx_post = _forbidden_transport
-
 
 def install(fake: FakeRailData) -> None:
-    njt_auth._httpx_post = fake
+    """Make `fake` the NJ Transit the socket layer answers from. njt_auth itself is
+    never touched: its own transport runs above the fake in every arm."""
+    SocketLayer.upstream = fake
 
 
 def uninstall() -> None:
-    njt_auth._httpx_post = _forbidden_transport
+    """Between drives no upstream is installed, and an NJ Transit POST hard-exits."""
+    SocketLayer.upstream = None
 
 
 def reset_token_cache(clock: Clock) -> njt_auth.TokenCache:
@@ -483,11 +566,9 @@ def reset_token_cache(clock: Clock) -> njt_auth.TokenCache:
 
 
 def alerts_client() -> httpx.AsyncClient:
-    def handler(request: httpx.Request) -> httpx.Response:
-        guard(str(request.url))
-        return httpx.Response(200, content=EMPTY_FEED)
-
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30)
+    """The shared client the pollers are handed, built as pollers builds its own.
+    Its keyless alert GETs land at the socket layer like every other request."""
+    return httpx.AsyncClient(timeout=30)
 
 
 async def serve(path: str, client_class: type = httpx.AsyncClient) -> httpx.Response:
@@ -584,13 +665,14 @@ def classify(exc: BaseException | None) -> str:
     return f"other ({type(exc).__name__})"
 
 
-async def call_njt_post(cache: njt_auth.TokenCache, fake: FakeRailData) -> tuple[str, object]:
-    """One direct njt_post: (its outcome, classified, and the exception it raised)."""
+async def call_njt_post(cache: njt_auth.TokenCache) -> tuple[str, object]:
+    """One direct njt_post through njt_auth's own transport, answered by whichever
+    fake is installed at the socket layer: (its outcome, classified, and the
+    exception it raised)."""
     try:
         await njt_auth.njt_post(
             DIRECT_DATA_URL,
             cache=cache,
-            transport=fake,
             env=DIRECT_ENV,
             token_url=DIRECT_TOKEN_URL,
         )
@@ -693,26 +775,30 @@ async def arm1() -> dict:
     cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
 
     rows = []
-    for _ in range(10):
-        mints_before, data_before = fake.token_posts, fake.data_posts
-        outcome = await call_njt_post(cache, fake)
-        rows.append(
-            {
-                "mints": fake.token_posts - mints_before,
-                "data": fake.data_posts - data_before,
-                "tokens": [tok for _, _, tok in fake.data_log[data_before:]],
-                "outcome": outcome,
-            }
-        )
-    cooldown_after_ten = cache.cooldown()
-    mints_ten, data_ten = fake.token_posts, fake.data_posts
+    install(fake)
+    try:
+        for _ in range(10):
+            mints_before, data_before = fake.token_posts, fake.data_posts
+            outcome = await call_njt_post(cache)
+            rows.append(
+                {
+                    "mints": fake.token_posts - mints_before,
+                    "data": fake.data_posts - data_before,
+                    "tokens": [tok for _, _, tok in fake.data_log[data_before:]],
+                    "outcome": outcome,
+                }
+            )
+        cooldown_after_ten = cache.cooldown()
+        mints_ten, data_ten = fake.token_posts, fake.data_posts
 
-    # THE ELEVENTH CALL IS THE BEHAVIORAL READ OF "cooldown unset". With a
-    # cooldown running, TokenCache.get raises NjtMintCooldownError before any
-    # getToken POST (arm 3 shows that); without one, this call mints again.
-    mints_before = fake.token_posts
-    eleventh = await call_njt_post(cache, fake)
-    eleventh_mints = fake.token_posts - mints_before
+        # THE ELEVENTH CALL IS THE BEHAVIORAL READ OF "cooldown unset". With a
+        # cooldown running, TokenCache.get raises NjtMintCooldownError before any
+        # getToken POST (arm 3 shows that); without one, this call mints again.
+        mints_before = fake.token_posts
+        eleventh = await call_njt_post(cache)
+        eleventh_mints = fake.token_posts - mints_before
+    finally:
+        uninstall()
 
     print()
     print("  call   getToken   data    first data POST    second data POST   raised")
@@ -797,15 +883,19 @@ async def arm1() -> dict:
     clock = Clock()
     fake = FakeRailData(clock, mint_fails=True)
     cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
-    first = await call_njt_post(cache, fake)
-    window_1 = cache.cooldown_remaining()
-    clock.set(clock.now + (window_1 or 0.0))
-    fake.mint_fails = False
-    refused = await call_njt_post(cache, fake)
-    after_refusal = cache.cooldown()
-    fake.mint_fails = True
-    second = await call_njt_post(cache, fake)
-    window_2 = cache.cooldown_remaining()
+    install(fake)
+    try:
+        first = await call_njt_post(cache)
+        window_1 = cache.cooldown_remaining()
+        clock.set(clock.now + (window_1 or 0.0))
+        fake.mint_fails = False
+        refused = await call_njt_post(cache)
+        after_refusal = cache.cooldown()
+        fake.mint_fails = True
+        second = await call_njt_post(cache)
+        window_2 = cache.cooldown_remaining()
+    finally:
+        uninstall()
     base = njt_auth.MINT_COOLDOWN_BASE_S
     print()
     print("  THE LADDER, across a refused fresh token:")
@@ -1218,14 +1308,18 @@ async def fan_out(n: int) -> dict:
     gate = asyncio.Event()
     fake = FakeRailData(clock, mint_fails=True, hold_first_mint=gate)
     cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
-    tasks = [asyncio.create_task(call_njt_post(cache, fake)) for _ in range(n)]
-    for _ in range(20):
-        await asyncio.sleep(0)
-    in_flight = sum(1 for t in tasks if not t.done())
-    gate.set()
-    outcomes = [label for label, _exc in await asyncio.gather(*tasks)]
-    posts_after_burst = fake.token_posts
-    next_call = (await call_njt_post(cache, fake))[0]
+    install(fake)
+    try:
+        tasks = [asyncio.create_task(call_njt_post(cache)) for _ in range(n)]
+        for _ in range(20):
+            await asyncio.sleep(0)
+        in_flight = sum(1 for t in tasks if not t.done())
+        gate.set()
+        outcomes = [label for label, _exc in await asyncio.gather(*tasks)]
+        posts_after_burst = fake.token_posts
+        next_call = (await call_njt_post(cache))[0]
+    finally:
+        uninstall()
     return {
         "n": n,
         "in_flight": in_flight,
@@ -1402,43 +1496,17 @@ async def as_shipped_drive() -> dict:
     fake = FakeRailData(clock, accept_data=True)
     feed_marks: list[int] = []
     alert_marks: list[int] = []
-    in_process_requests: list[str] = []
     saved: list[tuple[object, str, object]] = []
 
     def swap(module: object, name: str, value: object, *, required: bool = True) -> None:
         """A seam. `required=False` only where skipping it changes no count: the
-        code it would have idled then runs for real against the in-process client,
-        fails its download, waits out its retry rung, and makes no NJ Transit
+        code it would have idled then runs for real, meets the unreachable network
+        at the socket layer, waits out its retry rung, and makes no NJ Transit
         request. A required seam that is gone raises, which fails closed."""
         if not required and not hasattr(module, name):
             return
         saved.append((module, name, getattr(module, name)))
         setattr(module, name, value)
-
-    def in_process(request: httpx.Request) -> httpx.Response:
-        """Every request any httpx client in this interpreter makes lands here. A
-        POST is NJ Transit (njt_auth's own transport posts every getToken and data
-        request), answered by the fake from the form it carried; a GET is a keyless
-        alert feed, answered with an empty, valid FeedMessage."""
-        guard(str(request.url))
-        in_process_requests.append(request.method)
-        if request.method == "POST":
-            status, body = fake.answer(str(request.url), form_fields(request))
-            return httpx.Response(status, content=body)
-        return httpx.Response(200, content=EMPTY_FEED)
-
-    real_async_client = httpx.AsyncClient
-    real_sync_client = httpx.Client
-
-    class InProcessAsyncClient(real_async_client):
-        def __init__(self, *args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(in_process)
-            super().__init__(*args, **kwargs)
-
-    class InProcessClient(real_sync_client):
-        def __init__(self, *args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(in_process)
-            super().__init__(*args, **kwargs)
 
     async def idle(*_args, **_kwargs) -> None:
         await asyncio.Event().wait()
@@ -1464,8 +1532,6 @@ async def as_shipped_drive() -> dict:
         alert_marks.append(len(fake.log))
         return await real_refresh_alerts(*args, **kwargs)
 
-    swap(httpx, "AsyncClient", InProcessAsyncClient)
-    swap(httpx, "Client", InProcessClient)
     swap(pollers, "_refresh_alerts", marked_refresh_alerts)
     swap(pollers, "POLL_INTERVAL_S", pollers.POLL_INTERVAL_S * CADENCE_SCALE)
     swap(pollers, "ALERT_POLL_INTERVAL_S", pollers.ALERT_POLL_INTERVAL_S * CADENCE_SCALE)
@@ -1478,12 +1544,16 @@ async def as_shipped_drive() -> dict:
         swap(main_module, warmup, idle, required=False)
     swap(bus_static, "ensure_index", idle, required=False)
     swap(njt_static, "load_njt_static", njt_static_stub)
-    # NOTHING IN njt_auth IS SWAPPED: not its transport, not TOKEN_CACHE. The fake is
-    # reached through njt_auth's own _httpx_post, whose httpx client is the
-    # in-process one above, so a repair living in the transport runs too.
+    # NOTHING IN njt_auth OR httpx IS SWAPPED ABOVE THE SOCKET LAYER: not njt_auth's
+    # transport, not TOKEN_CACHE, not any client class. njt_auth's own _httpx_post
+    # builds its own client with whatever transport it composes, and only the
+    # connection pool's hand-off at the bottom answers from the fake, so a repair
+    # carried anywhere in that stack runs.
 
     app = main_module.app
     out: dict = {"marked_by": marked[0] if marked else None}
+    methods_before = len(SocketLayer.methods)
+    install(fake)
     try:
         async with main_module.lifespan(app):
             out["came_up"] = await _wait_for(
@@ -1507,18 +1577,21 @@ async def as_shipped_drive() -> dict:
                     and len(alert_marks) >= first_alert + ALERT_WINDOWS + 1
                 )
             )
-            status = (await serve("/api/status", real_async_client)).json()
+            status = (await serve("/api/status")).json()
             out["status_cooldown"] = status.get("njt_mint_cooldown")
             out["status_njt_error"] = (status.get("feeds", {}).get("njt") or {}).get("last_error")
             log = list(fake.log)
             feed_marks_now, alert_marks_now = list(feed_marks), list(alert_marks)
     finally:
+        uninstall()
         for module, name, value in reversed(saved):
             setattr(module, name, value)
 
     out["cache_is_as_imported"] = njt_auth.TOKEN_CACHE is TOKEN_CACHE_AS_IMPORTED
-    out["njt_posts_in_process"] = in_process_requests.count("POST")
-    out["alert_gets_in_process"] = in_process_requests.count("GET")
+    reached = SocketLayer.methods[methods_before:]
+    out["njt_posts_at_socket"] = reached.count("POST")
+    out["alert_gets_at_socket"] = reached.count("GET")
+    out["unreachable_at_socket"] = len(SocketLayer.unreachable)
     if out.get("ran"):
         owners = _owners(log)
         out["feed_mints"], out["feed_data"] = _windows(
@@ -1580,10 +1653,15 @@ def arm4(consts: dict) -> dict:
         "    TOKEN_CACHE at the end   : "
         + ("the instance import built" if same_cache else "a DIFFERENT instance than import built")
     )
-    posts = "yes" if payload.get("njt_posts_in_process") else "none"
-    gets = "yes" if payload.get("alert_gets_in_process") else "none"
-    print(f"    NJ Transit POSTs answered under njt_auth's own transport : {posts}")
-    print(f"    keyless alert GETs answered by the in-process client     : {gets}")
+    posts = "yes" if payload.get("njt_posts_at_socket") else "none"
+    gets = "yes" if payload.get("alert_gets_at_socket") else "none"
+    print("    NJ Transit POSTs answered at the socket layer, under every object")
+    print(f"      njt_auth's own transport composed                    : {posts}")
+    print(f"    keyless alert GETs answered at the socket layer        : {gets}")
+    print(
+        f"    requests refused as an unreachable network             : "
+        f"{payload.get('unreachable_at_socket')}"
+    )
     print()
     print("  Healthy phase: NJ Transit accepts the token, both loops polling.")
     print(f"    getToken POSTs : {payload.get('healthy_mints')}")

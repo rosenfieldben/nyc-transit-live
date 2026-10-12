@@ -43,14 +43,25 @@
  *     answer their fixtures on every poll. Any other same-origin /api/ path never settles and
  *     fails a check; any other URL is refused and fails a check, so nothing naming njtransit or
  *     raildata can be asked for unnoticed.
- *   - The clock. Date, setTimeout, setInterval and requestAnimationFrame (one frame per
- *     simulated minute) run on a fake clock from the fixture module's FROZEN_MS
- *     (2026-07-02T12:00:00Z, 08:00 in New York), advanced 25 hours, each due timer in order.
+ *   - The clock. Date, setTimeout and setInterval (extra arguments passed on),
+ *     requestAnimationFrame (one frame per simulated minute), requestIdleCallback (run at once,
+ *     with a full deadline), queueMicrotask, scheduler.postTask, scheduler.yield, performance
+ *     (now and timeOrigin, per page) and postMessage (a "message" event to the page's own
+ *     listeners) run on a fake clock from the fixture module's FROZEN_MS (2026-07-02T12:00:00Z,
+ *     08:00 in New York), advanced 25 hours, each due timer in order. Each is reachable bare and
+ *     through window, self and globalThis.
  *   - Leaflet and the DOM are one permissive stand-in: every member exists and every call
  *     answers another stand-in. That is coarser than f14's named stubs on purpose, because the
  *     claim is about requests and adoption, not paint. Its one observation: every number handed
  *     to any Leaflet call is looked up among the tagged latitudes, which is what "reached the
- *     map" means below. window forwards to the page's own globals, as a browser's does.
+ *     map" means below.
+ *   - window, self, top, parent, frames, globalThis and document.defaultView are the page's own
+ *     global, as in a browser: its names and the built-ins. A window member this script does not
+ *     model, any navigator member but onLine, and Leaflet's L.Util and L.DomEvent (the page uses
+ *     neither) are GUARDED stand-ins: the page still boots, but a function handed to one at any
+ *     depth, as an argument or as a property, fails a setup check that names it, because its
+ *     callback never runs here and a re-read deferred through it would hide. The next deferral
+ *     API therefore turns this script red, not green.
  *
  * WHAT A REPAIR COULD LISTEN TO, AND IS GIVEN. The claim checks count requests and drawing, not
  * a mechanism, so a repair turns this red whatever its trigger, provided the trigger happens
@@ -65,9 +76,12 @@
  *     one only by restarting): every endpoint answers 503 from t = 60 s, five minutes down,
  *     and from t = 360 s the static endpoints serve v2 (every latitude 0.05 degrees further
  *     north, plus an ADDED entry per entry, its id or route suffixed). From then on every live
- *     payload announces it (each scalar under a key naming a static generation, a version, a
- *     publication or a boot changes, and so does any response header so named) and each feed's
- *     first row runs on a route and a stop only v2 has;
+ *     payload announces it: its top-level keys static_generation, static_version, generation,
+ *     version, feed_version, publication and boot_id carry 1 before the restart and 2 after it
+ *     (a scalar the fixture itself carries under a key naming a static generation, a version, a
+ *     publication or a boot changes too), every response header so named carries the same 1 or
+ *     2, and each feed's first row runs on a route and a stop only v2 has. A body key outside
+ *     those seven is not modelled;
  *   - the tab: hidden and offline at 1 h (visibilitychange, blur, freeze, pagehide, offline),
  *     back at 13 h and at every hour after (online, resume, pageshow restored from cache,
  *     visibilitychange, focus), delivered to every listener the page put on document, window
@@ -80,19 +94,26 @@
  *
  * WHAT TURNS IT RED: a static request after a loader's first usable answer, or a v2 coordinate
  * reaching the map, from either page; and, as a setup failure, any page error or console
- * warning (an unmodelled global must fail loudly rather than swallow a re-read). Measured
- * against scratch repairs that re-read on a timer (bare or on window), in the retry helper,
- * after the static max-age, on tab return (by listener, by property, after an age gate, after
- * a long absence, back online, restored from cache), on an announced generation (body key,
- * header, reload, cache-busting URL), at a service-day boundary (browser clock, server clock,
- * Date header), on an animation frame, on a live row naming an unknown route, after a backend
- * restart, and by reloading the page (history.go(0), a meta refresh). LIMITS, STATED RATHER
- * THAN GUESSED AT: a re-read slower than about daily (the window is 25 h); one fired only by a
- * rider's action on the map, panel or keys (none is replayed), or by a service worker (none
- * runs); one keyed on an announcement under a name none of the words above matches, or on a
- * field the committed live fixtures do not carry (the subway's per-group route coverage, for
- * one). Timers and frames run at full rate while the tab is hidden; a browser throttles both,
- * so a repair tied to them fires sooner here, never later.
+ * warning, or any function handed to a guarded stand-in (an unmodelled global must fail loudly
+ * rather than swallow a re-read). Measured against scratch repairs that re-read on a timer
+ * (bare or on window, with or without arguments), deferred through requestIdleCallback,
+ * queueMicrotask or scheduler.postTask (bare, on window, on self) or a message the page posts
+ * itself, in the retry helper, after the static max-age, on tab return (by listener, by
+ * property, after an age gate, after a long absence, back online, restored from cache), on an
+ * announced generation (body key with or without a fixture change, header, a header parsed as
+ * a number, reload, cache-busting URL), at a service-day boundary (browser clock, server
+ * clock, Date header), on an animation frame, on a live row naming an unknown route, after a
+ * backend restart, by reloading the page (history.go(0), a meta refresh, a page age from
+ * performance.timeOrigin), and, failing closed, deferred through an API it does not model (on
+ * window, self, globalThis, navigator or Leaflet's helpers). LIMITS, STATED RATHER THAN GUESSED
+ * AT: a re-read slower than about daily (the window is 25 h); one fired only by a rider's action
+ * on the map, panel or keys (none is replayed, and the DOM and Leaflet stand-ins keep every
+ * callback the page gives them), or by a service worker (none runs); one keyed on a body key
+ * outside the seven above, a header named with none of their words, or a field the committed
+ * live fixtures do not carry (the subway's per-group route coverage, for one); one that reaches
+ * an API only after a typeof test on a bare name this script does not define (the page then
+ * acts as a browser without that API). Timers and frames run at full rate while the tab is
+ * hidden; a browser throttles both, so a repair tied to them fires sooner here, never later.
  *
  * HERMETIC: no socket (fetch is the stub above, and the vm has no require and no process), no
  * wall clock in any measurement, nothing written. About 6 s.
@@ -136,6 +157,10 @@ const END_MS = 25 * HOUR_MS; // a once-a-day re-read, or a day-old age gate, lan
 const HIDE = ["visibilitychange", "blur", "freeze", "pagehide", "offline"];
 const SHOW = ["online", "resume", "pageshow", "visibilitychange", "focus"];
 const ANNOUNCED = /static|generation|version|publication|boot/i;
+// The body keys every live payload announces the publication under (1 for v1, 2 for v2), and no others.
+const ANNOUNCED_KEYS = ["static_generation", "static_version", "generation", "version", "feed_version",
+  "publication", "boot_id"];
+const GENERATION = { v1: 1, v2: 2 };
 let now = 0; // fake ms since FROZEN_MS
 
 /* ==== OBSERVATION: tagged latitudes, and the watch on every Leaflet call ==== */
@@ -185,14 +210,15 @@ function fetchStub(input) {
   if (STATIC[u] && (down || log.length < REFUSALS.length)) {
     [status, body, answer] = [...(down ? WARMING : REFUSALS[log.length]), "refused"];
   } else if (STATIC[u]) [body, answer] = [structuredClone(PUB[`${u} ${ver}`]), ver];
-  else if (LIVE[u]) [status, body, answer] = down ? [...WARMING, "down"] : [200, serve(FIX[LIVE[u]](), ver), "live"];
+  else if (LIVE[u]) [status, body, answer] = down ? [...WARMING, "down"] : [200, { ...serve(FIX[LIVE[u]](), ver),
+    ...Object.fromEntries(ANNOUNCED_KEYS.map((k) => [k, GENERATION[ver]])) }, "live"];
   log.push({ t: now, answer });
   if (body === undefined) return new Promise(() => {}); // unclassified: never settles
   // The backend's own cache policy (ready static: max-age 3600; empty: no-cache; live: no-store), its clock.
   const head = { date: new Date(FIX.FROZEN_MS + now).toUTCString(), "cache-control": status !== 200 ? null
     : !STATIC[u] ? "no-store" : answer === "refused" ? "no-cache" : "public, max-age=3600" };
   const headers = { get: (name) => head[String(name).toLowerCase()]
-    ?? (ANNOUNCED.test(name) ? `${name} ${ver}` : null) };
+    ?? (ANNOUNCED.test(name) ? String(GENERATION[ver]) : null) };
   return Promise.resolve({ ok: status === 200, status, headers, json: async () => body });
 }
 
@@ -203,7 +229,9 @@ function standIn(onCall, onSet) {
     get: (_t, key) => (key === "then" ? undefined : key === Symbol.toPrimitive ? () => ""
       : key === Symbol.iterator ? function* () {} : key === "length" ? 0
         : own.has(key) ? own.get(key) : own.set(key, standIn(onCall)).get(key)),
-    set: (_t, key, value) => (onSet?.(key, value), own.set(key, value) !== null),
+    // A function stored on a stand-in is handed to it, as one passed in a call is.
+    set: (_t, key, value) => (onSet?.(key, value), typeof value === "function" && onCall?.([value]),
+      own.set(key, value) !== null),
     apply: (_t, _self, args) => { onCall?.(args); return standIn(onCall); },
     construct: (_t, args) => { onCall?.(args); return standIn(onCall); },
   });
@@ -219,14 +247,14 @@ const loc = new Proxy({ origin: ORIGIN, href: `${ORIGIN}/`, host: "localhost", p
   : navigate(`${String(key)} = ${value}`), true) });
 const onSet = (key, value) => (key === "location" ? value !== loc && navigate(`location = ${value}`)
   : typeof value === "function" && /^on/.test(String(key)) && listeners.push([String(key).slice(2), value]));
-function dispatch(types) {
+function dispatch(types, detail = {}) {
   Object.assign(doc, { hidden: !visible, visibilityState: visible ? "visible" : "hidden" });
   ctx.navigator.onLine = visible;
   for (const type of types) {
     const bare = typeof ctx[`on${type}`] === "function" ? [ctx[`on${type}`]] : [];
     for (const fn of [...listeners.filter(([t]) => t === type).map(([, f]) => f), ...bare]) {
       calls += 1;
-      try { fn.call(doc, { type, target: doc, persisted: true, preventDefault() {} }); }
+      try { fn.call(doc, { type, target: doc, persisted: true, preventDefault() {}, ...detail }); }
       catch (err) { note(`${type}: ${err}`); }
     }
   }
@@ -235,10 +263,11 @@ function dispatch(types) {
 /* ==== HARNESS 3: the clock ==== */
 const timers = new Map();
 let [nextId, page] = [0, 0]; // page: the current boot; a navigation drops the old page's timers
-const schedule = (every, owner) => (fn, ms = 0) =>
-  (timers.set(++nextId, { fn, page: owner, due: now + Math.max(0, ms), every: every ? Math.max(1, ms) : 0 }), nextId);
+const schedule = (every, owner) => (fn, ms = 0, ...args) => (timers.set(++nextId,
+  { fn: () => fn(...args), page: owner, due: now + Math.max(0, ms), every: every ? Math.max(1, ms) : 0 }), nextId);
 const drop = (id) => timers.delete(id);
 const pageErrors = [];
+const handed = []; // a function given to a guarded stand-in (see boot): its callback never runs here
 const note = (...a) => pageErrors.push(a.join(" "));
 process.on("unhandledRejection", (err) => note(`${now} ms: unhandled rejection: ${err && err.message}`));
 async function settle() {
@@ -268,21 +297,33 @@ const refreshS = Number(/content=["']?\s*(\d+)/i.exec(metaRefresh ?? "")?.[1] ??
 let doc, ctx, loaded, frames = 0;
 function boot() {
   [page, listeners, loaded, navigated] = [page + 1, [], [], false];
-  const [mine, timeout, interval] = [page, schedule(false, page), schedule(true, page)]; // this page's, and only its
+  const [mine, born, timeout, interval] = [page, now, schedule(false, page), schedule(true, page)]; // this page's only
+  const unmodelled = new Map(); // name -> a stand-in that records any function handed to it, at any depth
+  const guarded = (name) => unmodelled.get(name) ?? unmodelled.set(name, standIn((args) =>
+    args.some((a) => typeof a === "function") && handed.push(`${name} at ${now / 1000} s`))).get(name);
   doc = Object.assign(standIn(null, onSet), { location: loc, addEventListener: listen });
   const here = ctx = vm.createContext(Object.defineProperty({
-    document: doc, navigator: Object.assign(standIn(), { onLine: true }), L: standIn(watch),
+    document: doc, navigator: Object.assign(guarded("navigator"), { onLine: true }),
+    L: Object.assign(standIn(watch), { Util: guarded("L.Util"), DomEvent: guarded("L.DomEvent") }), // unused at 1e3e73d
     history: Object.assign(standIn(), { go: (n = 0) => !n && navigate("history.go(0)") }),
     fetch: (input) => (mine === page ? fetchStub(input) : new Promise(() => {})), // a page navigated away asks nothing
     setTimeout: timeout, setInterval: interval, clearTimeout: drop, clearInterval: drop, cancelAnimationFrame: drop,
     requestAnimationFrame: (fn) => timeout(() => { frames += 1; fn(now); }, FRAME_MS),
+    requestIdleCallback: (fn) => timeout(() => fn({ didTimeout: false, timeRemaining: () => 50 })),
+    cancelIdleCallback: drop, queueMicrotask: (fn) => void Promise.resolve().then(fn),
+    scheduler: { postTask: (fn, { delay = 0 } = {}) => new Promise((ok) => timeout(() => ok(fn()), delay)),
+      yield: () => new Promise((ok) => timeout(ok)) },
+    postMessage: (data) => timeout(() => dispatch(["message"], { data, origin: ORIGIN, source: here.window })),
     addEventListener: listen, AbortSignal: { timeout: () => ({}) }, URL, URLSearchParams,
-    performance: { now: () => now }, console: { log() {}, info() {}, debug() {}, warn: note, error: note },
+    performance: { now: () => now - born, timeOrigin: FIX.FROZEN_MS + born },
+    console: { log() {}, info() {}, debug() {}, warn: note, error: note },
     __clock: () => FIX.FROZEN_MS + now,
   }, "location", { get: () => loc, set: (u) => navigate(`location = ${u}`) }));
-  // window is the global, as in a browser: what the page reads from it is what its scripts see bare.
-  here.window = here.self = new Proxy(standIn(null, onSet),
-    { get: (t, k) => (typeof k === "string" && k in here ? here[k] : t[k]) });
+  // window (and self, top, parent, frames, globalThis, document.defaultView) is the global, as in a browser.
+  // A member this script does not model is a guarded stand-in, so the page boots but a callback cannot hide.
+  const realm = vm.runInContext("this", here); // the context's own global: the page's names and the built-ins
+  here.window = here.self = here.top = here.parent = here.frames = here.globalThis = doc.defaultView = new Proxy(
+    realm, { get: (t, k) => (typeof k !== "string" || k in t ? t[k] : guarded(`window.${k}`)) });
   vm.runInContext("Date = class extends Date { constructor(...a) { super(...(a.length ? a : [__clock()])); }"
     + " static now() { return __clock(); } };", ctx);
   dispatch([]);
@@ -345,7 +386,8 @@ for (const [u, log] of live) {
   console.log(`  ${u.padEnd(18)} ${String(log.length).padStart(5)}  ${log.length ? log.at(-1).t / 1000 : "never"}`);
 }
 console.log(`  live polls answered 503 during the restart: ${down}; animation frames run: ${frames}`);
-console.log(`  tab events delivered to page listeners (hidden at 1 h, back at 13 h to 25 h hourly): ${calls}`);
+console.log(`  events delivered to page listeners (tab hidden at 1 h, back at 13 h to 25 h hourly; messages the page`
+  + ` posted itself): ${calls}`);
 console.log(`  navigations: ${navigations.length} ${JSON.stringify(navigations.slice(0, 3))}; page boots: ${page}`);
 
 console.log("\nSETUP");
@@ -353,6 +395,9 @@ check("every first-party script index.html loads ran", loaded.length === scripts
   `${loaded.length} of ${scripts.length}`, "all of them (11 at 1e3e73d)");
 check("the page raised no error and logged no warning (an unmodelled global must not hide a re-read)",
   pageErrors.length === 0, `${pageErrors.length}${pageErrors.length ? `, first: ${pageErrors[0]}` : ""}`, "0");
+check("no function was handed to a window, self, navigator, L.Util or L.DomEvent member this script does not model"
+  + " (its callback would never run, so a deferred re-read would hide)", handed.length === 0,
+  `${handed.length}${handed.length ? `, first: ${handed[0]}` : ""}`, "0 (a new deferral API needs this script re-read)");
 check("every tagged latitude names one endpoint and one version", collisions.length === 0 && tags.size > 0,
   `${tags.size} tagged latitudes, ${collisions.length} collisions`, "0 collisions");
 check("no request left the page's origin (nothing naming njtransit or raildata)", strays.length === 0,

@@ -74,9 +74,22 @@ FOUR CHECK GROUPS, each over the real static_shared staged path:
          with ordinary headroom sits below it. The row states 512 MiB as the bound.
   ARM 3  No member-count or expanded-size limit at validation. A valid subway archive
          plus 70,000 empty members (past the 65,535 entries of a classic zip, so the
-         archive is zip64), and a valid subway archive with one member declaring
-         2 GiB expanded from about 2 MB on the wire. Measured: both promoted, the
-         member count and the declared expanded size.
+         archive is zip64), and a valid subway archive whose stop_times.txt declares
+         2 GiB expanded from about 2 MB on the wire: its usual header, then 2 GiB of
+         blank lines, so a CSV reader sees the same empty table the small publications
+         carry. The expansion sits on a member the subway code reads, never on an
+         extra one nothing reads, so that a ceiling over the members the code reads
+         turns 3.3 red: the validator requires stop_times.txt (3.0 measures that by
+         rejection) but checks it for presence only, and the routes-per-station loader
+         inflates it whole. Measured: both archives promoted, the member count, and
+         stop_times.txt's declared size and ratio.
+         Two limits of reach. A ceiling only on what validation itself parses
+         (stops.txt and transfers.txt) leaves 3.3 green: it bounds the validator's
+         work, while stop_times.txt is still promoted at 2 GiB, which is what 3.3
+         records; those members are not padded because parsing that much would add
+         seconds to every run. And a repair that made validation PARSE stop_times.txt
+         would spend minutes on its blank lines before 3.3 reports, which is the
+         unbounded work this finding describes, not a harness fault.
   H      Hermetic and harness checks: the generated-archive builder reads back intact
          at small scale, and no socket was attempted.
 
@@ -111,8 +124,9 @@ WHAT IS INJECTED, and this is the whole of it:
        whose state starts "loading", as main.lifespan sets it.
     5. Archives built here: small ones with zipfile, the 512 MiB and 2 GiB ones by a
        short zip writer below that generates them as they are served (stored zeros,
-       and one MiB of zeros deflated once and repeated). H.0 proves that writer's
-       output reads back intact with zipfile.testzip.
+       and one MiB of blank lines deflated once and repeated after a table's header).
+       H.0 proves that writer's output reads back intact with zipfile.testzip, and
+       that a padded table reads as the unpadded one.
 
 HERMETIC. _hermetic.contain() before the first backend import and verify() after
 it; no credentials; an audit hook refuses any socket connect or name resolution,
@@ -181,21 +195,25 @@ sys.addaudithook(_refuse_sockets)
 
 MiB = 1 << 20
 _ZERO_MIB = bytes(MiB)
-_ZERO_CRC = [0]  # _ZERO_CRC[k] is the CRC-32 of k MiB of zeros, extended on demand
+_BLANK_LINES_MIB = b"\n" * MiB  # one MiB of empty CSV lines
 
 
-def zeros_crc(mib: int) -> int:
-    while len(_ZERO_CRC) <= mib:
-        _ZERO_CRC.append(zlib.crc32(_ZERO_MIB, _ZERO_CRC[-1]))
-    return _ZERO_CRC[mib]
+def repeated_crc(block: bytes, count: int, crc: int = 0) -> int:
+    """The CRC-32 of `count` copies of `block`, continuing from `crc`."""
+    for _ in range(count):
+        crc = zlib.crc32(block, crc)
+    return crc
 
 
-# One MiB of zeros as raw deflate, ending on a full flush so the block is
-# self-contained and can be repeated; _DEFLATE_END is the empty final block.
-_compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
-_DEFLATED_ZERO_MIB = _compressor.compress(_ZERO_MIB) + _compressor.flush(zlib.Z_FULL_FLUSH)
-_DEFLATE_END = zlib.compressobj(9, zlib.DEFLATED, -15).flush(zlib.Z_FINISH)
-del _compressor
+def deflated_block(data: bytes) -> bytes:
+    """`data` as raw deflate from an empty window, ending on a full flush, so the
+    output is self-contained: it can follow another such block or itself."""
+    comp = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return comp.compress(data) + comp.flush(zlib.Z_FULL_FLUSH)
+
+
+_DEFLATED_BLANK_LINES_MIB = deflated_block(_BLANK_LINES_MIB)  # about 1,010:1
+_DEFLATE_END = zlib.compressobj(9, zlib.DEFLATED, -15).flush(zlib.Z_FINISH)  # empty final block
 
 _DOS_DATE = ((2026 - 1980) << 9) | (10 << 5) | 12  # 2026-10-12, 00:00:00
 
@@ -216,14 +234,21 @@ def member_text(name: str, text: str) -> _Member:
                    lambda: iter((body,)))
 
 
-def member_zeros(name: str, mib: int, *, deflate: bool) -> _Member:
-    """`mib` MiB of zeros: stored (wire size == expanded size) or deflated (~1000:1)."""
-    if deflate:
-        body = _DEFLATED_ZERO_MIB * mib + _DEFLATE_END
-        return _Member(name, zipfile.ZIP_DEFLATED, zeros_crc(mib), len(body), mib * MiB,
-                       lambda: iter((body,)))
-    return _Member(name, zipfile.ZIP_STORED, zeros_crc(mib), mib * MiB, mib * MiB,
+def member_stored_zeros(name: str, mib: int) -> _Member:
+    """`mib` MiB of zeros, stored: wire size == expanded size."""
+    return _Member(name, zipfile.ZIP_STORED, repeated_crc(_ZERO_MIB, mib), mib * MiB, mib * MiB,
                    lambda: (_ZERO_MIB for _ in range(mib)))
+
+
+def member_padded_table(name: str, text: str, mib: int) -> _Member:
+    """A CSV table `text` followed by `mib` MiB of blank lines, deflated at about
+    1,010:1. A CSV reader skips blank lines, so to any reader this is the same table
+    as `text` alone; only its declared expanded size differs."""
+    head = text.encode("utf-8")
+    body = deflated_block(head) + _DEFLATED_BLANK_LINES_MIB * mib + _DEFLATE_END
+    crc = repeated_crc(_BLANK_LINES_MIB, mib, zlib.crc32(head))
+    return _Member(name, zipfile.ZIP_DEFLATED, crc, len(body), len(head) + mib * MiB,
+                   lambda: iter((body,)))
 
 
 class ZipStream:
@@ -459,9 +484,17 @@ def built_archive(tag: str, *, extra_members: int = 0, heavy_transfers: int = 0)
     return Publication(data=buf.getvalue())
 
 
-def streamed_archive(tag: str, extra: _Member) -> Publication:
-    members = [member_text(name, text) for name, text in subway_members(tag).items()]
-    return Publication(stream=ZipStream(members + [extra]))
+def streamed_archive(tag: str, *, pad_mib: dict[str, int] | None = None,
+                     extra: tuple[_Member, ...] = ()) -> Publication:
+    """The subway members (each named in `pad_mib` followed by that many MiB of blank
+    lines), then the `extra` members, generated as served."""
+    pad_mib = pad_mib or {}
+    members = [
+        member_padded_table(name, text, pad_mib[name]) if name in pad_mib
+        else member_text(name, text)
+        for name, text in subway_members(tag).items()
+    ]
+    return Publication(stream=ZipStream(members + list(extra)))
 
 
 def fresh_start() -> None:
@@ -514,18 +547,26 @@ def builder_selfcheck() -> None:
     print("-" * 78)
     print("H.0  the generated-archive writer reads back intact")
     print("-" * 78)
-    stream = ZipStream(
-        [member_text(n, t) for n, t in subway_members("selfcheck").items()]
-        + [member_zeros("stored.bin", 3, deflate=False),
-           member_zeros("deflated.bin", 5, deflate=True)]
-    )
-    data = b"".join(stream.chunks())
-    path = _TMP / "selfcheck.zip"
-    path.write_bytes(data)
-    with zipfile.ZipFile(path) as zf:
+    plain = subway_members("selfcheck")
+    pub = streamed_archive("selfcheck", pad_mib={EXPANDED_MEMBER: 2},
+                           extra=(member_stored_zeros("stored.bin", 3),))
+    data = b"".join(pub.stream.chunks())
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
         bad = zf.testzip()
+        padded = zf.read(EXPANDED_MEMBER)
         contents_ok = (zf.read("stored.bin") == bytes(3 * MiB)
-                       and zf.read("deflated.bin") == bytes(5 * MiB))
+                       and padded == plain[EXPANDED_MEMBER].encode() + b"\n" * (2 * MiB))
+    # The padded table, read the way a CSV loader reads it: the same header as the
+    # unpadded one, and the same (zero) rows.
+    padded_rows = csv.DictReader(io.StringIO(padded.decode("utf-8-sig")))
+    plain_rows = csv.DictReader(io.StringIO(plain[EXPANDED_MEMBER]))
+    as_csv = (padded_rows.fieldnames, list(padded_rows))
+    same_table = as_csv == (plain_rows.fieldnames, list(plain_rows))
+    # The writer's own encoding of the subway members, unpadded, through the real
+    # validator: proves the generated bytes are a publication it accepts. Unpadded so
+    # that a size or ratio ceiling (a repair) fails 3.3, not this harness check.
+    path = _TMP / "selfcheck.zip"
+    path.write_bytes(b"".join(streamed_archive("selfcheck").stream.chunks()))
     verdict = "accepted"
     try:
         static_shared.validate_archive(path, static_data.validate_subway_archive)
@@ -533,12 +574,16 @@ def builder_selfcheck() -> None:
         verdict = f"REJECTED ({exc})"
     path.unlink()
     check(
-        "H.0 a generated archive (stored and repeated-deflate zeros) passes zipfile.testzip, "
-        "reads back exactly, matches its own central directory and passes the real validator",
-        bad is None and contents_ok and len(data) == stream.size
-        and central_directory_of_bytes(data) == stream.table() and verdict == "accepted",
-        f"testzip={bad!r}, contents {'exact' if contents_ok else 'WRONG'}, "
-        f"{len(data):,} of {stream.size:,} bytes, validator {verdict}",
+        f"H.0 a generated archive (a {EXPANDED_MEMBER} padded with deflated blank lines, a "
+        "stored member of zeros) passes zipfile.testzip, reads back exactly, matches its own "
+        "central directory and reads as the unpadded table; unpadded, the real validator "
+        "accepts the writer's output",
+        bad is None and contents_ok and same_table and len(data) == pub.size
+        and central_directory_of_bytes(data) == pub.stream.table() and verdict == "accepted",
+        f"testzip={bad!r}, contents {'exact' if contents_ok else 'WRONG'}, padded "
+        f"{EXPANDED_MEMBER} as CSV: {len(as_csv[1])} rows under {as_csv[0]} "
+        f"({'same' if same_table else 'DIFFERENT'} as unpadded), {len(data):,} of "
+        f"{pub.size:,} bytes; unpadded, validator {verdict}",
         "not stated (harness)",
     )
     print()
@@ -905,7 +950,7 @@ async def arm2() -> dict:
     print("-" * 78)
     print(f"ARM 2  no byte ceiling on a transfer ({TRANSFER_MIB} MiB stored member)")
     print("-" * 78)
-    pub = streamed_archive("large", member_zeros("padding.bin", TRANSFER_MIB, deflate=False))
+    pub = streamed_archive("large", extra=(member_stored_zeros("padding.bin", TRANSFER_MIB),))
     fresh_start()
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(CACHE.parent).free
@@ -963,6 +1008,8 @@ async def arm2() -> dict:
 # ---------------------------------------------------------------------------
 
 EXTRA_MEMBERS = 70_000
+# The member arm 3's expansion sits on; the docstring's ARM 3 says why this one.
+EXPANDED_MEMBER = "stop_times.txt"
 EXPANDED_MIB = 2048
 
 
@@ -981,6 +1028,31 @@ async def arm3() -> dict:
     print("-" * 78)
     print("ARM 3  no member-count or expanded-size limit at validation")
     print("-" * 78)
+    # 3.0: the member that carries the expansion is one the real validator requires,
+    # so a ceiling over the required members reaches it. Measured by rejection, not
+    # read from a list: the small publication without it must not validate.
+    verdicts = {}
+    for label, drop in (("complete", None), (f"without {EXPANDED_MEMBER}", EXPANDED_MEMBER)):
+        members = {n: t for n, t in subway_members("required").items() if n != drop}
+        path = _TMP / "required.zip"
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for name, text in members.items():
+                zf.writestr(name, text)
+        try:
+            static_shared.validate_archive(path, static_data.validate_subway_archive)
+            verdicts[label] = "accepted"
+        except static_shared.StaticValidationError as exc:
+            verdicts[label] = f"REJECTED ({exc})"
+        path.unlink()
+    check(
+        f"3.0 {EXPANDED_MEMBER} is a member the real subway validator requires: the small "
+        "publication validates, and the same publication without it does not",
+        verdicts["complete"] == "accepted"
+        and verdicts[f"without {EXPANDED_MEMBER}"].startswith("REJECTED"),
+        "; ".join(f"{k}: {v}" for k, v in verdicts.items()),
+        "not stated (precondition for 3.3)",
+    )
+
     many = built_archive("many", extra_members=EXTRA_MEMBERS)
     with zipfile.ZipFile(io.BytesIO(many.data)) as zf:
         offered = len(zf.infolist())
@@ -1003,14 +1075,15 @@ async def arm3() -> dict:
         "archive validation lacks member-count ... limits",
     )
 
-    wide = streamed_archive("expanded", member_zeros("expanded.bin", EXPANDED_MIB, deflate=True))
-    declared = sum(m.usize for m in wide.stream.members)
+    wide = streamed_archive("expanded", pad_mib={EXPANDED_MEMBER: EXPANDED_MIB})
+    member = next(m for m in wide.stream.members if m.name.decode() == EXPANDED_MEMBER)
+    declared, compressed = member.usize, member.csize
     error, status = await load_and_report(wide)
-    table = central_directory(CACHE) or []
-    cache_declares = sum(row[2] for row in table)
+    row = {r[0]: r for r in central_directory(CACHE) or []}.get(EXPANDED_MEMBER)
+    cache_declares, cache_compressed = (row[2], row[3]) if row else (0, 0)
     check(
-        f"3.3 an archive declaring {declared:,} expanded bytes in {wide.size:,} passes the "
-        "real subway validator and is promoted",
+        f"3.3 an archive whose {EXPANDED_MEMBER} declares {declared:,} expanded bytes, in "
+        f"{wide.size:,} bytes on the wire, passes the real subway validator and is promoted",
         error is None
         and wide.is_cache(CACHE)
         and status.get("last_promoted_at") is not None
@@ -1020,15 +1093,16 @@ async def arm3() -> dict:
         "archive validation lacks ... uncompressed-size limits",
     )
     check(
-        "3.4 the promoted cache declares the whole expanded size",
-        cache_declares == declared,
-        f"{cache_declares:,} bytes declared by the cache's central directory "
-        f"({cache_declares / max(wide.size, 1):,.0f}:1 against the archive)",
+        f"3.4 the promoted cache's {EXPANDED_MEMBER} declares the whole expanded size",
+        cache_declares == declared and cache_compressed == compressed,
+        f"{cache_declares:,} bytes declared for {cache_compressed:,} compressed "
+        f"({cache_declares / max(cache_compressed, 1):,.0f}:1)",
         "archive validation lacks ... uncompressed-size limits",
     )
     fresh_start()
     print()
-    return {"members": offered, "expanded": declared, "wide_size": wide.size}
+    return {"members": offered, "expanded": declared, "ratio": declared / compressed,
+            "wide_size": wide.size}
 
 
 # ---------------------------------------------------------------------------
@@ -1072,8 +1146,10 @@ async def amain() -> int:
         f"{c['deadline_ms']:.0f} ms attempt deadline held its event loop {c['max_gap_ms']:.0f} ms on the real "
         "validation and promoted before the deadline was delivered; the real transfer and "
         f"subway validator accepted and promoted a {two['size']:,}-byte publication, an archive "
-        f"of {three['members']:,} members and one declaring {three['expanded']:,} expanded "
-        "bytes, so no byte, member-count or expanded-size ceiling exists at or below those sizes."
+        f"of {three['members']:,} members and one whose required {EXPANDED_MEMBER} declares "
+        f"{three['expanded']:,} expanded bytes ({three['ratio']:,.0f}:1), so no byte or "
+        f"member-count ceiling, and no expanded-size ceiling that reaches {EXPANDED_MEMBER}, "
+        "exists at or below those sizes."
     )
     return 0
 

@@ -62,7 +62,13 @@ the first backend import, so a module that binds a name at import (from asyncio
 import sleep, from time import time) binds the injected one.
     1. DATA_DIR points at a fresh temp directory and SUBWAY_GTFS_URL at
        http://127.0.0.1:9 (nothing listens), both before the first backend import,
-       through the env_seams C6 seams.
+       through the env_seams C6 seams. The two seams that set the retry schedule are
+       NOT set, and the record is taken at their shipped values or not at all: after
+       the backend import, STATIC_RETRY_S and STATIC_RETRY_SCHEDULE_S, as env_seams
+       parses them from the environment and from the .env its load_dotenv reads, are
+       compared with env_seams' own registry defaults, and an override stops the run
+       with a message naming the variable (exit 1, no DISPOSITION line) instead of a
+       red that blames the finding.
     2. THE SOCKET LAYER. httpx.AsyncHTTPTransport.handle_async_request (and its
        sync twin, httpx.HTTPTransport.handle_request), the point where an httpx
        client hands a request to its connection pool, is replaced by a fake that
@@ -77,7 +83,25 @@ import sleep, from time import time) binds the injected one.
        in this backend reaches a socket except through an httpx client, so every
        staged download, however it is wired, arrives here.
     3. A VIRTUAL CLOCK. time.time, time.monotonic and time.perf_counter (and their
-       _ns forms) read the real clock plus an offset that only grows. The offset
+       _ns forms) read the real clock plus an offset that only grows. So do the
+       clocks that bypass time.time and read the C-level system clock:
+       datetime.datetime.now() and utcnow(), the argument-less time.gmtime(),
+       localtime(), ctime(), asctime() and strftime(fmt), and
+       time.clock_gettime(_ns) on the wall and monotonic clocks. date.today() and
+       datetime.today(), which CPython 3.12 computes from time.time, are set too,
+       so that does not rest on the C module. (Before the adversarial review now()
+       and utcnow() were not moved, and a cache-discard grace timed by
+       datetime.now() left this script green.) The datetime methods are moved on
+       the REAL classes, by writing into the built-in type's own namespace and
+       calling PyType_Modified, not by rebinding a subclass over them: a stand-in
+       class changes what isinstance and type() answer, and the one tried here
+       broke the backend's import (a metaclass conflict in pydantic.v1). No class
+       identity changes (measured once while writing this: the backend's own 1763
+       tests pass unchanged with the injection installed), and a RUN check fails
+       the run if any of these clocks does not read the virtual time. Timers on
+       the event loop follow the offset too: loop.call_later, and an asyncio.sleep
+       in any other task, are scheduled on loop.time(), which reads
+       time.monotonic. The offset
        advances by exactly the backoff each failed attempt asks for (item 4), and
        by an explicit jump where an arm says time passes (a restart a month later,
        the run-up to MAX_AGE_DAYS). The file system stamps writes with the REAL
@@ -85,7 +109,13 @@ import sleep, from time import time) binds the injected one.
        inside that attempt's real-time window is moved onto the virtual clock (an
        mtime production code set explicitly, to a computed time, is outside the
        window and left as set). random is seeded, so the warmup's backoff jitter,
-       and with it every virtual time printed, repeats run to run.
+       and with it every virtual time printed, repeats run to run, give or take the
+       second of real time the run itself adds to each.
+       NOT MOVED: a clock read inside C code (no backend module is C), the CPU-time
+       clocks, waits that block a thread in real time (threading.Timer, a threading
+       wait with a timeout), and file mtimes outside DATA_DIR. A repair timed by one
+       of those would not be seen to fire, and would leave this script green
+       (measured: a discard on threading.Timer(3600) does).
     4. asyncio.sleep (as asyncio.sleep and as asyncio.tasks.sleep) is wrapped for
        the warmup task ONLY, and only for a positive delay (a zero-delay checkpoint
        is not a backoff). The warmup sleeps between attempts; the wrapper turns
@@ -152,7 +182,11 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import calendar
 import csv
+import ctypes
+import datetime
+import gc
 import hashlib
 import io
 import logging
@@ -163,6 +197,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -218,6 +253,78 @@ time.monotonic_ns = lambda: _REAL_MONOTONIC_NS() + int(Clock.offset * 1e9)
 time.perf_counter = lambda: _REAL_PERF() + Clock.offset
 time.perf_counter_ns = lambda: _REAL_PERF_NS() + int(Clock.offset * 1e9)
 random.seed(20261012)  # the warmup's backoff jitter, so virtual times repeat
+
+
+# The calendar clocks (docstring item 3). datetime.datetime.now() and utcnow() read
+# the C-level system clock, not time.time, so the lines above never reach them: an
+# adversarial review timed a cache-discard grace on datetime.now() and this script
+# stayed green while the same timer on time.time() turned it red. They are moved ON
+# THE REAL CLASSES, not by rebinding a subclass over them on the datetime module. A
+# plain stand-in subclass changes what isinstance, type() and pydantic's
+# `obj is datetime.datetime` answer for every datetime made where the real class is
+# still bound (pydantic-core makes them in C); one given a metaclass to answer as the
+# real class broke the backend's own import when tried here (pydantic.v1 derives a
+# class from date with a metaclass of its own: a metaclass conflict). So the classes,
+# and every check made against them, stay what they are; only these clock methods
+# read Clock. The argument-less calendar functions of the time module and
+# clock_gettime on the wall and monotonic clocks read the same C clock and move with
+# them. A run where any of this failed to take is red, by the RUN check at the end.
+def install_virtual_calendar(clock) -> None:
+    """Put the calendar clocks on `clock` (its now() and offset). Once, before any
+    backend import, so a module that binds a name at import binds the moved one."""
+
+    def set_on_builtin_type(cls: type, name: str, value: object) -> None:
+        # A built-in type refuses setattr. Its namespace is the one object its
+        # __dict__ proxy refers to: write there, then tell the interpreter that its
+        # attribute caches for the type, and for every subclass, are stale.
+        (namespace,) = gc.get_referents(cls.__dict__)
+        namespace[name] = value
+        ctypes.pythonapi.PyType_Modified.argtypes = [ctypes.py_object]
+        ctypes.pythonapi.PyType_Modified.restype = None
+        ctypes.pythonapi.PyType_Modified(cls)
+
+    def today(cls):  # date.today, and datetime.today through inheritance
+        return cls.fromtimestamp(clock.now())
+
+    def now(cls, tz=None):
+        return cls.fromtimestamp(clock.now(), tz)
+
+    def utcnow(cls):  # with the real one's deprecation warning, word for word
+        warnings.warn(
+            "datetime.datetime.utcnow() is deprecated and scheduled for removal in a "
+            "future version. Use timezone-aware objects to represent datetimes in UTC: "
+            "datetime.datetime.now(datetime.UTC).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.fromtimestamp(clock.now(), datetime.timezone.utc).replace(tzinfo=None)
+
+    set_on_builtin_type(datetime.date, "today", classmethod(today))
+    set_on_builtin_type(datetime.datetime, "now", classmethod(now))
+    set_on_builtin_type(datetime.datetime, "utcnow", classmethod(utcnow))
+
+    gmtime, localtime, ctime = time.gmtime, time.localtime, time.ctime
+    asctime, strftime = time.asctime, time.strftime
+    time.gmtime = lambda secs=None: gmtime(clock.now() if secs is None else secs)
+    time.localtime = lambda secs=None: localtime(clock.now() if secs is None else secs)
+    time.ctime = lambda secs=None: ctime(clock.now() if secs is None else secs)
+    time.asctime = lambda t=None: asctime(localtime(clock.now()) if t is None else t)
+    time.strftime = lambda fmt, t=None: strftime(fmt, localtime(clock.now()) if t is None else t)
+    moved = {
+        getattr(time, name)
+        for name in ("CLOCK_REALTIME", "CLOCK_MONOTONIC", "CLOCK_MONOTONIC_RAW",
+                     "CLOCK_BOOTTIME", "CLOCK_TAI", "CLOCK_UPTIME", "CLOCK_UPTIME_RAW")
+        if hasattr(time, name)
+    }
+    if hasattr(time, "clock_gettime"):
+        gettime, gettime_ns = time.clock_gettime, time.clock_gettime_ns
+        time.clock_gettime = lambda clk: gettime(clk) + (clock.offset if clk in moved else 0.0)
+        time.clock_gettime_ns = lambda clk: gettime_ns(clk) + (
+            int(clock.offset * 1e9) if clk in moved else 0
+        )
+
+
+install_virtual_calendar(Clock)
 
 
 class Attempt:
@@ -357,6 +464,7 @@ import _hermetic  # noqa: E402
 _hermetic.contain()
 sys.path.insert(0, str(BACKEND))
 
+import env_seams  # noqa: E402
 import main  # noqa: E402
 import static_data  # noqa: E402
 import static_shared  # noqa: E402
@@ -366,6 +474,39 @@ _hermetic.verify()
 # Nothing here drives NJ Transit or Bus Time, but blank anything that could
 # authenticate (blanked, not popped: see _hermetic.blank for why a pop is undone).
 _hermetic.blank("NJT_USERNAME", "NJT_PASSWORD", "BUS_TIME_API_KEY")
+
+
+# The record is measured at the shipped retry schedule. Every count below is walked
+# off the warmup's backoff, which these two env seams set, and env_seams' load_dotenv
+# fills them from a developer's .env: STATIC_RETRY_S=10 there turned this script red
+# with a message that blamed the finding (399 further attempts in the window, the
+# bound never reached). So each is compared with env_seams' own registry default,
+# through env_seams' own parser (the value the backend read at import, wherever it
+# keeps it), and a difference stops the run naming the variable instead.
+TIMING_SEAMS = ("STATIC_RETRY_S", "STATIC_RETRY_SCHEDULE_S")
+
+
+def timing_overrides() -> list[str]:
+    found = []
+    for name in TIMING_SEAMS:
+        if name not in env_seams.DEFAULTS or os.environ.get(name) is None:
+            continue
+        default = env_seams.DEFAULTS[name]
+        parse = env_seams.seconds_tuple if isinstance(default, tuple) else env_seams.seconds
+        if parse(name, default) != default:
+            found.append(f"{name}={os.environ[name]!r} (shipped default {default!r})")
+    return found
+
+
+_OVERRIDDEN = timing_overrides()
+if _OVERRIDDEN:
+    raise SystemExit(
+        "A02 NOT RUN: this record is measured at the shipped retry schedule, and the "
+        f"environment (or a .env file, which env_seams loads) overrides "
+        f"{'; '.join(_OVERRIDDEN)}. Every attempt count and virtual time it prints is "
+        "walked off that schedule, so a run under the override says nothing about the "
+        "finding. Unset it and run again."
+    )
 
 
 # backend/main.py calls logging.basicConfig at import. Capture instead of printing so
@@ -1133,6 +1274,11 @@ async def amain() -> int:
     print(f"upstream URL : {static_data.SUBWAY_GTFS_URL} (nothing listens; fake socket layer)")
     print(f"fixture      : {FIXTURE.relative_to(REPO)} (stops.txt, transfers.txt)")
     print(f"bad archive  : trips.txt + one 0xFF; good {digest(GOOD)}, bad {digest(BAD)}")
+    print(
+        "retry seams  : "
+        + ", ".join(f"{n}={env_seams.DEFAULTS.get(n, '(not a seam)')}" for n in TIMING_SEAMS)
+        + " (the shipped defaults; no override in the environment or .env)"
+    )
     transport = httpx.ASGITransport(app=main.app)
     try:
         async with httpx.AsyncClient(transport=transport, base_url="http://a02.local") as client:
@@ -1158,6 +1304,35 @@ async def amain() -> int:
         not Upstream.refused,
         Upstream.refused or "none",
         "n/a (containment)",
+    )
+    # The injection, measured where it is now about two months ahead of real time: each
+    # calendar clock a repair could be timed by reads the virtual clock. A Python on
+    # which a rebinding stopped taking would fail here, not leave such a repair unseen.
+    now = Clock.now()
+    utc = datetime.timezone.utc
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # utcnow's, asked for here
+        utcnow = datetime.datetime.utcnow()
+    readings = {
+        "datetime.now(utc)": datetime.datetime.now(utc).timestamp(),
+        "datetime.now()": datetime.datetime.now().timestamp(),
+        "datetime.utcnow()": utcnow.replace(tzinfo=utc).timestamp(),
+        "datetime.today()": datetime.datetime.today().timestamp(),
+        "time.gmtime()": calendar.timegm(time.gmtime()),
+        "time.localtime()": time.mktime(time.localtime()),
+    }
+    if hasattr(time, "clock_gettime"):
+        readings["clock_gettime(REALTIME)"] = time.clock_gettime(time.CLOCK_REALTIME)
+    lag = {name: round(abs(value - now)) for name, value in readings.items()}
+    lag["date.today()"] = 86400 * abs(
+        (datetime.date.today() - datetime.date.fromtimestamp(Clock.now())).days
+    )
+    check(
+        f"RUN every calendar clock reads the virtual time ({Clock.offset / 86400:.0f} days "
+        "ahead of the real clock by now)",
+        Clock.offset > 86400 and all(v <= 2 for v in lag.values()),
+        f"seconds from the virtual clock: {lag}",
+        "n/a (injection)",
     )
     print()
     if FAILED:

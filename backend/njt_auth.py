@@ -50,6 +50,15 @@ other failure takes bounded exponential backoff because its length is unknown.
 The caller's schedule still decides when to ASK. This decides how often asking
 can reach NJ Transit, which is the only one of the two that a rate limit counts.
 
+AND SINCE AUDIT 6 (A01), TWO MORE THINGS COUNT AS FAILING. A mint that returns a
+token NJ Transit then refuses is a failed mint for the budget: njt_post tells the
+cache (TokenCache.reject_fresh), the token is dropped, and the same ladder starts
+from MINT_REJECTED_COOLDOWN_BASE_S, because before that a mint that worked ended
+every hold and each poll bought another refused token. And the ladder only spaces
+attempts, so one process also stops itself at DAILY_MINT_ALLOWANCE getToken POSTs
+per Eastern day and holds to the next Eastern midnight, which is what keeps any
+fault inside the process from reaching the monitor's share of the ten.
+
 CONSUMED BY STATIC ONLY IN 15a. njt_static fetches its archive through njt_post,
 so the token path is exercised from birth rather than landing untested alongside
 the realtime work that will need it in 15b.
@@ -125,6 +134,7 @@ _PLACEHOLDERS = {
 # process has no idea what the account's other consumers spent today. This
 # constant exists so the arithmetic below has a name to hang on and so every
 # "conserve mints" comment in this repo points at one number, not to gate anything.
+# What one PROCESS may spend is gated, by DAILY_MINT_ALLOWANCE below (Audit 6, A01).
 #
 # WHERE THE TEN GO ON A QUIET DAY, and six are committed before anything unusual
 # happens at all:
@@ -137,6 +147,15 @@ _PLACEHOLDERS = {
 #   ---
 #     6   committed. Four spare.
 #
+# AND WHERE THEY CAN GO AT WORST, since the allowance: production's share is a
+# ceiling of four per process per Eastern day, not a forecast of two, so the
+# monitor's four and two more are out of any one process's reach:
+#
+#     4   the contract monitor, as above
+#     4   production, AT MOST (DAILY_MINT_ALLOWANCE)
+#   ---
+#     8   the most the two can spend. Two left for an operator.
+#
 # What spends the four is ordinary work rather than an incident: a deploy (a cold
 # TokenCache mints on the first NJT request), a manual workflow_dispatch of the
 # monitor (one more run, one more mint), a fixture pull (gen_njt_fixture.py and
@@ -145,7 +164,9 @@ _PLACEHOLDERS = {
 # in PRODUCTION until Eastern midnight, because production and the monitor share
 # the account. That is why every mint in this repo is conserved structurally rather
 # than by convention, and why a loop that re-mints on failure is the one bug this
-# module is built to make unwritable.
+# module is built to make unwritable. The allowance bounds what one process spends
+# on its own failures; it cannot bound a deploy, which is a fresh process with a
+# fresh count, nor a fixture pull or a monitor run, which are processes of their own.
 DAILY_MINT_LIMIT = 10
 
 # THE ALLOWANCE: HOW MANY OF THE TEN THIS PROCESS MAY SPEND (Audit 6, A01). Counted in
@@ -284,13 +305,14 @@ MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 60
 # inside the same six-hourly contract-monitor cycle, so an operator reading the
 # next run sees a healthy deployment rather than the tail of a fixed problem.
 #
-# WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to bound. A day
+# WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to space. A day
 # of unbroken non-quota failure walks 60, 120, 240, 480, 960, 1800, 1800, ... which
-# is 52 getToken POSTs in 24 hours against 5760 before this. It is still more than
-# DAILY_MINT_LIMIT, and that is honest rather than a gap: the moment those attempts
-# do spend the account's ten, NJ Transit answers with the quota refusal instead,
-# and the arm below latches until Eastern midnight at ONE attempt for the rest of
-# the day. The ladder cannot outrun its own consequence.
+# is 52 getToken POSTs in 24 hours against 5760 before F05, and that is still more
+# than DAILY_MINT_LIMIT: the ladder spaces attempts and cannot bound them, and until
+# Audit 6 the first thing that stopped it was NJ Transit's own quota refusal, after
+# the monitor's share was gone. DAILY_MINT_ALLOWANCE now stops it first, at four in
+# an Eastern day (0, 60, 180 and 420 s, then held to midnight), and the quota arm
+# below is left for the case the allowance cannot see: an account spent elsewhere.
 MINT_COOLDOWN_CAP_S = 1800.0
 
 # THE SECOND BASE: A FRESH TOKEN NJ TRANSIT REFUSED (Audit 6, A01). Same ladder, same
@@ -308,12 +330,14 @@ MINT_COOLDOWN_CAP_S = 1800.0
 # and is useless, and each probe of the fault is a cold call: the hold has dropped the
 # token, so the next attempt mints, is refused, and buys njt_post's one re-mint, two
 # getToken POSTs per probe. So each step of this ladder costs twice what a step of
-# F05's costs, and a base of 60 spends the budget in minutes: from a warm cache, one
-# re-mint at t=0, then two at 60s and two at 180s, five POSTs in three minutes of
-# sustained rejection. At 600 the same five take half an hour (one at 0, two at 600,
-# two at 1800), a five-minute transient costs one wasted mint before the poll at 600
-# heals it, and the residual darkness after the fault clears is at most ten minutes,
-# which is nothing against a six-hourly monitor.
+# F05's costs, and a base of 60 spends the day in minutes: from a warm cache, one
+# re-mint at t=0 and two at 60s, and by 180s DAILY_MINT_ALLOWANCE is gone (the
+# fourth POST is the mint at 180s, or the held token's own if that was minted the
+# same Eastern day) and the cache holds to midnight. At 600 the same allowance lasts
+# half an hour (one at 0, two at 600, gone by 1800), a five-minute transient costs
+# one wasted mint before the poll at 600 heals it, and the residual darkness after
+# the fault clears is at most ten minutes, which is nothing against a six-hourly
+# monitor.
 MINT_REJECTED_COOLDOWN_BASE_S = env_seams.positive_seconds(
     "NJT_MINT_REJECTED_COOLDOWN_BASE_S", 600.0
 )
@@ -809,11 +833,25 @@ class TokenCache:
     Eastern day, so the hold runs to the next Eastern midnight and there is nothing
     to discover before then. Everything else (a transport failure, a non-200, a
     body carrying no token we recognise) is a fault of unknown length, so it takes
-    bounded exponential backoff from MINT_COOLDOWN_BASE_S to MINT_COOLDOWN_CAP_S
-    and a success resets it. NJ TRANSIT'S ANSWER TO BAD CREDENTIALS IS NOT KNOWN
-    and is not guessed at here: no probe has ever sent a wrong password, so
-    whatever shape it wears falls in the second arm and is retried on the ladder
-    rather than latched on a rule invented for it.
+    bounded exponential backoff from MINT_COOLDOWN_BASE_S to MINT_COOLDOWN_CAP_S,
+    and a token NJ Transit ACCEPTS resets it (confirm). NJ TRANSIT'S ANSWER TO BAD
+    CREDENTIALS IS NOT KNOWN and is not guessed at here: no probe has ever sent a
+    wrong password, so whatever shape it wears falls in the second arm and is
+    retried on the ladder rather than latched on a rule invented for it.
+
+    A REFUSED FRESH TOKEN IS A FAILED MINT, AND THE STREAK ENDS ON ACCEPTANCE
+    (Audit 6, A01). A mint that returns a token proves only that getToken answered.
+    When NJ Transit then refuses that token, njt_post calls reject_fresh, which drops
+    it (compare-and-clear, as invalidate) and starts the same ladder from
+    MINT_REJECTED_COOLDOWN_BASE_S. A working mint still ends the hold it is in, but
+    only confirm(), on a 200 for the token it issued, ends the streak: a ladder reset
+    by every mint could never climb past its base when every token is refused.
+
+    THE DAILY ALLOWANCE BOUNDS WHAT THE LADDER ONLY SPACES (Audit 6, A01). Inside the
+    lock, immediately before a POST is counted, the attempt is charged to the
+    Eastern date it belongs to; once DAILY_MINT_ALLOWANCE are spent the attempt makes
+    no request and the cache holds to the next Eastern midnight plus the margin, with
+    its own error (NjtMintAllowanceError) and its own flag (mint_allowance_spent).
 
     AN OVER-AGE TOKEN OUTLIVES A FAILED RE-MINT, and this is the half that keeps a
     cooldown from becoming an outage. MAX_TOKEN_AGE_S is a BUDGET rule (how long we
@@ -822,9 +860,10 @@ class TokenCache:
     So when a proactive re-mint fails, the cached token keeps being served for the
     length of the cooldown instead of being thrown away for a fresh one that cannot
     be had. What takes NJ Transit off the map is a REJECTED token (njt_post
-    invalidates it, so there is nothing left to serve) or a cooldown that begins
-    with no token at all, such as a cold start. Both of those raise; a merely
-    over-age one does not.
+    invalidates it, so there is nothing left to serve) or a hold that begins with
+    no token at all, such as a cold start. Both of those raise; a merely over-age
+    one does not. The allowance hold serves the same way: a held token, over-age or
+    not, keeps serving until the reset, and with none NJ Transit is dark until then.
 
     THE LOCK IS REBOUND WHEN THE RUNNING LOOP CHANGES. asyncio.Lock binds itself to
     the loop that first awaits it and raises if awaited from another, and this
@@ -852,19 +891,22 @@ class TokenCache:
         # boot (or forwards under an NTP correction) must not be able to make a
         # token look arbitrarily fresh or arbitrarily stale.
         self._clock = clock
-        # THE SECOND CLOCK, AND IT IS READ ONCE PER QUOTA REFUSAL AND NEVER AGAIN.
-        # Only one question in this class needs a calendar (how far away is the
-        # next Eastern midnight), and a monotonic clock cannot answer it. So the
-        # wall clock measures that LENGTH and nothing else; every "is the cooldown
-        # over" comparison below is monotonic, so a clock step cannot cut a hold
-        # short. Injected for the same reason `clock` is: a test asserts the
-        # midnight boundary by naming a timestamp, never by waiting for one.
+        # THE SECOND CLOCK, AND IT ANSWERS TWO CALENDAR QUESTIONS AND NOTHING ELSE:
+        # how far away the next Eastern midnight is (read once when a quota refusal
+        # or a spent allowance starts a hold), and which Eastern date a mint
+        # attempt belongs to (read once per attempt, for the allowance). A monotonic
+        # clock cannot answer either. So the wall clock measures a hold's LENGTH and
+        # names a DATE; every "is the hold over" comparison below is monotonic, so a
+        # clock step cannot cut a hold short. Injected for the same reason `clock`
+        # is: a test asserts the midnight boundary by naming a timestamp, never by
+        # waiting for one.
         self._wall_clock = wall_clock
-        # THE COOLDOWN, on the monotonic timeline. None means no mint has failed
-        # since the last success; a value in the past means the window has lapsed
-        # and the next caller may attempt. Deliberately NOT cleared when it lapses:
-        # clearing is a write, reading is not, and the only writers here are a mint
-        # attempt's two outcomes.
+        # THE COOLDOWN, on the monotonic timeline. None means no hold has started
+        # since the last working mint; a value in the past means the window has
+        # lapsed and the next caller may attempt. Deliberately NOT cleared when it
+        # lapses: clearing is a write, reading is not, and the only writers here are
+        # a mint attempt's outcomes, a refused fresh token (reject_fresh) and a spent
+        # allowance.
         self._cooldown_until: float | None = None
         # WHY the cooldown is running, in the failing mint's own words, so the
         # window's error can say what started it rather than only that something
@@ -1260,6 +1302,13 @@ async def njt_post(
     which is exactly what the token-expiry contract scenario asserts. The retry
     CADENCE after a failed attempt is the caller's schedule, never a tight loop
     here.
+
+    ACROSS ATTEMPTS, since Audit 6 (A01): when the re-mint's token is refused too,
+    the cache is told (reject_fresh), drops it and holds, so the attempts after it
+    are refused without a request until the ladder lapses, and two consumers refused
+    on the same token step the ladder once. However the attempts fall, one process
+    sends at most DAILY_MINT_ALLOWANCE getToken POSTs in an Eastern day; an attempt
+    whose re-mint the allowance refuses raises NjtMintAllowanceError instead.
     """
     if not is_configured(env):
         raise NjtNotConfigured(

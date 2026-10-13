@@ -1023,6 +1023,18 @@ async def arm2(consts: dict) -> dict:
         str(run["per_date"]),
         "every poll minted",
     )
+    # THE LADDER'S SPACING, pinned as measured: the held token's own mint a cadence
+    # before t = 0, the one re-mint at t = 0, two POSTs when the 600s hold lapses, and
+    # the allowance found spent when the doubled 1200s hold lapses at 1800s. A ladder
+    # reset by every working mint would find it spent at 1200s instead.
+    first_date = [t for t in times if t < reset_at]
+    check(
+        "ARM2 the ladder spaces the probes on the first date: the held token's mint, the "
+        "re-mint at t = 0, two at 600s, and the allowance found spent at 1800s, the 600s "
+        "hold doubled (was: one getToken POST per poll)",
+        first_date == [-consts["poll_s"], 0.0, 600.0, 600.0] and spent_at == 1800.0,
+        f"POSTs at {[_dur(t) for t in first_date]}, spent at {_dur(spent_at)}",
+    )
     check(
         f"ARM2 the account's ten are out of this process's reach: its {allowance} a day and the "
         f"monitor's {consts['monitor']} leave {limit - allowance - consts['monitor']} (was: the "

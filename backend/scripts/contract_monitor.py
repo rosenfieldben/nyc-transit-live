@@ -328,8 +328,10 @@ _HEALTH_CODE_NOTES = {
         f"({njt_auth.DAILY_MINT_ALLOWANCE} by default; /api/status njt_mint_allowance "
         "carries the deployment's own figure) and is holding until midnight, so the rest "
         "of the account's ten stay for this monitor and for operator work; this is the "
-        "budget, not an NJ Transit outage, and a redeploy would spend one more mint and "
-        "reset nothing it should not"
+        "budget, not an NJ Transit outage, and a redeploy does not fix it: the new "
+        "process starts a fresh allowance, so against the same fault it spends up to "
+        f"{njt_auth.DAILY_MINT_ALLOWANCE} more of the account's mints, which come out of "
+        "this monitor's share"
     ),
     "njt-mint-quota": (
         "production has spent NJ Transit's ten mints for the Eastern day, so its NJ "

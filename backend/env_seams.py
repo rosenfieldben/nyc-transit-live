@@ -181,13 +181,17 @@ def positive_seconds(name: str, default: float) -> float:
     never true, and inf is clamped to the cap without a word. Each would let an
     override do something other than what it says on the path that spends a budget
     of ten a day, so anything but a positive finite number raises ValueError while
-    the module imports.
+    the module imports. (A finite value below a second or above that cap is refused
+    too, beside the cap in njt_auth, since this module has no cap to compare against.)
     """
     _record(name, default)
     raw = os.getenv(name)
     if raw is None:
         return default
-    value = float(raw)
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan  # malformed: refused below, with the variable named
     if not (math.isfinite(value) and value > 0):
         raise ValueError(f"{name} must be a positive, finite number of seconds, got {raw!r}")
     return value

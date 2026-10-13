@@ -514,6 +514,10 @@ and each is a way a conventional poller gets this wrong:
    whole number refuses to start. The count lives in memory, and that is its limit: a
    deploy is a fresh process with a fresh count and its cold mint is its own first,
    so the allowance bounds what one process spends, not what a run of deploys does.
+   And it has a price: once it is spent with no token held, NJ Transit is dark until
+   that midnight however soon the fault clears. Four failed mints take seven minutes
+   at the ladder's 60s base, so a deploy inside a seven-minute getToken outage loses
+   NJ Transit for the rest of the Eastern day. A held token keeps serving through it.
 
    That last clause used to promise that nothing anywhere retried a failed mint,
    which was true of `njt_auth` and false of the repository (Audit 5, F05). The
@@ -537,9 +541,9 @@ and each is a way a conventional poller gets this wrong:
    credentials turn out to look like, which has never been probed) backs off from
    `njt_auth.MINT_COOLDOWN_BASE_S` (60s, longer than a feed poll or the cooldown
    would change nothing) doubling to `MINT_COOLDOWN_CAP_S` (1800s, short enough that
-   a real outage heals inside the hour it ends), and the first token NJ Transit
-   accepts resets the ladder, not a mint that merely returns one. A fresh token NJ
-   Transit refuses takes the same ladder from `MINT_REJECTED_COOLDOWN_BASE_S` (600s,
+   a real outage heals inside the hour it ends, while the allowance above lasts), and
+   the first token NJ Transit accepts resets the ladder, not a mint that merely
+   returns one. A fresh token NJ Transit refuses takes the same ladder from `MINT_REJECTED_COOLDOWN_BASE_S` (600s,
    Audit 6, A01), because each probe of that fault costs two mints, the one that
    issued a useless token and the re-mint. The ladder spaces attempts but cannot
    bound them (alone it still cost 52 a day, more than the account's ten), which is

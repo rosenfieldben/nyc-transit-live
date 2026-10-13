@@ -3165,8 +3165,10 @@ def test_the_allowance_code_is_watched_and_explained_in_words():
     is not one, the quota code's case exactly, so it gets a sentence of its own in
     the monitor's voice: the instance has spent its own share for the Eastern day, the
     rest of the account's ten stay for the monitor and for operator work, and a
-    redeploy spends one more rather than fixing anything. It is on the monitor's own
-    roster (which the equality test above holds to the probe's) and never gating."""
+    redeploy fixes nothing: it is a fresh process with a fresh allowance, so against
+    the same fault it spends up to four more, out of the monitor's own share. It is on
+    the monitor's own roster (which the equality test above holds to the probe's) and
+    never gating."""
     import models
 
     assert "njt-mint-allowance" in cm.PRODUCTION_HEALTH_CODES
@@ -3178,7 +3180,8 @@ def test_the_allowance_code_is_watched_and_explained_in_words():
     assert "njt-mint-allowance" in health.detail
     assert "own allowance" in health.detail and "Eastern day" in health.detail
     assert "not an NJ Transit outage" in health.detail
-    assert "redeploy would spend one more mint" in health.detail
+    assert "redeploy does not fix it" in health.detail
+    assert "fresh allowance" in health.detail and "up to 4 more" in health.detail
 
 
 @pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)

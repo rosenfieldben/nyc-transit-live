@@ -172,9 +172,11 @@ DAILY_MINT_LIMIT = 10
 # THE ALLOWANCE: HOW MANY OF THE TEN THIS PROCESS MAY SPEND (Audit 6, A01). Counted in
 # getToken POSTs SENT per Eastern day, the quantity mint_requests counts and the
 # account's ten are spent by, so a refused or failed POST costs one exactly as a
-# working one does. When it is spent, the cache sends nothing more until the next
-# Eastern midnight plus MINT_QUOTA_RESET_MARGIN_S, keeps serving a token it already
-# holds, and says so (TokenCache.mint_allowance_spent, /healthz njt-mint-allowance).
+# working one does. Once it is spent, the next attempt sends nothing and holds the
+# cache until the next Eastern midnight plus MINT_QUOTA_RESET_MARGIN_S, keeps serving
+# a token it already holds, and says so (TokenCache.mint_allowance_spent, /healthz
+# njt-mint-allowance). The count itself turns over at the Eastern midnight, without
+# the margin: the day is the date of the attempt.
 #
 # WHY FOUR. What production spends on an ordinary day is two (MAX_TOKEN_AGE_S below:
 # a process that spans the day re-mints twice); a real expiry buys one re-mint per
@@ -305,6 +307,15 @@ MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 60
 # inside the same six-hourly contract-monitor cycle, so an operator reading the
 # next run sees a healthy deployment rather than the tail of a fixed problem.
 #
+# THAT BOUND HOLDS WHILE THE ALLOWANCE LASTS, and no longer past it (Audit 6, A01).
+# Once DAILY_MINT_ALLOWANCE is spent with no token held, the darkness runs to the next
+# Eastern midnight however soon the fault clears. Four failed mints at this base take
+# seven minutes (0, 60, 180, 420 s), so a cold start (a deploy) inside a seven-minute
+# getToken outage is dark for the rest of the Eastern day, where before the allowance
+# it healed within minutes of the outage ending. A held token, over-age or not, keeps
+# serving through it; it is the tokenless process that pays. That is the allowance's
+# price, measured in arm 5 of docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
+#
 # WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to space. A day
 # of unbroken non-quota failure walks 60, 120, 240, 480, 960, 1800, 1800, ... which
 # is 52 getToken POSTs in 24 hours against 5760 before F05, and that is still more
@@ -337,10 +348,27 @@ MINT_COOLDOWN_CAP_S = 1800.0
 # half an hour (one at 0, two at 600, gone by 1800), a five-minute transient costs
 # one wasted mint before the poll at 600 heals it, and the residual darkness after
 # the fault clears is at most ten minutes, which is nothing against a six-hourly
-# monitor.
+# monitor, provided it clears before the allowance is gone; after that it runs to the
+# next Eastern midnight (see MINT_COOLDOWN_CAP_S).
 MINT_REJECTED_COOLDOWN_BASE_S = env_seams.positive_seconds(
     "NJT_MINT_REJECTED_COOLDOWN_BASE_S", 600.0
 )
+
+# A BASE OUTSIDE ONE SECOND TO THE CAP IS REFUSED, NOT CLAMPED OR HONOURED. Above the
+# cap, _start_cooldown takes min(step, cap), so an override of 7200 would quietly probe
+# every 1800 s, four times as often as it says. Below a second the ladder is off in all
+# but name: a base of 1e-9 needs thirty doublings to reach one second, and nothing but
+# the allowance spaces the attempts meanwhile. Checked here, beside the cap, because
+# env_seams has no cap to compare against.
+for _seam, _base in (
+    ("NJT_MINT_COOLDOWN_BASE_S", MINT_COOLDOWN_BASE_S),
+    ("NJT_MINT_REJECTED_COOLDOWN_BASE_S", MINT_REJECTED_COOLDOWN_BASE_S),
+):
+    if not 1.0 <= _base <= MINT_COOLDOWN_CAP_S:
+        raise ValueError(
+            f"{_seam} must be between 1s and MINT_COOLDOWN_CAP_S ({MINT_COOLDOWN_CAP_S:g}s), "
+            f"got {_base:g}"
+        )
 
 # HOW FAR PAST MIDNIGHT A QUOTA HOLD REACHES. The reset is an Eastern midnight
 # (observed 2026-09-03), and a retry aimed exactly at it is aimed at a boundary we
@@ -599,12 +627,14 @@ def seconds_to_next_eastern_midnight(wall_now: float) -> float:
     """How long from `wall_now` (a Unix timestamp) until the next America/New_York
     midnight, plus MINT_QUOTA_RESET_MARGIN_S.
 
-    THE ONE PLACE A WALL CLOCK IS READ IN THIS MODULE, and it is read exactly once
-    per quota refusal, to measure a LENGTH. Everything that then asks "is the
-    cooldown over" compares monotonic instants, so a container whose clock steps at
-    boot or under an NTP correction cannot shorten a hold that is already running;
-    the worst it can do is make one hold the wrong length at the moment it starts.
-    Monotonic time cannot do this job on its own: it has no idea what a midnight is.
+    ONE OF TWO PLACES A WALL CLOCK IS READ IN THIS MODULE, and it is read once per
+    hold that runs to midnight (a quota refusal, or a spent allowance), to measure a
+    LENGTH. The other is TokenCache._spend_allowance, which reads it once per mint
+    attempt to name the Eastern DATE. Everything that then asks "is the hold over"
+    compares monotonic instants, so a container whose clock steps at boot or under an
+    NTP correction cannot shorten a hold that is already running; the worst it can do
+    is make one hold the wrong length at the moment it starts. Monotonic time cannot
+    do this job on its own: it has no idea what a midnight is.
 
     THE NEXT MIDNIGHT IS NAMED, NOT MEASURED. The local DATE plus one day, combined
     with the zone, is the instant we want by construction; adding a fixed 86400 to
@@ -968,6 +998,12 @@ class TokenCache:
         # the same window: "allowance" while the allowance holds, "" otherwise.
         # Written wherever _cooldown_until is, so the two cannot disagree.
         self._hold_kind = ""
+        # HOW MANY HOLDS THIS CACHE HAS STARTED, so a mint can tell whether one began
+        # while it was in flight. reject_fresh runs outside the lock (it follows a
+        # POST, not a mint attempt), so a refusal can land while another caller's
+        # mint is out, and that mint returning must not erase the hold the refusal
+        # has just started: the next consumer would buy a re-mint the hold refuses.
+        self._holds_started = 0
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -1079,14 +1115,16 @@ class TokenCache:
             hold_s = min(step, MINT_COOLDOWN_CAP_S)
             self._backoff_s = hold_s
         until = self._clock() + hold_s
-        # A HOLD IS NEVER SHORTENED. Only reject_fresh can arrive while one is
+        # A HOLD IS NEVER SHORTENED HERE. Only reject_fresh can arrive while one is
         # running (it follows a POST, not a mint attempt, so the gates in get() do
         # not stand in front of it), and a refusal landing inside a longer hold says
-        # nothing that makes the longer hold wrong.
+        # nothing that makes the longer hold wrong. Nor can a mint that was already
+        # in flight erase one it did not see start (_holds_started).
         if self._cooldown_until is None or until >= self._cooldown_until:
             self._cooldown_until = until
             self._cooldown_reason = str(exc)
             self._hold_kind = ""
+            self._holds_started += 1
         return hold_s
 
     def _spend_allowance(self) -> float | None:
@@ -1103,7 +1141,15 @@ class TokenCache:
         """
         wall = self._wall_clock()
         day = datetime.fromtimestamp(wall, tz=_EASTERN).date()
-        if day != self._allowance_day:
+        # ONLY A LATER DATE OPENS A NEW COUNT. A wall clock stepped backwards across
+        # midnight (an NTP correction, a container that booted with a bad clock)
+        # names an earlier date, and resetting on that would hand the process a fresh
+        # allowance, and another when the clock stepped forward again. An earlier
+        # date keeps counting against the later one, which only ever spends less. A
+        # step FORWARD across midnight still opens the next date early, once per
+        # step: a calendar question put to a wrong clock has no right answer, and
+        # that error is bounded at one allowance per step.
+        if self._allowance_day is None or day > self._allowance_day:
             self._allowance_day = day
             self._allowance_spent = 0
         if self._allowance_spent < self._allowance:
@@ -1116,6 +1162,7 @@ class TokenCache:
             f"getToken POSTs sent on {day.isoformat()}, Eastern)"
         )
         self._hold_kind = "allowance"
+        self._holds_started += 1
         return hold_s
 
     @property
@@ -1179,7 +1226,8 @@ class TokenCache:
         """The cached token, minting at most once per cooldown window.
 
         Raises NjtMintCooldownError, without calling `mint_token`, while a recent
-        failure's window is still open and there is no token left to serve.
+        failure's window is still open and there is no token left to serve, and
+        NjtMintAllowanceError the same way once the day's allowance is spent.
         """
         cached = self._live_token()
         if cached is not None:
@@ -1209,15 +1257,23 @@ class TokenCache:
             held = self._spend_allowance()
             if held is not None:
                 return self._serve_through_cooldown(held)
+            holds_before = self._holds_started
             self.mint_requests += 1
             try:
                 token = await mint_token()
+            except asyncio.CancelledError:
+                # A CANCELLED MINT STILL SPACES THE NEXT ONE (Audit 6, A01). The caller
+                # gave up, usually on a deadline shorter than REQUEST_TIMEOUT_S (the
+                # alert poll's is 20 s), but the POST had most likely gone out and been
+                # charged, which is why the allowance counted it. Without a hold the
+                # next poll would mint again at once, and a getToken slow enough to
+                # outlast one deadline spends the whole allowance back to back. The
+                # quota flag is left alone: nothing was answered.
+                self._start_cooldown(
+                    NjtAuthError("a getToken attempt was cancelled before it was answered")
+                )
+                raise
             except Exception as exc:
-                # Exception, NOT BaseException, so a CANCELLED mint leaves the flag
-                # and the cooldown exactly as they were. A cancellation is this
-                # process giving up, not NJ Transit answering, and it says nothing
-                # either way about the budget or about how long to wait.
-                #
                 # The quota flag records what the most recent mint ATTEMPT was
                 # answered, so it is settled here, at the attempt, and not in
                 # _start_cooldown, which reject_fresh also reaches after a mint
@@ -1248,9 +1304,15 @@ class TokenCache:
             # apart); the one drift is conservative: a working mint followed by a
             # real 500 keeps the streak until a later 200, so a failed mint after it
             # continues the ladder rather than restarting it.
-            self._cooldown_until = None
-            self._cooldown_reason = ""
-            self._hold_kind = ""
+            #
+            # ONLY THE HOLD IT WAS ATTEMPTED UNDER. A refused fresh token that landed
+            # while this mint was in flight started a hold this mint knows nothing
+            # about; it stays, and the token is still stored, so the consumers get
+            # it and the hold refuses only a re-mint.
+            if self._holds_started == holds_before:
+                self._cooldown_until = None
+                self._cooldown_reason = ""
+                self._hold_kind = ""
             self._unconfirmed = token
             self.mints += 1
             self._token = token

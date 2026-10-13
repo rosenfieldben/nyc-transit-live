@@ -372,9 +372,9 @@ def test_the_cooldown_base_seams_take_a_positive_duration():
     out = _resolve(
         "(__import__('njt_auth').MINT_COOLDOWN_BASE_S, "
         "__import__('njt_auth').MINT_REJECTED_COOLDOWN_BASE_S)",
-        {"NJT_MINT_COOLDOWN_BASE_S": "0.5", "NJT_MINT_REJECTED_COOLDOWN_BASE_S": "1"},
+        {"NJT_MINT_COOLDOWN_BASE_S": "1.5", "NJT_MINT_REJECTED_COOLDOWN_BASE_S": "2"},
     )
-    assert out == "(0.5, 1.0)"
+    assert out == "(1.5, 2.0)"
 
 
 @pytest.mark.parametrize("name", ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
@@ -393,7 +393,36 @@ def test_a_degenerate_cooldown_base_refuses_to_start(name, value):
         timeout=120,
     )
     assert result.returncode != 0, f"{name}={value!r} was accepted"
-    assert "ValueError" in result.stderr
+    assert f"{name} must be a positive, finite number of seconds" in result.stderr, (
+        "the refusal names the variable, malformed values included"
+    )
+
+
+@pytest.mark.parametrize("name", ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+@pytest.mark.parametrize("value", ["1801", "0.5", "1e-9"])
+def test_a_cooldown_base_outside_a_second_to_the_cap_refuses_to_start(name, value):
+    """The ladder takes min(step, 1800), so a base of 1801 would quietly be 1800, and
+    one below a second is a ladder in name only. Both refuse; the two ends, 1 and
+    1800, are accepted."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, name: value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{name}={value} was accepted"
+    assert f"{name} must be between 1s and MINT_COOLDOWN_CAP_S (1800s)" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["1", "1800"])
+def test_a_cooldown_base_at_either_end_is_accepted(value):
+    out = _resolve(
+        "__import__('njt_auth').MINT_REJECTED_COOLDOWN_BASE_S",
+        {"NJT_MINT_REJECTED_COOLDOWN_BASE_S": value},
+    )
+    assert out == f"{float(value)}"
 
 
 def test_a_malformed_timing_value_fails_loudly():

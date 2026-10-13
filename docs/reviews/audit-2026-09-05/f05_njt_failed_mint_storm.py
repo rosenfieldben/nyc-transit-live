@@ -174,6 +174,7 @@ import httpx  # noqa: E402
 from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
 
 import cache as cache_module  # noqa: E402
+import env_seams  # noqa: E402
 import main as main_module  # noqa: E402
 import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
@@ -185,6 +186,29 @@ from feeds import alerts as alerts_feed  # noqa: E402
 # that the credentials in this process are its OWN fabricated pair and that no NJ
 # Transit address survived the imports.
 _hermetic.verify(expect_configured=True)
+
+# THE BUDGET IT IS MEASURED AT (added on claude/a01-mint-allowance, Audit 6, A01).
+# Every figure below is walked off the shipped allowance and cooldown bases, and
+# env_seams loads .env, so an override in a developer's shell or .env would turn this
+# record red on one machine and blame the fix. Checked after the backend imports, when
+# .env has loaded: an override that moves a value stops the run and names it, with no
+# DISPOSITION line.
+_BUDGET_SEAMS = {
+    "NJT_DAILY_MINT_ALLOWANCE": njt_auth.DAILY_MINT_ALLOWANCE,
+    "NJT_MINT_COOLDOWN_BASE_S": njt_auth.MINT_COOLDOWN_BASE_S,
+    "NJT_MINT_REJECTED_COOLDOWN_BASE_S": njt_auth.MINT_REJECTED_COOLDOWN_BASE_S,
+}
+_OVERRIDDEN = [
+    f"{name}={os.environ[name]!r} (shipped default {env_seams.DEFAULTS[name]!r})"
+    for name, value in _BUDGET_SEAMS.items()
+    if os.environ.get(name) is not None and value != env_seams.DEFAULTS[name]
+]
+if _OVERRIDDEN:
+    raise SystemExit(
+        "RECORD NOT RUN: it is measured at the shipped NJ Transit mint budget, and the "
+        f"environment (or a .env file, which env_seams loads) overrides "
+        f"{'; '.join(_OVERRIDDEN)}. Unset it and run again."
+    )
 
 
 FAILURES: list[str] = []

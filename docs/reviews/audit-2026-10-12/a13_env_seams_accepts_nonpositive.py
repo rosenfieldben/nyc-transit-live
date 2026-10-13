@@ -117,16 +117,17 @@ RUN (from the repository root):
 
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a13_env_seams_accepts_nonpositive.py
 
-AMENDED ON claude/a01-mint-allowance (Audit 6, A01), because that branch added three
-seams this record's section C would otherwise poison, all on the NJ Transit mint
-budget and all read through new strict parsers that refuse '0', '-1', 'nan' and
-'inf' at import: NJT_DAILY_MINT_ALLOWANCE through env_seams.count, and the two
-cooldown bases, NJT_MINT_COOLDOWN_BASE_S and NJT_MINT_REJECTED_COOLDOWN_BASE_S,
-through env_seams.positive_seconds. Section C sets every numeric-default registry
-seam to the bad value, so each child died at import on them and measured nothing
-about the timing seams this finding is about. The amendment tightens rather than
-relaxes: the recorder now records both strict parsers as well; section A pins by
-name the three numeric seams not read through seconds() and checks they are
+AMENDED ON claude/a01-mint-allowance (Audit 6, A01), because that branch added two
+seams this record's section C would otherwise poison, both on the NJ Transit mint
+budget and both read through new strict parsers that refuse '0', '-1', 'nan' and
+'inf' at import: NJT_DAILY_MINT_ALLOWANCE through env_seams.count, and the one
+cooldown base, NJT_MINT_COOLDOWN_BASE_S, through env_seams.positive_seconds (a
+second base for a refused token was added and then removed on the same branch, when
+both kinds of failure were put on one ladder). Section C sets every numeric-default
+registry seam to the bad value, so each child died at import on them and measured
+nothing about the timing seams this finding is about. The amendment tightens rather
+than relaxes: the recorder now records both strict parsers as well; section A pins
+by name the two numeric seams not read through seconds() and checks they are
 exactly the ones the strict parsers read; section C sets every numeric seam but
 those; and section B checks that both strict parsers refuse all four values,
 which is the correction this finding recommends, in place for those seams alone.
@@ -670,7 +671,7 @@ def parent_main() -> int:
           ["NJT_DAILY_MINT_ALLOWANCE"])
     check("production seams declared through positive_seconds() while main imports",
           sorted(c["name"] for c in routed_strict if c["parser"] == "positive_seconds"),
-          ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+          ["NJT_MINT_COOLDOWN_BASE_S"])
     mismatched = sorted(
         name for name, default in {**seams, **tuple_seams, **strict_seams}.items()
         if env_seams.DEFAULTS.get(name, object()) != default
@@ -685,8 +686,7 @@ def parent_main() -> int:
                      if isinstance(default, (int, float)) and not isinstance(default, bool))
     check("registry seams with a numeric default NOT read through seconds() (all others are "
           "the ones C sets)", sorted(set(numeric) - set(seams)),
-          ["NJT_DAILY_MINT_ALLOWANCE", "NJT_MINT_COOLDOWN_BASE_S",
-           "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+          ["NJT_DAILY_MINT_ALLOWANCE", "NJT_MINT_COOLDOWN_BASE_S"])
     timing = sorted(set(numeric) - set(strict_seams))
 
     # ---- B: the parser itself ----------------------------------------------

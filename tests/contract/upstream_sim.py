@@ -152,12 +152,14 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip", "
 # bad upstream.
 #
 #   ok            every token this simulator minted is accepted.
-#   reject-first  THE PROBE'S MOST DANGEROUS FACT, reproduced. The first getGTFS
-#                 after a mint answers HTTP 500 with {"errorMessage":"Invalid
+#   reject-first  THE PROBE'S MOST DANGEROUS FACT, reproduced. The first token
+#                 ever minted is refused with HTTP 500 and {"errorMessage":"Invalid
 #                 token."}, the exact body NJ Transit serves for a dead token, and
-#                 accepts everything after. A loader that re-mints once recovers
-#                 inside one attempt; one that classifies 500 as an outage never
-#                 does.
+#                 every token after it is accepted. A loader that re-mints once
+#                 recovers inside one attempt; one that classifies 500 as an outage
+#                 never does. Set it once NJ Transit has accepted that token: since
+#                 Audit 6 a fresh token (never accepted, minted moments ago) buys no
+#                 re-mint, so set at launch it is a refused fresh token, not expiry.
 #   server-error  THE CONTROL. A genuine HTTP 500 with a DIFFERENT body, forever.
 #                 It must not provoke a mint and must classify as an attempt
 #                 failure. Without it, "re-mint on invalid token" and "re-mint on
@@ -278,6 +280,11 @@ class NjtApi:
     # the number a scenario asserts is ZERO, and it is counted only when the body
     # really carried the secret so a stray empty POST cannot fake the finding.
     redirect_arrivals: int = 0
+    # WHEN each getToken POST arrived, on this process's monotonic clock (Audit 6,
+    # A01). A count cannot tell a re-mint inside one attempt from a mint on the next
+    # one after a hold; the spacing between two POSTs can, and only as a lower bound,
+    # since a slow machine can only widen it.
+    mint_times: list[float] = field(default_factory=list)
 
 
 def _restamp(raw: bytes, now: float, drift_deg: float = 0.0, generation: int = 0) -> bytes:
@@ -1095,6 +1102,12 @@ class UpstreamSim:
         with self._lock:
             return self.njt.mint_requests
 
+    def mint_gaps(self) -> list[float]:
+        """Seconds between consecutive getToken POSTs as they arrived, in order."""
+        with self._lock:
+            t = self.njt.mint_times
+            return [b - a for a, b in zip(t, t[1:])]
+
     def gtfs_requests(self) -> int:
         """How many getGTFS POSTs NJ Transit has received, accepted or rejected."""
         with self._lock:
@@ -1239,6 +1252,7 @@ class UpstreamSim:
             # Counted BEFORE the guard: the POST was made whether or not it yields
             # a token, and it is the POST that costs.
             self.njt.mint_requests += 1
+            self.njt.mint_times.append(time.monotonic())
             if self.njt.token_mode == "redirect":
                 # The body is empty and the status is the whole answer; the handler
                 # adds the Location. The POST still counted above, because it was

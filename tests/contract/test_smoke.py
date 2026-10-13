@@ -169,7 +169,6 @@ def test_the_simulator_points_at_every_url_seam_the_backend_declares():
         "DATA_DIR",
         "NJT_DAILY_MINT_ALLOWANCE",
         "NJT_MINT_COOLDOWN_BASE_S",
-        "NJT_MINT_REJECTED_COOLDOWN_BASE_S",
     }
     seams = _load_env_seams()
     pointed = set(UpstreamSim().env("http://127.0.0.1:1", REPO_ROOT))

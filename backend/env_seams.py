@@ -88,13 +88,11 @@ SEAM_NAMES = (
     "NJT_TOKEN_URL",
     "NJT_STATIC_URL",
     # NJ Transit's mint budget (Audit 6, A01): how many getToken POSTs one process
-    # may send per Eastern day, and the two bases its cooldown ladder starts from.
-    # They gate spending against an account the contract monitor shares, so they sit
-    # beside the token seam rather than among the timings, and all three are read
-    # strictly.
+    # may send per Eastern day, and the base its cooldown ladder starts from. They
+    # gate spending against an account the contract monitor shares, so they sit
+    # beside the token seam rather than among the timings, and both are read strictly.
     "NJT_DAILY_MINT_ALLOWANCE",
     "NJT_MINT_COOLDOWN_BASE_S",
-    "NJT_MINT_REJECTED_COOLDOWN_BASE_S",
     # Timing.
     "POLL_INTERVAL_S",
     "ALERT_POLL_INTERVAL_S",
@@ -176,7 +174,7 @@ def positive_seconds(name: str, default: float) -> float:
     """A duration that gates spending, refused at import unless positive and finite.
 
     STRICTER THAN seconds() FOR THE REASON count() IS. The NJ Transit mint cooldown
-    bases are the first: zero or a negative turns the ladder off (a hold that has
+    base is the first: zero or a negative turns the ladder off (a hold that has
     lapsed the instant it starts), nan does the same through a comparison that is
     never true, and inf is clamped to the cap without a word. Each would let an
     override do something other than what it says on the path that spends a budget

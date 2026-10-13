@@ -35,17 +35,20 @@ refused reset F05's ladder to its 60s base; in the process as it shipped, every 
 cycle and every alert cycle after the refusals began paid one getToken POST (12 of 12
 and 4 of 4).
 
-THE REPAIR. njt_post's one re-mint branch, where it raises for a fresh token NJ
-Transit refused, now hands the refusal to the cache (TokenCache.reject_fresh): the
-token is compare-and-cleared and the ladder starts from MINT_REJECTED_COOLDOWN_BASE_S
-(600s) to the shared cap, so the next poll is held without a request. And the streak
-ends on ACCEPTANCE, not on issue: a working mint ends the hold it is in, and only a
-200 on the token it issued (TokenCache.confirm) resets the ladder. And because the
-ladder alone still lets one process spend the account (its 1800s cap is 48 probes a
-day, two getToken POSTs each), the process also stops itself at
-njt_auth.DAILY_MINT_ALLOWANCE getToken POSTs per Eastern day and holds to the next
-Eastern midnight, serving any token it still holds through that hold as through any
-other.
+THE REPAIR. Wherever njt_post raises for a fresh token NJ Transit refused, it now
+hands the refusal to the cache (TokenCache.reject_fresh): the token is
+compare-and-cleared and F05's ladder starts, one ladder for a failed mint and a
+refused fresh token alike, from MINT_COOLDOWN_BASE_S (600s since this branch) to the
+shared cap, so the next poll is held without a request. A fresh token, one NJ
+Transit has never accepted and that was minted within the two minutes one call can
+last, buys no re-mint when it is refused, whoever minted it, since the next would be
+refused the same way; an expired token keeps its one. And the streak ends on
+ACCEPTANCE, not on issue: a working mint ends the hold it is in, and only a 200 on the token it
+issued (TokenCache.confirm) resets the ladder. And because the ladder alone still
+lets one process spend the account (49 probes a day at its 1800s cap), the process
+also stops itself at njt_auth.DAILY_MINT_ALLOWANCE getToken POSTs per Eastern day and
+holds to the next Eastern midnight, serving any token it still holds through that
+hold as through any other.
 
 FIVE ARMS, and what each one is for:
 
@@ -55,7 +58,9 @@ FIVE ARMS, and what each one is for:
   call raised, what an eleventh call does, and the cooldown read BEHAVIORALLY and on
   TokenCache.cooldown(), the public method /api/status publishes. Its second half is
   the ladder across a refused fresh token: a failed mint's window, then a mint whose
-  token is refused, then a failed mint again.
+  token is refused, then a failed mint again. Its third is the allowance under
+  sustained rejection from a cold cache: a call every feed cadence for two hours, and
+  when the four getToken POSTs land.
 
   ARM 2, the budget. The two consumers that poll on their own (the feed poller
   pollers._refresh_njt through main.fetch_njt_trains, and the alert poller
@@ -84,7 +89,7 @@ FIVE ARMS, and what each one is for:
   ARM 5, what the allowance hold costs. The real feed poller holds a token minted
   thirteen hours earlier, past MAX_TOKEN_AGE_S, while getToken fails from noon, so the
   day's allowance is spent on replacement attempts. Measured: whether the over-age
-  token keeps the feed served through the allowance hold; then, an hour in, NJ
+  token keeps the feed served through the allowance hold; then, two hours in, NJ
   Transit revokes that token while getToken recovers, and what reaches NJ Transit
   until the reset, what the feed and /healthz say, and what the first poll after
   the reset does.
@@ -118,7 +123,7 @@ WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
   * The cadences and the budget, read live: pollers.POLL_INTERVAL_S,
     pollers.ALERT_POLL_INTERVAL_S (checked against env_seams.DEFAULTS),
     njt_auth.DAILY_MINT_LIMIT, njt_auth.DAILY_MINT_ALLOWANCE,
-    njt_auth.MINT_COOLDOWN_BASE_S, njt_auth.MINT_REJECTED_COOLDOWN_BASE_S,
+    njt_auth.MINT_COOLDOWN_BASE_S,
     njt_auth.MINT_COOLDOWN_CAP_S, njt_auth.MINT_QUOTA_RESET_MARGIN_S,
     njt_auth.MAX_TOKEN_AGE_S, and README.md's own mint table.
 
@@ -184,13 +189,17 @@ RUN IT (from the repository root):
 
 RECORDED DISPOSITION: FIXED (claude/a01-mint-allowance). The script exits 0 while the
 repaired behaviour holds and 1 the moment it comes back: take reject_fresh out of
-njt_post's raising branch and arm 1 goes red at 4 getToken and 7 data POSTs (not the
-record's 11 and 20: the allowance caps what the revert can spend), arms 2 and 4 with
-it; let a working mint reset the ladder and arm 2's spacing goes red, the allowance
-found spent at 1200s instead of 1800s (arm 1's ladder half cannot see that one:
-max(600, 2 x 60) hides the reset); lift the allowance and arm 2 goes red at 11
-getToken POSTs on its first date, the tenth at 90min and NJ Transit's refusal drawn
-by the eleventh at 2.0h (measured with the allowance's default raised to 100000 in a
+njt_post and arm 1 goes red at 1 getToken and 10 data POSTs (not the record's 11 and
+20: a refused fresh token buys no re-mint, so without reject_fresh the dead token
+stays cached and is re-posted by every call, with no hold), arms 2 and 4 with it,
+arm 2's first date spent by 6min; read every refusal as fresh, so an expired token
+loses its one re-mint, and arm 5 goes red; let a working mint reset the ladder and
+arm 1 goes red (the refused token's window 600s, not 1200s, and the cold-cache
+probes at 0, 600, 1200 and 1800s) with arm 2's spacing, the allowance found spent at
+30min instead of 60min; restore the futile re-mint and arms 1 and 2 go red, the
+cold-cache probes landing in pairs; lift the allowance and arm 2 goes red at 11
+getToken POSTs on its first date, the tenth at 3.5h and NJ Transit's refusal drawn
+by the eleventh at 4.0h (measured with the allowance's default raised to 100000 in a
 scratch copy; the seam itself is refused below, so an override cannot pass for a fix).
 """
 
@@ -330,14 +339,13 @@ from starlette.datastructures import State  # noqa: E402
 _hermetic.verify(expect_configured=True)
 
 # THE BUDGET IT IS MEASURED AT (Audit 6, A01 review). Every figure below is walked off
-# the shipped allowance and cooldown bases, and env_seams loads .env, so an override in
+# the shipped allowance and cooldown base, and env_seams loads .env, so an override in
 # a developer's shell or .env would turn this record red on one machine and blame the
 # fix. Checked after the backend imports, when .env has loaded: an override that moves
 # a value stops the run and names it, with no DISPOSITION line.
 _BUDGET_SEAMS = {
     "NJT_DAILY_MINT_ALLOWANCE": njt_auth.DAILY_MINT_ALLOWANCE,
     "NJT_MINT_COOLDOWN_BASE_S": njt_auth.MINT_COOLDOWN_BASE_S,
-    "NJT_MINT_REJECTED_COOLDOWN_BASE_S": njt_auth.MINT_REJECTED_COOLDOWN_BASE_S,
 }
 _OVERRIDDEN = [
     f"{name}={os.environ[name]!r} (shipped default {env_seams.DEFAULTS[name]!r})"
@@ -803,16 +811,17 @@ async def arm1() -> dict:
         f"{_shown(eleventh)}"
     )
 
-    base = njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+    base = njt_auth.MINT_COOLDOWN_BASE_S
     check(
-        "ARM1 ten calls made 2 getToken POSTs, the cold mint and the one re-mint (was: 11)",
-        mints_ten == 2,
+        "ARM1 ten calls made 1 getToken POST, the cold mint, and no re-mint for the token it "
+        "minted (was: 11)",
+        mints_ten == 1,
         str(mints_ten),
         "11 mint requests",
     )
     check(
-        "ARM1 ten calls made 2 data POSTs (was: 20)",
-        data_ten == 2,
+        "ARM1 ten calls made 1 data POST (was: 20)",
+        data_ten == 1,
         str(data_ten),
         "20 data requests",
     )
@@ -820,12 +829,12 @@ async def arm1() -> dict:
         "ARM1 the first call carries NJ Transit's refusal and every later call is held without "
         "a request (was: every call a refused token, none held)",
         rows[0]["outcome"][0] == "auth-error"
-        and [r["mints"] for r in rows] == [2] + [0] * 9
+        and [r["mints"] for r in rows] == [1] + [0] * 9
         and all(r["outcome"][0] == "held" for r in rows[1:]),
         ", ".join(f"{r['mints']}:{r['outcome'][0]}" for r in rows),
     )
     check(
-        f"ARM1 afterwards a cooldown of the refused-token base ({base:g}s) is published on "
+        f"ARM1 afterwards a cooldown of the ladder's base ({base:g}s) is published on "
         "TokenCache.cooldown(), naming the refusal (was: unset)",
         cooldown_after_ten is not None
         and cooldown_after_ten[0] == base
@@ -873,16 +882,48 @@ async def arm1() -> dict:
     print(f"    a mint works, its token is refused:    {_secs(window_2)}  ({_shown(refused)})")
     print(f"    a mint fails again:                    {_secs(window_3)}  ({_shown(third)})")
     check(
-        "ARM1 a fresh token refused right after a failed-mint window opens a hold from its own "
-        f"base, max({base:g}s, twice the streak) (was: no hold at all)",
-        window_1 == f05_base and refused[0] == "auth-error" and window_2 == max(base, 2 * f05_base),
+        "ARM1 a fresh token refused right after a failed-mint window is the next step on the "
+        f"same ladder, twice the {f05_base:g}s base (was: no hold at all)",
+        window_1 == f05_base and refused[0] == "auth-error" and window_2 == 2 * f05_base,
         f"{_secs(window_1)}, then {refused[0]} and {_secs(window_2)}",
     )
     check(
         "ARM1 the mint whose token was refused did not end the streak: the next failed mint "
-        f"doubles it (was: reset to the {f05_base:g}s base)",
+        f"doubles it to the cap (was: reset to the base)",
         window_3 == min(2 * window_2, njt_auth.MINT_COOLDOWN_CAP_S) if window_2 else False,
         f"{_secs(window_3)}",
+    )
+
+    # THE ALLOWANCE UNDER SUSTAINED REJECTION, from a cold cache: a call every feed
+    # cadence for two hours, NJ Transit minting every token it is asked for and
+    # refusing each one. Each probe is one getToken POST and no re-mint, so the day's
+    # allowance spans the ladder's first hour and an outage shorter than that heals
+    # at the next probe rather than costing the day.
+    clock = Clock()
+    fake = FakeRailData(clock)
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+    spent_at = None
+    install(fake)
+    try:
+        t = 0.0
+        while t < 7200.0:
+            clock.set(t)
+            await call_njt_post(cache)
+            if spent_at is None and cache.mint_allowance_spent:
+                spent_at = t
+            t += pollers.POLL_INTERVAL_S
+    finally:
+        uninstall()
+    probes = list(fake.mint_times)
+    print()
+    print("  THE ALLOWANCE under sustained rejection, a call every feed cadence from a cold cache:")
+    print(f"    getToken POSTs land at t =      : {[_secs(t) for t in probes]}")
+    print(f"    the allowance found spent at t = : {_secs(spent_at)}")
+    check(
+        "ARM1 under sustained rejection from a cold cache the allowance of four spans 0, 600, "
+        "1800 and 3600s and is found spent at 5400s (was: one getToken POST per call)",
+        probes == [0.0, 600.0, 1800.0, 3600.0] and spent_at == 5400.0,
+        f"POSTs at {[_secs(t) for t in probes]}, spent at {_secs(spent_at)}",
     )
     return {
         "mints": mints_ten,
@@ -890,6 +931,8 @@ async def arm1() -> dict:
         "eleventh_mints": eleventh_mints,
         "hold": cooldown_after_ten[0] if cooldown_after_ten else None,
         "ladder": (window_1, window_2, window_3),
+        "probes": probes,
+        "probes_spent_at": spent_at,
     }
 
 
@@ -1002,9 +1045,9 @@ async def arm2(consts: dict) -> dict:
     allowance = njt_auth.DAILY_MINT_ALLOWANCE
     limit = consts["limit"]
     margin = njt_auth.MINT_QUOTA_RESET_MARGIN_S
-    # Noon Eastern to two in the morning: the first date's allowance, its hold, the
-    # reset, and the second date's allowance and hold, with an hour to spare.
-    horizon = 14 * 3600.0
+    # Noon Eastern to three in the morning: the first date's allowance, its hold, the
+    # reset, and the second date's allowance and hold, which is found at 50460s.
+    horizon = 15 * 3600.0
     reset_at = 12 * 3600.0 + margin
     run = await drive_days(consts, horizon)
     clock = run["clock"]
@@ -1050,16 +1093,24 @@ async def arm2(consts: dict) -> dict:
         "every poll minted",
     )
     # THE LADDER'S SPACING, pinned as measured: the held token's own mint a cadence
-    # before t = 0, the one re-mint at t = 0, two POSTs when the 600s hold lapses, and
-    # the allowance found spent when the doubled 1200s hold lapses at 1800s. A ladder
-    # reset by every working mint would find it spent at 1200s instead.
+    # before t = 0, the one re-mint its refusal buys at t = 0, then one POST as each
+    # hold lapses (600s, then 1200s to 1800s, then the 1800s cap to 3600s) with no
+    # re-mint, since NJ Transit never accepts any later token.
+    # A ladder reset by every working mint would find it spent at 1800s instead.
     first_date = [t for t in times if t < reset_at]
+    second_date = [t for t in times if t >= reset_at]
     check(
-        "ARM2 the ladder spaces the probes on the first date: the held token's mint, the "
-        "re-mint at t = 0, two at 600s, and the allowance found spent at 1800s, the 600s "
-        "hold doubled (was: one getToken POST per poll)",
-        first_date == [-consts["poll_s"], 0.0, 600.0, 600.0] and spent_at == 1800.0,
+        "ARM2 the ladder spaces the probes on the first date: the held token's mint, its one "
+        "re-mint at t = 0, one probe at 600s and one at 1800s, and the allowance found spent "
+        "at 3600s (was: one getToken POST per poll)",
+        first_date == [-consts["poll_s"], 0.0, 600.0, 1800.0] and spent_at == 3600.0,
         f"POSTs at {[_dur(t) for t in first_date]}, spent at {_dur(spent_at)}",
+    )
+    check(
+        "ARM2 and on the next date the streak carries on at the cap: probes at the reset and "
+        "every 1800s after it",
+        second_date == [reset_at + k * njt_auth.MINT_COOLDOWN_CAP_S for k in range(allowance)],
+        f"POSTs at {[_dur(t) for t in second_date]}",
     )
     check(
         f"ARM2 the account's ten are out of this process's reach: its {allowance} a day and the "
@@ -1069,11 +1120,11 @@ async def arm2(consts: dict) -> dict:
         f"{max(run['per_date'].values())} a day at most",
     )
     check(
-        "ARM2 the first cooldown is ours, opened by the first refused poll from the "
-        "refused-token base (was: none until NJ Transit refused getToken POST 11)",
+        "ARM2 the first cooldown is ours, opened by the first refused poll at the ladder's "
+        "base (was: none until NJ Transit refused getToken POST 11)",
         first_t == 0.0
         and first_held is not None
-        and first_held[0] == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+        and first_held[0] == njt_auth.MINT_COOLDOWN_BASE_S
         and "rejected a freshly minted token" in first_held[1],
         f"t = {_dur(first_t)}, {first_held}",
         "The first cooldown is NJ Transit's own daily-cap refusal, on getToken POST 11",
@@ -1131,6 +1182,8 @@ async def arm2(consts: dict) -> dict:
     )
     return {
         "per_date": run["per_date"],
+        "first_date": first_date,
+        "second_date": second_date,
         "spent_at": spent_at,
         "reset_at": reset_at,
         "first_cooldown": first_held[0] if first_held else None,
@@ -1559,7 +1612,7 @@ def arm4(consts: dict) -> dict:
     check(
         "ARM4 /api/status publishes the refused-token hold (was: no cooldown)",
         cooldown.get("seconds_remaining") is not None
-        and 0 < cooldown["seconds_remaining"] <= njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+        and 0 < cooldown["seconds_remaining"] <= njt_auth.MINT_COOLDOWN_BASE_S
         and "rejected a freshly minted token" in cooldown.get("detail", ""),
         str(cooldown),
     )
@@ -1585,9 +1638,11 @@ async def arm5(consts: dict) -> dict:
     # past MAX_TOKEN_AGE_S and every poll asks for a replacement. getToken fails from
     # noon, which is what spends the day's allowance while the old token still works.
     minted_at = -13 * 3600.0
-    # At 13:00, inside the hold, NJ Transit revokes the held token and getToken
-    # recovers: from then on a fresh token would work, and none may be asked for.
-    revoked_at = 3600.0
+    # The four failed replacements land at 0, 600, 1800 and 3600s, and the allowance is
+    # found spent at 5400s. At 14:00, inside that hold, NJ Transit revokes the held
+    # token and getToken recovers: from then on a fresh token would work, and none may
+    # be asked for.
+    revoked_at = 7200.0
     clock = Clock()
     cache = reset_token_cache(clock)
     entry = seed_app()
@@ -1755,9 +1810,12 @@ def main() -> int:
         "20 data POSTs and left no cooldown, and the process as built paid one getToken POST "
         "per feed and alert cycle. AFTER: the same ten calls made "
         f"{a1['mints']} getToken and {a1['data']} data POSTs, then every call was held without "
-        f"a request ({_secs(a1['hold'])} hold from the refused-token base, the token dropped); "
+        f"a request ({_secs(a1['hold'])} hold at the ladder's base, the token dropped, no "
+        "re-mint for a fresh token); "
         f"the streak ends on acceptance, not on issue (windows {_secs(w1)}, {_secs(w2)}, "
-        f"{_secs(w3)}); the process as built paid {a4.get('total')} getToken POSTs in all, "
+        f"{_secs(w3)}); under sustained rejection from a cold cache the allowance went at "
+        f"{', '.join(_secs(t) for t in a1['probes'])} and was found spent at "
+        f"{_secs(a1['probes_spent_at'])}; the process as built paid {a4.get('total')} getToken POSTs in all, "
         f"{a4.get('after')} after the refusals began; at the production cadences across an "
         f"Eastern midnight the pollers sent {a2['per_date']} getToken POSTs, the first "
         f"cooldown ours ({_secs(a2['first_cooldown'])}) and NJ Transit's refusal never drawn, "

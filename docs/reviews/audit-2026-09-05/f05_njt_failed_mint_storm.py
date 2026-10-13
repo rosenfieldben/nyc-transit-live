@@ -46,6 +46,20 @@ Eastern date costs exactly the allowance, the hold lapses at midnight plus the
 margin, and NJ Transit's own refusal is never drawn. The README rows section E
 matches are now matched whole, before and after on one labelled line.
 
+AMENDED AGAIN ON claude/a01-mint-allowance, by ruling, and this one reverses F05's
+own choice of base. At F05's 60 s, four failed mints spent the day's allowance in
+seven minutes (0, 60, 180 and 420 s), so a getToken outage of a quarter of an hour
+at deploy time cost NJ Transit the rest of the Eastern day. With the allowance as
+the reason, one ladder now serves a failed mint and a refused fresh token alike,
+from MINT_COOLDOWN_BASE_S = 600 s to the same 1800 s cap: the four fall at 0, 600,
+1800 and 3600 s, and an outage of under an hour heals at the next probe. Re-measured
+here, not retyped: the first hour from 4 to 3 (the fourth probe is the next hour's
+first instant), the four spare gone at 60 min rather than 7, and the minute (1) and
+the day (8) unmoved. And section A2 now measures its re-mint on a token NJ Transit
+has accepted, because the same branch stopped a fresh token (never accepted, minted
+moments ago) from buying one (the next would be refused the same way); a token
+minted within the attempt is that case, A2's second line, at one mint.
+
 SO EVERY NUMBER BELOW IS NOW A BEFORE AND AN AFTER, measured the same way, and
 the script fails if the AFTER stops holding. The "before" figures are not
 retyped from the audit: they are the count of scheduled attempts the same drive
@@ -188,7 +202,7 @@ from feeds import alerts as alerts_feed  # noqa: E402
 _hermetic.verify(expect_configured=True)
 
 # THE BUDGET IT IS MEASURED AT (added on claude/a01-mint-allowance, Audit 6, A01).
-# Every figure below is walked off the shipped allowance and cooldown bases, and
+# Every figure below is walked off the shipped allowance and cooldown base, and
 # env_seams loads .env, so an override in a developer's shell or .env would turn this
 # record red on one machine and blame the fix. Checked after the backend imports, when
 # .env has loaded: an override that moves a value stops the run and names it, with no
@@ -196,7 +210,6 @@ _hermetic.verify(expect_configured=True)
 _BUDGET_SEAMS = {
     "NJT_DAILY_MINT_ALLOWANCE": njt_auth.DAILY_MINT_ALLOWANCE,
     "NJT_MINT_COOLDOWN_BASE_S": njt_auth.MINT_COOLDOWN_BASE_S,
-    "NJT_MINT_REJECTED_COOLDOWN_BASE_S": njt_auth.MINT_REJECTED_COOLDOWN_BASE_S,
 }
 _OVERRIDDEN = [
     f"{name}={os.environ[name]!r} (shipped default {env_seams.DEFAULTS[name]!r})"
@@ -457,27 +470,50 @@ async def section_protections() -> None:
         len(tokens) == 12 and len(set(tokens)) == 1 and tokens[0] == "f05-fake-token-0123456",
     )
 
-    # A2: njt_post buys exactly one re-mint per attempt, then gives up.
-    fake = FakeRailData(mint=(200, TOKEN_OK), data=(500, INVALID_TOKEN))
+    # A2: njt_post buys exactly one re-mint per attempt, then gives up. AMENDED AGAIN on
+    # claude/a01-mint-allowance: the re-mint is for a token the cache already held, so
+    # the attempt measured starts from one NJ Transit has accepted. A token minted
+    # within the attempt and then refused buys none, which is the second line.
+    async def attempt(fake: FakeRailData, cache: njt_auth.TokenCache):
+        try:
+            await njt_auth.njt_post(
+                DIRECT_DATA_URL,
+                cache=cache,
+                transport=fake,
+                env=DIRECT_ENV,
+                token_url=DIRECT_TOKEN_URL,
+            )
+        except njt_auth.NjtAuthError as exc:
+            return exc
+        return None
+
+    fake = FakeRailData(mint=(200, TOKEN_OK))
     cache = njt_auth.TokenCache()
-    raised = None
-    try:
-        await njt_auth.njt_post(
-            DIRECT_DATA_URL,
-            cache=cache,
-            transport=fake,
-            env=DIRECT_ENV,
-            token_url=DIRECT_TOKEN_URL,
-        )
-    except njt_auth.NjtAuthError as exc:
-        raised = exc
+    warmed = await attempt(fake, cache)
+    fake.data_response = (500, INVALID_TOKEN)
+    mints_before, data_before = fake.token_posts, fake.data_posts
+    raised = await attempt(fake, cache)
+    held_mints, held_data = fake.token_posts - mints_before, fake.data_posts - data_before
+    cold = FakeRailData(mint=(200, TOKEN_OK), data=(500, INVALID_TOKEN))
+    cold_raised = await attempt(cold, njt_auth.TokenCache())
     print()
     print("  A2  upstream keeps answering the probe's invalid-token shape")
-    print(f"        getToken POSTs sent : {fake.token_posts}   data POSTs sent: {fake.data_posts}")
-    print(f"        raised              : {type(raised).__name__}")
+    print(f"        to a held token                  : {held_mints} getToken POSTs, {held_data} data POSTs, "
+          f"raised {type(raised).__name__}")
+    print(f"        to a token minted in the attempt : {cold.token_posts} getToken POSTs, "
+          f"{cold.data_posts} data POSTs, raised {type(cold_raised).__name__}")
     check(
-        "A2 one attempt buys exactly ONE re-mint (2 mints total), never a loop",
-        fake.token_posts == 2 and fake.data_posts == 2 and isinstance(raised, njt_auth.NjtAuthError),
+        "A2 an attempt on a held token buys exactly ONE re-mint, never a loop",
+        warmed is None
+        and held_mints == 1
+        and held_data == 2
+        and isinstance(raised, njt_auth.NjtAuthError),
+    )
+    check(
+        "A2 and a token minted within the attempt that NJ Transit refuses buys none",
+        cold.token_posts == 1
+        and cold.data_posts == 1
+        and isinstance(cold_raised, njt_auth.NjtAuthError),
     )
 
     # A3: a genuine 500 mints nothing extra; the cached token is reused.
@@ -1038,11 +1074,11 @@ async def section_consumers() -> dict:
           f"health keys {alerts_off['health_keys']}")
     check(
         "C3 the alert poller reaches getToken at most once per cooldown window",
-        alerts_on["getToken_posts"] <= alerts_on["polls"]
+        alerts_on["getToken_posts"] == 1
         and alerts_on["cache_delta"] == alerts_on["getToken_posts"],
         f"{alerts_on['getToken_posts']} POSTs over {alerts_on['polls']} polls at a "
-        f"{alert_s:g}s cadence against a {njt_auth.MINT_COOLDOWN_BASE_S:g}s base: this "
-        "poller's cadence is exactly the base, so its second poll opens the second window",
+        f"{alert_s:g}s cadence against a {njt_auth.MINT_COOLDOWN_BASE_S:g}s base: the "
+        "second poll falls inside the window the first one opened",
     )
     check(
         "C3 and it is still NOT gated by njt_static_status (it reaches getToken at all)",
@@ -1358,7 +1394,10 @@ async def section_arithmetic(rates: dict) -> dict:
     print("  ATTEMPT RATE, before and after. The budget consequence follows only if the")
     print("  recorded upstream behavior still holds, which is the same conditional the")
     print("  audit attached to it. What the fix changes is not that conditional: it is")
-    print("  the rate the conditional would be applied to, from 240 an hour to 4.")
+    print(
+        "  the rate the conditional would be applied to, from "
+        f"{rates['regime_b']['hour']} an hour to {rates['regime_b']['posts_hour']}."
+    )
     return {"limit": limit, "spare": spare, "readme": readme, "results": results}
 
 

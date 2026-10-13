@@ -52,11 +52,13 @@ can reach NJ Transit, which is the only one of the two that a rate limit counts.
 
 AND SINCE AUDIT 6 (A01), TWO MORE THINGS COUNT AS FAILING. A mint that returns a
 token NJ Transit then refuses is a failed mint for the budget: njt_post tells the
-cache (TokenCache.reject_fresh), the token is dropped, and the same ladder starts
-from MINT_REJECTED_COOLDOWN_BASE_S, because before that a mint that worked ended
-every hold and each poll bought another refused token. And the ladder only spaces
-attempts, so one process also stops itself at DAILY_MINT_ALLOWANCE getToken POSTs
-per Eastern day and holds to the next Eastern midnight, which is what keeps any
+cache (TokenCache.reject_fresh), the token is dropped, and the same ladder starts,
+because before that a mint that worked ended every hold and each poll bought another
+refused token. A fresh token NJ Transit refuses, one it has never accepted and that
+was minted moments ago, is not re-minted either: the next one would be refused the
+same way. And the ladder only
+spaces attempts, so one process also stops itself at DAILY_MINT_ALLOWANCE getToken
+POSTs per Eastern day and holds to the next Eastern midnight, which is what keeps any
 fault inside the process from reaching the monitor's share of the ten.
 
 CONSUMED BY STATIC ONLY IN 15a. njt_static fetches its archive through njt_post,
@@ -235,8 +237,21 @@ _QUOTA_PREFIX = "daily usage limit"
 # healthy request could eat the entire budget that three others still had to fit in.
 # 30s times four is exactly the outer budget, and it is more than three times the
 # worst latency the probe measured, so a genuinely wedged request is cut off with
-# time left for the rest of the sequence.
+# time left for the rest of the sequence. Since Audit 6 (A01) a call is ordinarily
+# three requests at most, POST, re-mint, POST, because a fresh token buys no re-mint;
+# four still bound it (njt_post says when four happen), so the arithmetic stands.
 REQUEST_TIMEOUT_S = 30.0
+
+# HOW LONG A TOKEN NJ TRANSIT HAS NEVER ACCEPTED STAYS FRESH (Audit 6, A01). A fresh
+# token that is refused buys no re-mint: NJ Transit has just refused a token it issued,
+# and the next would be refused the same way. Fresh is bounded twice. NEVER ACCEPTED,
+# because a token NJ Transit has answered with a 200 and now refuses has expired, and
+# expiry is what the one re-mint is for. And YOUNGER THAN THIS, the longest one
+# njt_post call can last (four requests at REQUEST_TIMEOUT_S): a token minted by this
+# attempt, or by one running beside it, is inside it, while one minted hours ago that
+# has only ever drawn genuine 500s or deadlines may simply have expired by the time it
+# is refused, and its re-mint is a probe rather than a repeat.
+FRESH_TOKEN_S = 4 * REQUEST_TIMEOUT_S
 
 # The longest this process will keep using a token before minting a fresh one.
 #
@@ -263,10 +278,10 @@ REQUEST_TIMEOUT_S = 30.0
 # THIS CEILING IS NOT WHAT CARRIES AN EXPIRY, which is what makes twelve safe rather
 # than reckless. A token that actually dies is recognised by is_auth_error and
 # replaced INSIDE the same attempt, for exactly one extra mint: njt_post buys one
-# re-mint and no more, and the contract tier measures that at one across all three
-# NJT consumers at once. So lengthening this trades at most one REACTIVE mint per
-# real expiry against two PROACTIVE mints saved every day, and a real expiry is not
-# a daily event.
+# re-mint and no more, and the contract tier measures that at one across the NJT
+# consumers polling on the token when it dies. So lengthening this trades at most one
+# REACTIVE mint per real expiry against two PROACTIVE mints saved every day, and a
+# real expiry is not a daily event.
 #
 # WHAT IT COSTS, stated rather than glossed: a rejection the sniff fails to
 # recognise now heals in up to twelve hours instead of six, so the self-heal spans
@@ -285,19 +300,27 @@ MAX_TOKEN_AGE_S = 12 * 3600.0
 # is 24 times the whole daily budget every hour. A refusal we had already been
 # given throttled nothing at all.
 #
-# THE BASE, AND WHY IT IS LONGER THAN A POLL. A cooldown shorter than the fastest
-# cadence that can drive a mint changes nothing: the next poll arrives after it has
-# already lapsed and attempts anyway. pollers.POLL_INTERVAL_S is 20s, so 60 is
-# three of them, and it is also exactly pollers.ALERT_POLL_INTERVAL_S, which leaves
-# the alert poller at most one attempt per window rather than three. One minute is
-# also the whole price of a transient blip: a single failed mint costs a minute of
-# waiting before the retry that heals it, during which the feed cache keeps serving
-# what it already has.
+# THE BASE, AND WHY IT IS TEN MINUTES (Audit 6, A01; F05 set it at 60 s). One base for
+# both kinds of failure: a mint that fails, and a fresh token NJ Transit refuses,
+# which for the budget is the same thing (TokenCache.reject_fresh). Under sustained
+# failure of either kind, from a cold cache, the probes fall at 0, 600, 1800 and
+# 3600 s, one getToken POST each, and those four are DAILY_MINT_ALLOWANCE: the day's
+# allowance spans the first hour of a fault, so an outage of under an hour at deploy
+# time heals at the next probe rather than costing the rest of the Eastern day. A
+# process that has already minted on that Eastern date has fewer: with one spent (the
+# held token's own mint, say) its last probe is at 1800 s, with two at 600 s. At F05's
+# 60 s the four fell at 0, 60, 180 and 420 s, and a seven-minute outage on a cold
+# cache spent the day. The price is at the other end: a single failed mint on a cold
+# cache now waits ten minutes for its retry, which a six-hourly contract monitor never
+# sees, while the feed cache keeps serving what it already has. Ten minutes is still
+# longer than any cadence that can drive a mint (the 20 s feed poll, the 60 s alert
+# poll), which is the one thing a base must be: a hold shorter than the next poll
+# changes nothing.
 #
-# Both bases are OVERRIDABLE through a strict seam (env_seams.positive_seconds) for
-# one reader, the contract tier, which runs in real time and has to see a hold lapse
-# inside a scenario. A value that would switch the ladder off refuses to start.
-MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 60.0)
+# OVERRIDABLE through a strict seam (env_seams.positive_seconds) for one reader, the
+# contract tier, which runs in real time and has to see a hold lapse inside a scenario.
+# A value that would switch the ladder off refuses to start.
+MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 600.0)
 
 # THE CAP, AND WHY IT IS HALF AN HOUR. Doubling with no ceiling would eventually
 # park the retry a day out, so a five-minute NJ Transit outage would leave the
@@ -309,50 +332,23 @@ MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 60
 #
 # THAT BOUND HOLDS WHILE THE ALLOWANCE LASTS, and no longer past it (Audit 6, A01).
 # Once DAILY_MINT_ALLOWANCE is spent with no token held, the darkness runs to the next
-# Eastern midnight however soon the fault clears. Four failed mints at this base take
-# seven minutes (0, 60, 180, 420 s), so a cold start (a deploy) inside a seven-minute
-# getToken outage is dark for the rest of the Eastern day, where before the allowance
-# it healed within minutes of the outage ending. A held token, over-age or not, keeps
-# serving through it; it is the tokenless process that pays. That is the allowance's
-# price, measured in arm 5 of docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
+# Eastern midnight however soon the fault clears. From a cold cache the four probes
+# take the first hour (0, 600, 1800 and 3600 s), so a fault that ends inside it heals
+# at the next probe, and one still running at the fourth leaves the tokenless process
+# dark for the rest of the Eastern day; for a process that already minted that day the
+# last probe comes sooner (1800 s with one mint spent, 600 s with two). A held token,
+# over-age or not, keeps serving through it. That is the allowance's price, measured
+# in arm 5 of docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
 #
-# WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to space. A day
-# of unbroken non-quota failure walks 60, 120, 240, 480, 960, 1800, 1800, ... which
-# is 52 getToken POSTs in 24 hours against 5760 before F05, and that is still more
-# than DAILY_MINT_LIMIT: the ladder spaces attempts and cannot bound them, and until
-# Audit 6 the first thing that stopped it was NJ Transit's own quota refusal, after
-# the monitor's share was gone. DAILY_MINT_ALLOWANCE now stops it first, at four in
-# an Eastern day (0, 60, 180 and 420 s, then held to midnight), and the quota arm
-# below is left for the case the allowance cannot see: an account spent elsewhere.
+# WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to space. A day of
+# unbroken failure walks 600, 1200, 1800, 1800, ... which is 49 getToken POSTs in 24
+# hours (52 at F05's 60 s base, 5760 before F05), still more than DAILY_MINT_LIMIT:
+# the ladder spaces attempts and cannot bound them, and until Audit 6 the first thing
+# that stopped it was NJ Transit's own quota refusal, after the monitor's share was
+# gone. DAILY_MINT_ALLOWANCE now stops it first, at four in an Eastern day (0, 600,
+# 1800 and 3600 s, then held to midnight), and the quota arm below is left for the
+# case the allowance cannot see: an account spent elsewhere.
 MINT_COOLDOWN_CAP_S = 1800.0
-
-# THE SECOND BASE: A FRESH TOKEN NJ TRANSIT REFUSED (Audit 6, A01). Same ladder, same
-# cap, a longer first step, and the arithmetic is why.
-#
-# WHAT IT REPLACES. Before A01 a refused fresh token reached no ladder at all: the mint
-# had worked, so it ended whatever cooldown was running, and njt_post's second
-# rejection raised without telling the cache. Every later poll re-sent the refused
-# token, re-minted, and was refused again, one getToken POST per feed poll (20s) and
-# one per alert poll (60s): four a minute, F05's pre-fix storm, from a mint that never
-# failed.
-#
-# WHY LONGER THAN MINT_COOLDOWN_BASE_S. A failed mint spends one attempt and yields
-# nothing. A refused fresh token spends the same attempt AND a token that was issued
-# and is useless, and each probe of the fault is a cold call: the hold has dropped the
-# token, so the next attempt mints, is refused, and buys njt_post's one re-mint, two
-# getToken POSTs per probe. So each step of this ladder costs twice what a step of
-# F05's costs, and a base of 60 spends the day in minutes: from a warm cache, one
-# re-mint at t=0 and two at 60s, and by 180s DAILY_MINT_ALLOWANCE is gone (the
-# fourth POST is the mint at 180s, or the held token's own if that was minted the
-# same Eastern day) and the cache holds to midnight. At 600 the same allowance lasts
-# half an hour (one at 0, two at 600, gone by 1800), a five-minute transient costs
-# one wasted mint before the poll at 600 heals it, and the residual darkness after
-# the fault clears is at most ten minutes, which is nothing against a six-hourly
-# monitor, provided it clears before the allowance is gone; after that it runs to the
-# next Eastern midnight (see MINT_COOLDOWN_CAP_S).
-MINT_REJECTED_COOLDOWN_BASE_S = env_seams.positive_seconds(
-    "NJT_MINT_REJECTED_COOLDOWN_BASE_S", 600.0
-)
 
 # A BASE OUTSIDE ONE SECOND TO THE CAP IS REFUSED, NOT CLAMPED OR HONOURED. Above the
 # cap, _start_cooldown takes min(step, cap), so an override of 7200 would quietly probe
@@ -360,15 +356,11 @@ MINT_REJECTED_COOLDOWN_BASE_S = env_seams.positive_seconds(
 # but name: a base of 1e-9 needs thirty doublings to reach one second, and nothing but
 # the allowance spaces the attempts meanwhile. Checked here, beside the cap, because
 # env_seams has no cap to compare against.
-for _seam, _base in (
-    ("NJT_MINT_COOLDOWN_BASE_S", MINT_COOLDOWN_BASE_S),
-    ("NJT_MINT_REJECTED_COOLDOWN_BASE_S", MINT_REJECTED_COOLDOWN_BASE_S),
-):
-    if not 1.0 <= _base <= MINT_COOLDOWN_CAP_S:
-        raise ValueError(
-            f"{_seam} must be between 1s and MINT_COOLDOWN_CAP_S ({MINT_COOLDOWN_CAP_S:g}s), "
-            f"got {_base:g}"
-        )
+if not 1.0 <= MINT_COOLDOWN_BASE_S <= MINT_COOLDOWN_CAP_S:
+    raise ValueError(
+        "NJT_MINT_COOLDOWN_BASE_S must be between 1s and MINT_COOLDOWN_CAP_S "
+        f"({MINT_COOLDOWN_CAP_S:g}s), got {MINT_COOLDOWN_BASE_S:g}"
+    )
 
 # HOW FAR PAST MIDNIGHT A QUOTA HOLD REACHES. The reset is an Eastern midnight
 # (observed 2026-09-03), and a retry aimed exactly at it is aimed at a boundary we
@@ -406,9 +398,10 @@ class NjtNotConfigured(RuntimeError):
 class NjtAuthError(RuntimeError):
     """Credentials or a token were rejected by the upstream.
 
-    Covers a mint that failed and a request that still read as invalid-token after
-    exactly one re-mint. Either way the attempt is over; the caller's schedule
-    decides the next one.
+    Covers a mint that failed, a request that still read as invalid-token after
+    exactly one re-mint, and one that read as invalid-token on a fresh token (see
+    FRESH_TOKEN_S), which buys no re-mint. Each way the attempt is over; the caller's
+    schedule decides the next one.
     """
 
 
@@ -872,8 +865,8 @@ class TokenCache:
     A REFUSED FRESH TOKEN IS A FAILED MINT, AND THE STREAK ENDS ON ACCEPTANCE
     (Audit 6, A01). A mint that returns a token proves only that getToken answered.
     When NJ Transit then refuses that token, njt_post calls reject_fresh, which drops
-    it (compare-and-clear, as invalidate) and starts the same ladder from
-    MINT_REJECTED_COOLDOWN_BASE_S. A working mint still ends the hold it is in, but
+    it (compare-and-clear, as invalidate) and starts the same ladder from the same
+    base, MINT_COOLDOWN_BASE_S. A working mint still ends the hold it is in, but
     only confirm(), on a 200 for the token it issued, ends the streak: a ladder reset
     by every mint could never climb past its base when every token is refused.
 
@@ -962,6 +955,11 @@ class TokenCache:
         # only for this token, so two consumers refused on the same token step the
         # ladder once, and a stale refusal never puts a newer token under a hold.
         self._unconfirmed: str | None = None
+        # THE NEWEST TOKEN ISSUED, AND WHEN, UNTIL NJ TRANSIT ACCEPTS IT (Audit 6, A01):
+        # what is_fresh reads. Unlike _unconfirmed, a refusal does not clear it, so a
+        # second consumer refused on a token the first has already reported is still
+        # refused on a fresh token, and does not re-mint.
+        self._fresh: tuple[str, float] | None = None
         # TWO COUNTERS, AND THE DISTINCTION IS THE WHOLE POINT OF HAVING BOTH.
         # `mints` counts tokens successfully ISSUED; `mint_requests` counts getToken
         # POSTS ACTUALLY SENT. A failed mint raises before the token is stored, so it
@@ -1093,11 +1091,10 @@ class TokenCache:
             raise NjtMintAllowanceError(self._cooldown_message(remaining), remaining_s=remaining)
         raise NjtMintCooldownError(self._cooldown_message(remaining), remaining_s=remaining)
 
-    def _start_cooldown(self, exc: BaseException, base_s: float = MINT_COOLDOWN_BASE_S) -> float:
+    def _start_cooldown(self, exc: BaseException) -> float:
         """Record a failure so nothing attempts a mint until it lapses, and return
-        how long that is. `base_s` is the ladder's first step for this kind of
-        failure: MINT_COOLDOWN_BASE_S for a failed mint, MINT_REJECTED_COOLDOWN_BASE_S
-        for a fresh token NJ Transit refused. One ladder, two bases, one cap."""
+        how long that is. One ladder, one base, one cap, for a failed mint and a
+        refused fresh token alike (Audit 6, A01)."""
         if isinstance(exc, NjtMintQuotaError):
             # THE ONE FAILURE WITH A KNOWN END. NJ Transit has told us the answer
             # for the rest of the Eastern day, so the hold runs to the reset rather
@@ -1108,10 +1105,10 @@ class TokenCache:
             # EVERYTHING ELSE, INCLUDING WHATEVER BAD CREDENTIALS LOOK LIKE. Nobody
             # has ever probed that answer, so it is not special-cased on a guess:
             # an unknown fault of unknown length takes the ladder like any other.
-            # A streak already past this base keeps doubling from where it is: a
-            # refused token after two failed mints waits at least as long as a third
-            # failed mint would have.
-            step = base_s if self._backoff_s is None else max(base_s, self._backoff_s * 2)
+            # A streak keeps doubling from where it is, whichever kind of failure
+            # extends it: a refused token after two failed mints waits as long as a
+            # third failed mint would have.
+            step = MINT_COOLDOWN_BASE_S if self._backoff_s is None else self._backoff_s * 2
             hold_s = min(step, MINT_COOLDOWN_CAP_S)
             self._backoff_s = hold_s
         until = self._clock() + hold_s
@@ -1190,9 +1187,9 @@ class TokenCache:
         accepted: for the budget, that is a failed mint (Audit 6, A01).
 
         Compare-and-clear first, the rule invalidate() follows, so a newer token a
-        concurrent caller minted survives. Then the ladder from
-        MINT_REJECTED_COOLDOWN_BASE_S, never the midnight latch: a refused token is
-        a fault of unknown length, and NJ Transit has said nothing about the day.
+        concurrent caller minted survives. Then the ladder, never the midnight latch:
+        a refused token is a fault of unknown length, and NJ Transit has said nothing
+        about the day.
 
         ONLY FOR THE NEWEST UNACCEPTED TOKEN. Two consumers refused on the same
         fresh token both land here, and the second must not step the ladder again;
@@ -1203,7 +1200,7 @@ class TokenCache:
         if token != self._unconfirmed:
             return
         self._unconfirmed = None
-        self._start_cooldown(exc, base_s=MINT_REJECTED_COOLDOWN_BASE_S)
+        self._start_cooldown(exc)
 
     def confirm(self, token: str) -> None:
         """NJ Transit answered a POST carrying `token` with a 200: the streak ends.
@@ -1221,6 +1218,17 @@ class TokenCache:
         if token == self._unconfirmed:
             self._unconfirmed = None
             self._backoff_s = None
+        if self._fresh is not None and self._fresh[0] == token:
+            self._fresh = None
+
+    def is_fresh(self, token: str) -> bool:
+        """Whether `token` is fresh: the newest token this cache issued, not yet
+        answered by NJ Transit with a 200, and minted under FRESH_TOKEN_S ago. A
+        refusal does not end it. njt_post asks this of a refused token, because a
+        fresh token's refusal buys no re-mint, whoever minted it (Audit 6, A01)."""
+        if self._fresh is None or self._fresh[0] != token:
+            return False
+        return self._clock() - self._fresh[1] < FRESH_TOKEN_S
 
     async def get(self, mint_token: Callable[[], Awaitable[str]]) -> str:
         """The cached token, minting at most once per cooldown window.
@@ -1268,9 +1276,13 @@ class TokenCache:
                 # charged, which is why the allowance counted it. Without a hold the
                 # next poll would mint again at once, and a getToken slow enough to
                 # outlast one deadline spends the whole allowance back to back. The
-                # quota flag is left alone: nothing was answered.
+                # quota flag is left alone: nothing was answered. The reason is ours,
+                # since str(CancelledError) is empty and the hold must say what began it.
                 self._start_cooldown(
-                    NjtAuthError("a getToken attempt was cancelled before it was answered")
+                    NjtAuthError(
+                        "a getToken attempt was cancelled by its caller's deadline before "
+                        "NJ Transit answered"
+                    )
                 )
                 raise
             except Exception as exc:
@@ -1317,6 +1329,7 @@ class TokenCache:
             self.mints += 1
             self._token = token
             self._minted_at = self._clock()
+            self._fresh = (token, self._minted_at)
             return token
 
 
@@ -1351,8 +1364,13 @@ async def njt_post(
     3. POST. If the response is not the probe's invalid-token shape, we are done:
        a 200 returns its body, anything else raises NjtUpstreamError. A REAL 500
        LANDS HERE, and mints nothing.
-    4. If it IS the invalid-token shape: invalidate that token, take a fresh one,
-       and POST exactly once more.
+    4. If it IS the invalid-token shape, whether the token is FRESH decides
+       (FRESH_TOKEN_S): never accepted by NJ Transit, and minted within the span one
+       call can last, by this attempt or by one beside it. A fresh token is refused
+       for good: a second mint would be refused the same way, so the cache is told
+       (reject_fresh) and the attempt fails without one (Audit 6, A01). Any other
+       token is ordinary expiry: invalidate it, take a new one, and POST exactly
+       once more.
 
     ONE RE-MINT PER ATTEMPT, ENFORCED STRUCTURALLY. There is no loop in this
     function. Step 4 exists once, in straight-line code, and a second invalid-token
@@ -1360,17 +1378,29 @@ async def njt_post(
     ("remember not to retry twice") would be one refactor away from a mint storm
     against a budget of ten a day; the absence of a loop is not.
 
-    Worst case per attempt is therefore two mints (a cold cache plus one re-mint),
-    which is exactly what the token-expiry contract scenario asserts. The retry
-    CADENCE after a failed attempt is the caller's schedule, never a tight loop
-    here.
+    Worst case per attempt is therefore two mints: get() is called twice at most.
+    Since Audit 6 an attempt ordinarily sends one getToken POST, and this is when. A
+    fresh token refused buys no re-mint, so the one, if any, is the first get()'s.
+    An expired token refused buys the one re-mint, and the first get() sent nothing
+    for it, so the one is the second's; the token-expiry contract scenario asserts
+    that case. Two are sent only when the first get() sends a POST and the token it
+    hands back is no longer fresh when it is refused, which takes one of three
+    things. NJ Transit accepts this attempt's new token for a concurrent caller and
+    then refuses it here, which reads as expiry. Or the POST fails, an over-age token
+    is served through it, and the hold the failure opened lapses during the data
+    POST: at the shipped base only a quota hold can be that short, in the last minute
+    before Eastern midnight. Or, under a base override shorter than one request (one
+    contract scenario runs at 1 s), a newer mint supersedes the token inside the
+    attempt. The retry CADENCE after a failed attempt is the caller's schedule,
+    never a tight loop here.
 
-    ACROSS ATTEMPTS, since Audit 6 (A01): when the re-mint's token is refused too,
-    the cache is told (reject_fresh), drops it and holds, so the attempts after it
-    are refused without a request until the ladder lapses, and two consumers refused
-    on the same token step the ladder once. However the attempts fall, one process
-    sends at most DAILY_MINT_ALLOWANCE getToken POSTs in an Eastern day; an attempt
-    whose re-mint the allowance refuses raises NjtMintAllowanceError instead.
+    ACROSS ATTEMPTS, since Audit 6 (A01): when a fresh token is refused, the
+    attempt's own or the re-mint's, the cache is told (reject_fresh), drops it and
+    holds, so the attempts after it are refused without a request until the ladder
+    lapses, and two consumers refused on the same token step the ladder once.
+    However the attempts fall, one process sends at most DAILY_MINT_ALLOWANCE
+    getToken POSTs in an Eastern day; an attempt whose mint the allowance refuses
+    raises NjtMintAllowanceError instead.
     """
     if not is_configured(env):
         raise NjtNotConfigured(
@@ -1383,26 +1413,42 @@ async def njt_post(
     async def _mint() -> str:
         return await mint(transport=post, env=env, url=token_url, timeout_s=timeout_s)
 
+    def _refused_fresh(token: str, status: int, body: bytes) -> NjtAuthError:
+        # Audit 6, A01: for the budget a refused fresh token is a failed mint, so the
+        # next poll is held instead of buying another one.
+        refused = NjtAuthError(
+            f"NJ Transit rejected a freshly minted token: HTTP {status}: {_quote(body)}"
+        )
+        token_cache.reject_fresh(token, refused)
+        return refused
+
     token = await token_cache.get(_mint)
     status, body = await _post(post, url, fields, token, timeout_s)
     if not is_auth_error(status, body):
         accepted = _body_or_raise(status, body)
         token_cache.confirm(token)
         return accepted
+    if token_cache.is_fresh(token):
+        # THE FUTILE RE-MINT, NOT MADE. NJ Transit refused a fresh token, so the next
+        # one would be refused the same way: one probe of the fault, one getToken
+        # POST, then the ladder.
+        #
+        # FRESH, NOT MINTED BY THIS CALL. A token another attempt minted moments ago
+        # and nobody has seen accepted is just as fresh; read as held, it bought the
+        # futile re-mint, and the minter's own refusal landing during it stepped the
+        # ladder twice for one fault. A consumer refused on a token another has
+        # already reported is refused on a fresh token too, and reject_fresh steps
+        # nothing for it a second time.
+        raise _refused_fresh(token, status, body)
 
-    # THE ONE RE-MINT. Not a loop, not a counter, not a retry helper: one branch.
+    # THE ONE RE-MINT, for a token that has expired: accepted before, or too old to
+    # be fresh. Not a loop, not a counter, not a retry helper: one branch.
     logger.info("NJ Transit rejected the cached token; re-minting once and retrying")
     token_cache.invalidate(token)
     token = await token_cache.get(_mint)
     status, body = await _post(post, url, fields, token, timeout_s)
     if is_auth_error(status, body):
-        refused = NjtAuthError(
-            f"NJ Transit rejected a freshly minted token: HTTP {status}: {_quote(body)}"
-        )
-        # Audit 6, A01: for the budget a refused fresh token is a failed mint, so
-        # the next poll is held instead of buying another one.
-        token_cache.reject_fresh(token, refused)
-        raise refused
+        raise _refused_fresh(token, status, body)
     accepted = _body_or_raise(status, body)
     token_cache.confirm(token)
     return accepted

@@ -76,10 +76,9 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # NJ Transit's mint budget (Audit 6, A01): getToken POSTs one process may send per
     # Eastern day. Four is a budget line (njt_auth.DAILY_MINT_ALLOWANCE), not a taste.
     "NJT_DAILY_MINT_ALLOWANCE": 4,
-    # The two bases the mint cooldown ladder starts from (njt_auth.MINT_COOLDOWN_BASE_S
-    # and MINT_REJECTED_COOLDOWN_BASE_S), each with its arithmetic beside it there.
-    "NJT_MINT_COOLDOWN_BASE_S": 60.0,
-    "NJT_MINT_REJECTED_COOLDOWN_BASE_S": 600.0,
+    # The one base the mint cooldown ladder starts from, for a failed mint and a
+    # refused fresh token alike (njt_auth.MINT_COOLDOWN_BASE_S, arithmetic beside it).
+    "NJT_MINT_COOLDOWN_BASE_S": 600.0,
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -368,18 +367,23 @@ def test_a_degenerate_mint_allowance_refuses_to_start(value):
     assert "NJT_DAILY_MINT_ALLOWANCE must be a positive whole number" in result.stderr
 
 
-def test_the_cooldown_base_seams_take_a_positive_duration():
+def test_the_cooldown_base_seam_takes_a_positive_duration():
     out = _resolve(
-        "(__import__('njt_auth').MINT_COOLDOWN_BASE_S, "
-        "__import__('njt_auth').MINT_REJECTED_COOLDOWN_BASE_S)",
-        {"NJT_MINT_COOLDOWN_BASE_S": "1.5", "NJT_MINT_REJECTED_COOLDOWN_BASE_S": "2"},
+        "__import__('njt_auth').MINT_COOLDOWN_BASE_S", {"NJT_MINT_COOLDOWN_BASE_S": "1.5"}
     )
-    assert out == "(1.5, 2.0)"
+    assert out == "1.5"
 
 
-@pytest.mark.parametrize("name", ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+def test_the_refused_token_base_seam_is_gone():
+    """One ladder, one base (Audit 6, A01): the refused-token base and its seam were
+    folded into MINT_COOLDOWN_BASE_S, so the name is no longer a seam at all."""
+    assert "NJT_MINT_REJECTED_COOLDOWN_BASE_S" not in env_seams.SEAM_NAMES
+    assert not hasattr(njt_auth, "MINT_REJECTED_COOLDOWN_BASE_S")
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf", "2s", ""])
-def test_a_degenerate_cooldown_base_refuses_to_start(name, value):
+def test_a_degenerate_cooldown_base_refuses_to_start(value):
+    name = "NJT_MINT_COOLDOWN_BASE_S"
     """STRICTER THAN THE TIMINGS (env_seams.positive_seconds). Zero or a negative base
     is a hold that has lapsed as it starts, nan one that never compares as running,
     and inf one the cap quietly shortens: each switches the ladder off or misstates
@@ -398,12 +402,12 @@ def test_a_degenerate_cooldown_base_refuses_to_start(name, value):
     )
 
 
-@pytest.mark.parametrize("name", ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
 @pytest.mark.parametrize("value", ["1801", "0.5", "1e-9"])
-def test_a_cooldown_base_outside_a_second_to_the_cap_refuses_to_start(name, value):
+def test_a_cooldown_base_outside_a_second_to_the_cap_refuses_to_start(value):
     """The ladder takes min(step, 1800), so a base of 1801 would quietly be 1800, and
     one below a second is a ladder in name only. Both refuse; the two ends, 1 and
     1800, are accepted."""
+    name = "NJT_MINT_COOLDOWN_BASE_S"
     result = subprocess.run(
         [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
         cwd=BACKEND,
@@ -419,8 +423,7 @@ def test_a_cooldown_base_outside_a_second_to_the_cap_refuses_to_start(name, valu
 @pytest.mark.parametrize("value", ["1", "1800"])
 def test_a_cooldown_base_at_either_end_is_accepted(value):
     out = _resolve(
-        "__import__('njt_auth').MINT_REJECTED_COOLDOWN_BASE_S",
-        {"NJT_MINT_REJECTED_COOLDOWN_BASE_S": value},
+        "__import__('njt_auth').MINT_COOLDOWN_BASE_S", {"NJT_MINT_COOLDOWN_BASE_S": value}
     )
     assert out == f"{float(value)}"
 

@@ -643,8 +643,9 @@ async def test_a_refresh_that_outruns_the_deadline_also_marks_the_system_block(m
     and the C2 block kept reporting ok: true beside retained trains. NJ Transit is
     the most exposed source to that path by construction: njt_auth.njt_post's worst
     case is four requests at REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST),
-    which is 120s against a 45s deadline, so a slow-but-alive RailData lands here
-    rather than at _refresh_njt's own error handling.
+    which is 120s against a 45s deadline, and three (90s) is its ordinary worst case
+    since Audit 6, so a slow-but-alive RailData lands here rather than at
+    _refresh_njt's own error handling.
 
     Driven through _bounded_refresh directly with a compressed deadline, because
     the claim is about that wrapper rather than about any one source.

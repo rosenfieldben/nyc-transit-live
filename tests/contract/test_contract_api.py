@@ -871,44 +871,70 @@ def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
 def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):
     """THE MOST DANGEROUS PROBE FACT, pinned: a dead token is an HTTP 500.
 
-    The simulator rejects the first token it ever issued with the real upstream's
-    exact body, {"errorMessage":"Invalid token."} under a 500, and accepts the one
-    that replaces it. A loader that reads that 500 as a server error backs off
-    forever while the fix is a single re-mint; one that reads it correctly recovers
-    INSIDE one attempt.
+    The app holds a token NJ Transit has accepted, and then the simulator kills it:
+    the first token it ever issued is refused with the real upstream's exact body,
+    {"errorMessage":"Invalid token."} under a 500, and the one that replaces it is
+    accepted. A loader that reads that 500 as a server error re-posts the dead token
+    on every attempt while the fix is a single re-mint; one that reads it correctly
+    re-mints once and carries on.
+
+    AN ACCEPTED TOKEN, NOT A COLD ONE (Audit 6, A01). A fresh token (never accepted,
+    minted moments ago) buys no re-mint when it is refused, since the next would be
+    refused the same way, so the expiry has to fall on a token NJ Transit has already
+    answered with a 200. The static loader holds one: the publication is headers-only, which
+    still comes back 200, so the group fails and retries on the rung schedule with
+    the token it minted first. And the NJ Transit alert feed
+    errors before its token is read, so the loader is the one consumer that meets
+    the expiry; the trains poller waits on a ready group.
 
     THE ASSERTION IS ARITHMETIC, not a log line: exactly two mints across the whole
     scenario. One for the cold cache, one to replace the token that died, and no
     more, because "re-mint once" must be structural rather than a convention that
     drifts into a loop against a cap of ten mints a day.
 
-    Hermetic counterpart:
-    backend/tests/test_njt_auth.py::test_one_remint_then_the_attempt_fails.
+    Hermetic counterparts: backend/tests/test_njt_auth.py's
+    test_an_expired_token_is_replaced_once_and_the_request_succeeds and
+    test_one_remint_then_the_attempt_fails.
     """
-    harness.sim.set_token_mode("reject-first")
+    harness.sim.set_publication("njt", "headers-only-stops")
+    harness.sim.set_mode("njt:alerts", "error")
     with harness.launch() as app:
         app.await_status(
-            lambda s: s["njt_static"] == "ready",
-            "the NJT group to recover from an expired token inside one attempt",
+            lambda s: s["njt_static"] == "failed",
+            "the NJT group to fail on a headers-only publication, and keep retrying",
         )
+        fetched = harness.sim.await_fetched("njt", 2)
+        assert harness.sim.mint_requests() == 1, (
+            "the loader retries on the one token it holds, got "
+            f"{harness.sim.mint_requests()} getToken POSTs"
+        )
+
+        harness.sim.set_token_mode("reject-first")
+        # THE FALSIFIABLE HALF. Four more getGTFS POSTs, so "exactly one extra mint"
+        # is a claim about a loader that kept asking. A loader that read the 500 as an
+        # outage would re-post the dead token on every one of them, and this count
+        # would stay at 1.
+        #
+        # WHAT THIS DOES NOT PIN: that the replacement was minted INSIDE the attempt
+        # that met the refusal rather than on the next one. Nothing on the wire marks
+        # an attempt boundary, and the getGTFS count that used to show it belonged to
+        # the cold-start version of this scenario, which ruling 2 retired (a fresh
+        # token buys no re-mint). test_njt_auth.py's
+        # test_an_expired_token_is_replaced_once_and_the_request_succeeds pins it.
+        harness.sim.await_fetched("njt", fetched + 4)
         assert harness.sim.mint_requests() == 2, (
             "an expired token costs exactly one extra mint: one cold, one to replace "
             f"the dead one, got {harness.sim.mint_requests()}"
         )
-        # THE OTHER HALF, AND THE FALSIFIABLE ONE. Two getGTFS POSTs is what
-        # "recovered INSIDE one attempt" looks like on the wire: the rejected fetch
-        # and the retry that succeeded. A loader that read the 500 as an outage
-        # instead would fail the attempt, retry on the rung schedule, and re-post the
-        # SAME token, so this count would climb while mint_requests stayed at 1.
-        #
-        # The static_archives block is deliberately NOT the assertion here, though it
-        # is checked below for corroboration: static_shared._record CLEARS
-        # failed_downloads and last_download_error on every promotion, so those two
-        # read zero after any successful attempt, re-minted or not. They cannot tell
-        # this scenario from the failure it is about.
-        assert harness.sim.gtfs_requests() == 2, (
-            "recovery must happen inside one attempt: one rejected fetch, one retry, "
-            f"got {harness.sim.gtfs_requests()} getGTFS POSTs"
+
+        # And the replacement is the token the group heals on.
+        harness.sim.set_publication("njt", "good")
+        app.await_status(
+            lambda s: s["njt_static"] == "ready",
+            "the NJT group to heal on the replacement token",
+        )
+        assert harness.sim.mint_requests() == 2, (
+            f"healing cost no further mint, got {harness.sim.mint_requests()}"
         )
         archive = app.status()["static_archives"]["njt"]
         assert archive["last_promoted_at"] is not None, archive
@@ -1042,7 +1068,7 @@ def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
 
         # WHAT THIS TIER CANNOT WITNESS, stated rather than quietly dropped. Healing
         # a quota hold means reaching Eastern midnight, and healing a backoff one
-        # means outliving njt_auth.MINT_COOLDOWN_BASE_S (60s), which is longer than
+        # means outliving njt_auth.MINT_COOLDOWN_BASE_S (600s), which is longer than
         # this whole suite's budget and is deliberately NOT one of the cadences
         # CONTRACT_TIMING compresses: a cooldown shorter than a poll interval would
         # not be a cooldown. So the heal, the doubling and the midnight release are
@@ -1500,13 +1526,19 @@ def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers
     By 15b the static loader, the trains poller and the alerts poller all POST
     behind the SAME token, on three different cadences, from three different tasks.
     When that token dies they can meet the rejection concurrently. njt_auth's
-    single-flight cache is what turns that into ONE re-mint instead of three, and
+    single-flight cache is what turns that into ONE re-mint instead of one each, and
     the failure it prevents is spending mints against a rate limit NJ Transit does
     not publish, at the exact moment the integration is already in trouble.
 
-    THE ASSERTION IS ARITHMETIC ON THE WIRE. The simulator rejects the first token
-    it ever issued, on EVERY route, and accepts its replacement. Two getToken POSTs
-    total is the whole claim: one cold, one to replace the dead token. A third
+    MID-POLL, ON A HELD TOKEN. The app runs healthy first: the static loader mints
+    the token and loads on it, and the trains and alerts pollers are both polling on
+    it when it dies. A fresh token (never accepted, minted moments ago) buys no
+    re-mint since Audit 6, so dying from boot would be a different scenario; this
+    one is ordinary expiry, which keeps its one re-mint.
+
+    THE ASSERTION IS ARITHMETIC ON THE WIRE. The simulator then rejects the first
+    token it ever issued, on EVERY route, and accepts its replacement. Two getToken
+    POSTs total is the whole claim: one cold, one to replace the dead token. A third
     would mean two consumers each minted their own.
 
     The realtime counter is what makes it non-vacuous: it proves the realtime
@@ -1515,23 +1547,30 @@ def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers
     Hermetic counterpart: backend/tests/test_njt_auth.py's single-flight tests,
     which pin the same lock against concurrent callers with no sockets involved.
     """
-    harness.sim.set_token_mode("reject-first")
     with harness.launch() as app:
         _await_njt_trains(app)
+        assert harness.sim.mint_requests() == 1, "one cold mint, held by all three"
+        rt_before = harness.sim.rt_requests()
+        fetched_before = app.status()["feeds"]["njt"]["fetched_at"]
+        harness.sim.set_token_mode("reject-first")
         # Let realtime poll several times past the recovery, so "no further mints"
         # is a claim about a RUNNING app rather than one that has polled once.
         harness.sim.await_polls("njt:tripupdate", 3)
+        harness.sim.await_polls("njt:alerts", 2)
 
         assert harness.sim.mint_requests() == 2, (
             "one dead token shared by three consumers must cost exactly one re-mint: "
             f"one cold, one replacement. Got {harness.sim.mint_requests()} getToken POSTs, "
             "which means a consumer minted its own instead of waiting on the shared lock."
         )
-        assert harness.sim.rt_requests() >= 3, (
+        assert harness.sim.rt_requests() >= rt_before + 3, (
             "the claim is only meaningful if realtime was actually being polled across "
-            f"the expiry; got {harness.sim.rt_requests()} realtime POSTs"
+            f"the expiry; got {harness.sim.rt_requests() - rt_before} realtime POSTs after it"
         )
-        assert app.get("/api/njt-trains")["trains"], "and the app recovered inside the poll"
+        njt_feed = app.status()["feeds"]["njt"]
+        assert njt_feed["fetched_at"] > fetched_before and njt_feed["last_error"] is None, (
+            f"the trains feed polled successfully again after the expiry: {njt_feed}"
+        )
         assert app.status()["njt_static"] == "ready", (
             "the static loader recovered on the same token"
         )
@@ -1548,11 +1587,13 @@ def test_njt_a_token_refused_on_every_mint_costs_two_getTokens_then_holds(harnes
 
     ACROSS THREE CONSUMERS. The app first runs healthy on one token, so the static
     warmup has loaded on it and returned, and the trains and alerts pollers are both
-    polling; then every token starts being refused. The two pollers meet it, whichever
-    is first buys njt_post's one re-mint, that token is refused too, and the cache
-    holds: TWO getToken POSTs in the whole scenario, the cold one and the re-mint,
-    however many cycles follow. The hold is the refused-token base, not the midnight
-    latch, because NJ Transit has said nothing about the day.
+    polling; then every token starts being refused. The two pollers meet it, one of
+    them buys the second mint, that token is refused too, and the cache holds: TWO
+    getToken POSTs in the whole scenario, however many cycles follow. That the second
+    is njt_post's one re-mint inside the attempt, rather than a cold mint on the next,
+    is not visible on the wire; backend/tests/test_njt_auth.py pins it. The hold is
+    the ladder's base, not the midnight latch, because NJ Transit has said nothing
+    about the day.
 
     Hermetic counterparts: backend/tests/test_njt_auth.py section 9, and arm 2 of
     docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
@@ -1586,7 +1627,7 @@ def test_njt_a_token_refused_on_every_mint_costs_two_getTokens_then_holds(harnes
         cooldown = status["njt_mint_cooldown"]
         assert cooldown is not None, status
         assert "rejected a freshly minted token" in cooldown["detail"], cooldown
-        # From the refused-token base, not doubled: the token NJ Transit refused first
+        # From the ladder's base, not doubled: the token NJ Transit refused first
         # had been accepted, so no streak was running when the refusals began.
         assert 0 < cooldown["seconds_remaining"] <= 600, cooldown
         assert status["njt_mint_allowance"]["spent"] == 2, status["njt_mint_allowance"]
@@ -1603,13 +1644,14 @@ def test_njt_a_token_refused_on_every_mint_costs_two_getTokens_then_holds(harnes
 def test_njt_the_daily_allowance_stops_the_app_before_nj_transit_has_to(harness):
     """AUDIT 6, A01: the allowance, end to end, from a cold start.
 
-    The allowance is lowered to two and both cooldown bases to a second through their
+    The allowance is lowered to two and the cooldown base to a second through their
     seams, because this tier runs in real time and the production hold is ten
     minutes; the day boundary is the unit tests' and the A01 record's to cross, with
     an injected clock. Under `reject-all` from boot, the static warmup and the alert
-    poller meet the refusal together: the cold mint, the one re-mint, a hold of a
-    second, and then the next attempt finds the day's allowance spent and sends
-    NOTHING, holding to the next Eastern midnight.
+    poller meet the refusal together: the cold mint, refused within the attempt that
+    minted it so no re-mint, a hold of a second, a second cold mint refused the same
+    way and a hold of two, and then the next attempt finds the day's allowance spent
+    and sends NOTHING, holding to the next Eastern midnight.
 
     The static warmup's mints are counted with the pollers': it is one of the paths
     to getToken the allowance has to cover, and here it is the one that minted first.
@@ -1621,7 +1663,6 @@ def test_njt_the_daily_allowance_stops_the_app_before_nj_transit_has_to(harness)
     with harness.launch(
         NJT_DAILY_MINT_ALLOWANCE="2",
         NJT_MINT_COOLDOWN_BASE_S="1",
-        NJT_MINT_REJECTED_COOLDOWN_BASE_S="1",
     ) as app:
         status = app.await_status(
             lambda s: (s.get("njt_mint_allowance") or {}).get("spent_out") is True,
@@ -1641,6 +1682,14 @@ def test_njt_the_daily_allowance_stops_the_app_before_nj_transit_has_to(harness)
         assert harness.sim.mint_requests() == 2, (
             "the allowance is a ceiling on getToken POSTs SENT: two, then nothing; "
             f"got {harness.sim.mint_requests()}"
+        )
+        # THE SEQUENCE, AS A LOWER BOUND. The second getToken POST waited out the
+        # first refusal's one-second hold, so it was a cold mint on a later attempt,
+        # not a re-mint inside the first: a futile re-mint lands milliseconds after
+        # the mint it follows. A slow machine can only widen the gap.
+        gaps = harness.sim.mint_gaps()
+        assert len(gaps) == 1 and gaps[0] >= 1.0, (
+            f"the second mint did not wait out the first refusal's hold: gaps {gaps}"
         )
         assert harness.sim.gtfs_requests() + harness.sim.rt_requests() == njt_requests, (
             "and with no token left to serve, nothing reaches NJ Transit at all"

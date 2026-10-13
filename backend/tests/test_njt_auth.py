@@ -1367,3 +1367,272 @@ async def test_the_cooldown_says_what_started_it_and_how_long_is_left():
     clock.advance(njt_auth.MINT_COOLDOWN_CAP_S)
     assert cache.cooldown() is None
     assert cache.cooldown_remaining() is None
+
+
+# ---------------------------------------------------------------------------
+# 9. A refused fresh token (Audit 6, A01)
+# ---------------------------------------------------------------------------
+#
+# THE FINDING, as it was measured: a mint that WORKED cleared the cooldown and reset
+# the ladder, and njt_post's second rejection raised without telling the cache. So a
+# fresh token NJ Transit refused stayed cached as good, the next call re-posted it,
+# re-minted and was refused again: ten calls cost 11 getToken and 20 data POSTs and
+# left no cooldown, one mint per poll, F05's pre-fix storm from a mint that never
+# failed. Every test below is one clause of the fix.
+
+
+class _Upstream:
+    """NJ Transit for this section: every getToken POST is answered with a new,
+    distinct token, and every data POST is refused with the probe's invalid-token
+    shape, unless `accept` (a 200) or `real_500` (a genuine fault) is set.
+
+    Keyed on the getToken path rather than on TOKEN_URL, so it also stands behind
+    the consumers below, which mint at njt_auth.NJT_TOKEN_URL."""
+
+    def __init__(self, mint_delay_s: float = 0.0, data_delay_s: float = 0.0):
+        self.mints = 0
+        self.data_tokens: list[str] = []
+        self.accept = False
+        self.real_500 = False
+        self.mint_delay_s = mint_delay_s
+        self.data_delay_s = data_delay_s
+
+    async def __call__(self, url, form, timeout_s):
+        if url.rstrip("/").endswith("getToken"):
+            self.mints += 1
+            minted = self.mints
+            if self.mint_delay_s:
+                await asyncio.sleep(self.mint_delay_s)
+            return 200, json.dumps({"UserToken": f"fresh-{minted}"}).encode()
+        self.data_tokens.append(form["token"])
+        if self.data_delay_s:
+            await asyncio.sleep(self.data_delay_s)
+        if self.real_500:
+            return 500, REAL_500
+        if self.accept:
+            return 200, b"zip-bytes"
+        return 500, INVALID_TOKEN
+
+
+async def test_ten_calls_against_a_refusing_upstream_cost_two_mints_then_hold():
+    """THE AUDIT'S OWN EXPERIMENT, with its numbers inverted. Ten calls on one cache,
+    an upstream that mints every time and refuses every token: the audit measured 11
+    getToken and 20 data POSTs and no cooldown. Now the first call spends what one
+    attempt may (the cold mint, its refusal, the one re-mint, its refusal) and every
+    later call is held without a request, on a cache holding nothing it could
+    re-post."""
+    clock = _Clock()
+    upstream = _Upstream()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+
+    raised = []
+    for _ in range(10):
+        with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+            await njt_auth.njt_post(
+                URL, cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL
+            )
+        raised.append(excinfo.value)
+
+    assert upstream.mints == 2, f"the cold mint and the one re-mint, got {upstream.mints} (was 11)"
+    assert len(upstream.data_tokens) == 2, f"got {len(upstream.data_tokens)} data POSTs (was 20)"
+    assert upstream.data_tokens == ["fresh-1", "fresh-2"]
+    assert not isinstance(raised[0], njt_auth.NjtMintCooldownError), "the first call asked"
+    assert all(isinstance(r, njt_auth.NjtMintCooldownError) for r in raised[1:]), (
+        "every later call is held before any request"
+    )
+    assert cache.peek() is None, "the refused token is dropped, so nothing re-posts it"
+    remaining, detail = cache.cooldown()
+    assert remaining == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+    assert "rejected a freshly minted token" in detail, "the hold names what started it"
+
+
+async def test_the_refused_token_ladder_walks_from_its_own_base_to_the_cap():
+    """ONE LADDER, TWO BASES, ONE CAP. A refused fresh token starts at
+    MINT_REJECTED_COOLDOWN_BASE_S and doubles to MINT_COOLDOWN_CAP_S like any other
+    streak, and each probe after a hold lapses is a cold call: the mint, its
+    refusal, the one re-mint, its refusal. That is why the base is ten minutes and
+    not one (see the constant)."""
+    clock = _Clock()
+    upstream = _Upstream()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+
+    holds = []
+    for _ in range(4):
+        with pytest.raises(njt_auth.NjtAuthError):
+            await njt_auth.njt_post(
+                URL, cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL
+            )
+        holds.append(cache.cooldown_remaining())
+        clock.advance(holds[-1])
+
+    base, cap = njt_auth.MINT_REJECTED_COOLDOWN_BASE_S, njt_auth.MINT_COOLDOWN_CAP_S
+    assert holds == [base, base * 2, cap, cap] == [600, 1200, 1800, 1800], holds
+    assert upstream.mints == 8, "four probes, each a cold mint and one re-mint"
+
+
+async def test_the_streak_ends_on_acceptance_not_on_issue():
+    """A WORKING MINT IS NOT PROOF. The ladder used to reset on every mint that
+    returned a token, which is exactly the event a refused fresh token begins with,
+    so the ladder could never leave its base in A01's shape. Now a mint ends the hold
+    it is in and nothing more; a 200 on the token it issued ends the streak."""
+    clock = _Clock()
+    upstream = _Upstream()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+
+    async def post():
+        return await njt_auth.njt_post(
+            URL, cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL
+        )
+
+    with pytest.raises(njt_auth.NjtAuthError):
+        await post()
+    assert cache.cooldown_remaining() == 600
+    clock.advance(600)
+
+    # A mint that works, whose token NJ Transit answers with a genuine 500: issued,
+    # never accepted. The hold is over, the streak is not.
+    upstream.real_500 = True
+    with pytest.raises(njt_auth.NjtUpstreamError):
+        await post()
+    assert cache.cooldown_remaining() is None, "a working mint ends the hold it was in"
+    upstream.real_500 = False
+    with pytest.raises(njt_auth.NjtAuthError):
+        await post()
+    assert cache.cooldown_remaining() == 1200, "the streak outlived a mint nobody accepted"
+    clock.advance(1200)
+
+    # A 200 on the token a mint just issued ends it.
+    upstream.accept = True
+    assert await post() == b"zip-bytes"
+    upstream.accept = False
+    with pytest.raises(njt_auth.NjtAuthError):
+        await post()
+    assert cache.cooldown_remaining() == 600, "back to the base after an accepted token"
+
+
+async def test_a_refused_token_is_compare_and_cleared_and_steps_the_ladder_once():
+    """invalidate()'s rule, extended to the hold. A refusal of a token a concurrent
+    caller has already replaced clears nothing and starts nothing, so the newer token
+    survives untouched; the refusal of the newest token clears it and starts the
+    ladder; a second consumer refused on that same token steps the ladder no
+    further."""
+    clock = _Clock()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+    await cache.get(_fixed("older"))
+    cache.invalidate("older")
+    await cache.get(_fixed("newer"))
+
+    cache.reject_fresh("older", njt_auth.NjtAuthError("refused"))
+    assert cache.peek() == "newer", "a stale refusal must not clear the newer token"
+    assert cache.cooldown_remaining() is None, "nor put it under a hold"
+
+    cache.reject_fresh("newer", njt_auth.NjtAuthError("refused"))
+    assert cache.peek() is None
+    assert cache.cooldown_remaining() == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+    cache.reject_fresh("newer", njt_auth.NjtAuthError("refused"))
+    assert cache.cooldown_remaining() == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S, (
+        "a second consumer refused on the same token steps the ladder once, not twice"
+    )
+
+
+async def test_concurrent_callers_refused_on_one_fresh_token_step_the_ladder_once():
+    """The same rule through the door, with both callers genuinely in flight. Both
+    hold a working token when NJ Transit starts refusing; both are refused on it,
+    share the one re-mint (single flight), are refused on that fresh token, and
+    both reach reject_fresh with it. The hold is the base: one step, not two.
+
+    Latency on both endpoints is what puts the second caller's requests inside the
+    first caller's, the way two real requests a few hundred milliseconds long
+    overlap; without it the first caller finishes before the second one starts."""
+    clock = _Clock()
+    upstream = _Upstream(mint_delay_s=0.02, data_delay_s=0.01)
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+    upstream.accept = True
+    assert (
+        await njt_auth.njt_post(URL, cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL)
+        == b"zip-bytes"
+    )
+    upstream.accept = False
+
+    results = await asyncio.gather(
+        *(
+            njt_auth.njt_post(URL, cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL)
+            for _ in range(2)
+        ),
+        return_exceptions=True,
+    )
+    assert upstream.mints == 2, "the working token, then one re-mint the two callers shared"
+    assert upstream.data_tokens[-2:] == ["fresh-2", "fresh-2"], "both were refused on it"
+    assert all(
+        isinstance(r, njt_auth.NjtAuthError) and not isinstance(r, njt_auth.NjtMintCooldownError)
+        for r in results
+    ), "both asked, so both carry NJ Transit's answer"
+    assert cache.cooldown_remaining() == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+
+
+async def test_the_three_consumers_make_no_request_during_a_refused_token_hold(
+    monkeypatch, tmp_path
+):
+    """THE HOLD AS THE PROCESS SEES IT. The feed poller, the alert poller and the
+    static warmup, each through its real path to njt_post against the process-wide
+    cache, run together inside a refused-token hold: not one getToken or data POST
+    leaves, where each used to buy a mint of its own."""
+    from google.transit import gtfs_realtime_pb2
+
+    import main
+    import njt_static
+    import pollers
+    import warmups
+
+    clock = _Clock()
+    upstream = _Upstream()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+    monkeypatch.setattr(njt_auth, "TOKEN_CACHE", cache)
+    monkeypatch.setattr(njt_auth, "_httpx_post", upstream)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", tmp_path / "gtfs_njt.zip")
+
+    # The hold, armed through the door the way a poll arms it.
+    with pytest.raises(njt_auth.NjtAuthError):
+        await njt_auth.njt_post(URL)
+    assert (upstream.mints, len(upstream.data_tokens)) == (2, 2)
+    assert cache.cooldown_remaining() == njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+
+    app = main.app
+    monkeypatch.setattr(app.state, "njt_static_status", "ready", raising=False)
+    monkeypatch.setattr(app.state, "njt_stops", {"109": {}}, raising=False)
+    monkeypatch.setattr(app.state, "njt_trips", {}, raising=False)
+    monkeypatch.setattr(app.state, "feed_cache", {"njt": main._fresh_entry()}, raising=False)
+    monkeypatch.setattr(app.state, "alerts_cache", main._fresh_alerts_entry(), raising=False)
+
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    keyless = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=feed.SerializeToString())
+    )
+
+    class _OneAttempt(Exception):
+        pass
+
+    async def stop_after_one_attempt(*_args, **_kwargs):
+        raise _OneAttempt
+
+    monkeypatch.setattr(warmups, "_fail_and_wait", stop_after_one_attempt)
+
+    async with httpx.AsyncClient(transport=keyless) as client:
+        outcomes = await asyncio.gather(
+            pollers._refresh_njt(app, client),
+            pollers._refresh_alerts(app, client),
+            warmups._warm_njt_static(app),
+            return_exceptions=True,
+        )
+
+    assert isinstance(outcomes[2], _OneAttempt), "the warmup really made its attempt"
+    assert (upstream.mints, len(upstream.data_tokens)) == (2, 2), (
+        "no consumer reached NJ Transit while the hold ran"
+    )
+    feed_error = app.state.feed_cache["njt"]["error"]
+    assert feed_error is not None and "cooldown" in feed_error["detail"], feed_error
+    alert_error = app.state.alerts_cache["health"]["njt"]["last_error"]
+    assert alert_error is not None and "cooldown" in str(alert_error), alert_error

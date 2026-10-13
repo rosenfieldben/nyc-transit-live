@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A01 (High) "Repeated NJ Transit token rejection bypasses the cooldown" : reproduction.
+"""A01 (High) "Repeated NJ Transit token rejection bypasses the cooldown" : the record.
 
 THE AUDIT'S CLAIM (docs/reviews/audit-2026-10-12, report of 12 October 2026 over
 main at 1e3e73d11cedd1a12cbdb70c69b05901d66ba4b2, finding A01):
@@ -23,212 +23,138 @@ main at 1e3e73d11cedd1a12cbdb70c69b05901d66ba4b2, finding A01):
       backend/njt_auth.py:1054         (njt_post, the first token_cache.get)
       backend/tests/test_njt_auth.py:459  (test_one_remint_then_the_attempt_fails)
 
-WHAT THE FINDING IS: the one-re-mint-per-attempt rule holds inside a call and
-nothing carries across calls. TokenCache starts a cooldown only when the mint
-callback RAISES, and a mint that returns a token clears any cooldown and resets
-the backoff ladder. A token NJ Transit then refuses is reported by njt_post as
-NjtAuthError without a word to the cache, so it leaves no cooldown behind, stays
-cached as good, and the next call (the next poll) re-posts it, re-mints, and is
-refused again. F05's cooldown (09-05 audit, merged as PR #101) covers a mint that
-FAILS; a mint that works never reaches it.
+FIXED ON claude/a01-mint-allowance, SO THIS SCRIPT NOW CHECKS THE FIX. Every check
+that moved carries the record's value in its label ("was: ..."), in the 2026-09-05
+FIXED scripts' shape (f01's is the model): it exits 0 while the repaired behaviour
+holds and non-zero the moment it comes back. THE BEFORE, as the 2026-10-12 record
+measured it at 1e3e73d: ten njt_post calls on one cache against a fake that mints
+every time and refuses every token made 11 getToken and 20 data POSTs and left no
+cooldown, an eleventh call minted again, each later call's first data POST re-sent
+the token the previous call had seen refused (9 of 9), and a mint whose token was
+refused reset F05's ladder to its 60s base; in the process as it shipped, every feed
+cycle and every alert cycle after the refusals began paid one getToken POST (12 of 12
+and 4 of 4).
 
-FOUR ARMS, and what each one is for:
+THE REPAIR. njt_post's one re-mint branch, where it raises for a fresh token NJ
+Transit refused, now hands the refusal to the cache (TokenCache.reject_fresh): the
+token is compare-and-cleared and the ladder starts from MINT_REJECTED_COOLDOWN_BASE_S
+(600s) to the shared cap, so the next poll is held without a request. And the streak
+ends on ACCEPTANCE, not on issue: a working mint ends the hold it is in, and only a
+200 on the token it issued (TokenCache.confirm) resets the ladder.
 
-  ARM 1, the audit's number. Ten sequential njt_post calls sharing one
-  TokenCache, against a fake that mints on every getToken POST and answers
-  every data POST with the invalid-token shape. Measured: getToken POSTs, data
-  POSTs, and whether a cooldown exists afterwards, read BEHAVIORALLY (an
-  eleventh call still reaches getToken, and TokenCache.cooldown(), the public
-  method /api/status publishes, is None). Its second half measures the
-  mechanism: the rejected fresh token stays cached as good (the next call's
-  first data POST carries it), and a mint whose token was refused resets the
-  F05 backoff ladder exactly as a working one does.
+THREE ARMS, and what each one is for:
 
-  ARM 2, the production cadence. The two consumers that poll on their own (the
-  feed poller pollers._refresh_njt through main.fetch_njt_trains, and the alert
-  poller pollers._refresh_alerts through main.fetch_service_alerts) driven
-  through their real paths on a hand-cranked timeline laid at the production
-  cadences, read live. Measured: the mints one poll costs, the mints one cycle
-  costs when both run, the instants the getToken POSTs land, and the budget
-  arithmetic (F05's form) that turns those into how long the README's spare
-  mints and the documented ten last. Then the end state: the same drive against
-  a fake that refuses after the account's tenth mint, to see what stops the
-  storm and when. To hold a clock it can crank, this arm stands a
-  default-constructed TokenCache in njt_auth.TOKEN_CACHE's place, as F05 does,
-  so it measures the refreshers and the door, not the process as built.
+  ARM 1, the audit's number, inverted. Ten sequential njt_post calls sharing one
+  TokenCache, against a fake that mints on every getToken POST and answers every data
+  POST with the invalid-token shape. Measured: getToken POSTs, data POSTs, what each
+  call raised, what an eleventh call does, and the cooldown read BEHAVIORALLY and on
+  TokenCache.cooldown(), the public method /api/status publishes. Its second half is
+  the ladder across a refused fresh token: a failed mint's window, then a mint whose
+  token is refused, then a failed mint again.
 
-  ARM 3, the control. F05's failed-mint path at this commit: N concurrent
-  callers against a FAILING mint make one getToken POST and the rest raise
-  NjtMintCooldownError without a request, and the same /api/status surface
-  that reads null in arm 2 reads a running cooldown here. This is what lets
-  the row say the gap is specific to the mint-succeeds-then-data-rejects path
-  and that PR #101's cooldown is intact.
+  ARM 3, the control. F05's failed-mint path at this commit: N concurrent callers
+  against a FAILING mint make one getToken POST and the rest raise
+  NjtMintCooldownError without a request, and the real feed poller publishes the
+  window on /api/status. Unchanged by the repair, which is what lets the row say
+  PR #101's cooldown is intact.
 
   ARM 4, the process as it ships. A FRESH INTERPRETER (this same file, run with
-  --as-shipped-process) enters the real main.lifespan, which starts the real
-  poll loops pollers._poll_feeds and pollers._poll_alerts, against
-  njt_auth.TOKEN_CACHE exactly as the module built it at import (never replaced,
-  never re-clocked; nothing else has run in that interpreter to touch it). The
-  process first runs healthy on one token, then NJ Transit starts refusing every
-  token it is shown. Measured: the getToken POSTs each scheduler cycle costs
-  after that, credited to a consumer by the minted token its next data POST
-  carries. This is the arm that sees a repair carried by how TOKEN_CACHE is
-  constructed, by the lifespan's wiring, or by a gate in the poll loops, none of
-  which arms 1 to 3 execute.
+  --as-shipped-process) enters the real main.lifespan, which starts the real poll
+  loops pollers._poll_feeds and pollers._poll_alerts, against njt_auth.TOKEN_CACHE
+  exactly as the module built it at import. The process first runs healthy on one
+  token, then NJ Transit starts refusing every token it is shown. Measured: the
+  getToken POSTs after that, in total and per scheduler cycle, credited to a
+  consumer by the minted token its next data POST carries.
 
   EVERY ARM POSTS THROUGH njt_auth's OWN TRANSPORT, and the fake answers at the
-  socket layer beneath it (httpx.AsyncHTTPTransport.handle_async_request, where
-  an httpx client hands a request to its connection pool, as a02 fakes it).
-  Nothing in njt_auth is swapped and no httpx client is replaced: _httpx_post
-  builds its own client, and any httpx transport it composes and hands that
-  client (a rejection latch wrapping AsyncHTTPTransport, say) runs above the
-  fake, in all four arms. So a repair carried by the transport, in _httpx_post's
-  own body or in a transport object it builds, changes the counts of arms 1, 2
-  and 4 alike.
+  socket layer beneath it (httpx.AsyncHTTPTransport.handle_async_request, where an
+  httpx client hands a request to its connection pool, as a02 fakes it). Nothing in
+  njt_auth is swapped and no httpx client is replaced, so the repair is measured on
+  the path production takes.
 
-WHY THE COUNTS, NOT THE COOLDOWN SURFACE, CARRY THE VERDICT. "Cooldown remained
-unset" is read twice (TokenCache.cooldown() and /api/status njt_mint_cooldown),
-but a repair can stop the storm with a breaker of its own that never reaches
-that surface, and both reads would then stay null while the minting stopped.
-Every arm therefore also counts what the fake upstream received. WHAT THOSE
-COUNTS COVER, AND WHAT THEY DO NOT: a repair changes them if it lives anywhere
-on the paths the four arms execute: njt_post, TokenCache and njt_auth's
-transport with every httpx object it builds (arm 1, on a cache this script
-builds), the refreshers and the feed and alert fetchers (arm 2), and in ARM 4
-the import-time TOKEN_CACHE, main.lifespan, the real poll loops and everything
-they call. A repair that lives off those paths is not measured here: outside the
-process (an operator, a supervisor, a deployment override of an environment
-seam), in a static loader (arm 4 idles the four non-NJT warmups and hands the
-real NJT warmup a stub load, so the only NJ Transit requests are the pollers'),
-or one that recognises NJ Transit by its literal host name rather than by the
-configured URLs, which no request here may name. That residual is stated, not
-claimed away.
+WHY THE COUNTS, NOT THE COOLDOWN SURFACE, CARRY THE VERDICT. A repair taken back out
+could leave a cooldown published by some other route while the minting resumed, so
+every arm also counts what the fake upstream received, and the counts are what the
+FIXED checks assert first.
 
 WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
 
   * njt_auth.njt_post, the one door, including its single re-mint branch.
-  * njt_auth._httpx_post, the real transport, in every arm: the httpx client it
-    builds, whatever transport it composes, the multipart body, and the client's
-    whole send path down to the connection pool's hand-off.
+  * njt_auth._httpx_post, the real transport, in every arm.
   * njt_auth.TokenCache: real instances with an injected clock pair (the
-    constructor's own seams) in arms 1 to 3, and in arm 4 the module's own
-    TOKEN_CACHE as import built it. njt_auth.mint reads the fake's bytes, so
-    every exception type is the one production raises.
+    constructor's own seams) in arms 1 and 3, and in arm 4 the module's own
+    TOKEN_CACHE as import built it. njt_auth.mint reads the fake's bytes, so every
+    exception type is the one production raises.
   * pollers._refresh_njt -> main.fetch_njt_trains -> njt_post, behind the real
-    njt_static_status gate.
-  * pollers._refresh_alerts -> main.fetch_service_alerts ->
-    feeds.alerts.active_alert_feeds, the NJT alert feed taking its real
-    njt_post path.
-  * Arm 4: main.lifespan (the app state it builds, the tasks it starts and how
-    it stops them), warmups._warm_njt_static, pollers._poll_feeds with its real
-    TaskGroup cycle, pollers._poll_alerts, and the NJ Transit consumers they
+    njt_static_status gate (arm 3).
+  * Arm 4: main.lifespan, warmups._warm_njt_static, pollers._poll_feeds with its
+    real TaskGroup cycle, pollers._poll_alerts, and the NJ Transit consumers they
     run.
-  * routes.status /api/status (its njt_mint_cooldown key and the njt feed's
-    last_error) and /healthz, served through the real ASGI app.
+  * routes.status /api/status, served through the real ASGI app.
   * The cadences and the budget, read live: pollers.POLL_INTERVAL_S,
-    pollers.ALERT_POLL_INTERVAL_S (checked against env_seams.DEFAULTS, so a
-    developer .env override cannot skew the arithmetic), njt_auth.DAILY_MINT_LIMIT,
-    njt_auth.MINT_COOLDOWN_BASE_S, and README.md's own mint table, parsed the
-    way f05_njt_failed_mint_storm.py parses it.
+    pollers.ALERT_POLL_INTERVAL_S (checked against env_seams.DEFAULTS),
+    njt_auth.DAILY_MINT_LIMIT, njt_auth.MINT_COOLDOWN_BASE_S,
+    njt_auth.MINT_REJECTED_COOLDOWN_BASE_S, njt_auth.MINT_COOLDOWN_CAP_S, and
+    README.md's own mint table.
 
 WHAT IS INJECTED (the faults, stated plainly):
 
   * The NJ Transit upstream. FakeRailData answers getToken with HTTP 200 and a
-    fresh, distinct {"UserToken": ...} every time (arms 1, 2 and 4), or HTTP 500
-    with the suite's REAL_500 body (arm 3), or the observed daily-cap refusal
-    after a set count (arm 2's end state). Data POSTs answer HTTP 500
-    {"errorMessage":"Invalid token."}, the exact shape njt_auth.is_auth_error
-    recognises and backend/tests/test_njt_auth.py pins as INVALID_TOKEN. Arm 2's
-    warm-up poll and arm 4's healthy phase are answered with an empty, valid
-    GTFS-Realtime FeedMessage.
+    fresh, distinct {"UserToken": ...} every time (arms 1 and 4), or HTTP 500 with
+    the suite's REAL_500 body (arm 3 and the ladder half of arm 1). Data POSTs
+    answer HTTP 500 {"errorMessage":"Invalid token."}, the exact shape
+    njt_auth.is_auth_error recognises. Arm 4's healthy phase is answered with an
+    empty, valid GTFS-Realtime FeedMessage.
   * THE SOCKET LAYER, in both interpreters, before any backend import:
-    httpx.AsyncHTTPTransport.handle_async_request and its sync twin,
-    httpx.HTTPTransport.handle_request, are replaced by one fake (SocketLayer).
-    Nothing in this backend reaches a socket except through an httpx client, so
-    every request lands there, however the client and its transports were
-    built. A URL naming "njtransit" or "raildata" hard-exits; a POST to the
-    loopback fake host is NJ Transit and is answered by the drive's
-    FakeRailData (reading the form fields out of the multipart body), and with
-    no drive's fake installed it hard-exits too; a GET to the fake host is a
-    keyless alert feed and gets an empty, valid FeedMessage, so an alert poll is
-    an ordinary poll in which only NJ Transit fails; any other host is an
-    unreachable network (httpx.ConnectError).
-  * Arms 2 and 3: njt_auth.TOKEN_CACHE is replaced by a fresh instance per drive
-    so each drive starts from a state it chose on a clock it cranks, which is
-    how F05 puts one clock in front of every consumer at once. Arm 4 does not
-    replace it.
-  * No proxy: HTTP(S)_PROXY and ALL_PROXY, both spellings, are set empty before
-    any import, so every client has the transports it would have in a container
-    with no proxy, wherever this runs.
-  * A hand-cranked clock in arms 1 to 3. Every timeline is relative to t = 0 of
-    the simulated rejection, and the wall clock is fixed at 2026-10-12 12:00
-    EDT, so the output does not depend on the day this runs. Arm 4 runs on the
-    real clocks the import-time cache was built with; it measures counts, not
-    times, its drive lasts a few seconds, and every hold in play (a 60s
-    cooldown, any breaker a repair adds) is far longer than that.
-  * Arm 4 only, F07's precedent for driving the real loops: the poll cadences
-    are scaled by CADENCE_SCALE (ratio kept); the five non-NJT feed refreshers
-    named in pollers.FEED_REFRESHERS are no-ops (one of them marks each feed
-    cycle); pollers._refresh_alerts is wrapped by a pass-through that marks each
-    alert cycle and forwards every argument unchanged; the four non-NJT static
-    warmups and the bus index build idle until shutdown; and njt_static's loader
-    returns F07's stub tables so the REAL NJT warmup reaches ready without a
-    request.
-  * DATA_DIR is a fresh temporary directory; the repository's data/ is never
-    written. The app gets a new starlette State before each drive in arms 2 and
-    3, so nothing one drive leaves on app.state can decide the next drive's
-    count; arm 4 is a separate interpreter.
+    httpx.AsyncHTTPTransport.handle_async_request and its sync twin are replaced by
+    one fake (SocketLayer). A URL naming "njtransit" or "raildata" hard-exits; a POST
+    to the loopback fake host is NJ Transit and is answered by the drive's
+    FakeRailData; a GET to the fake host is a keyless alert feed and gets an empty,
+    valid FeedMessage; any other host is an unreachable network.
+  * Arm 3: njt_auth.TOKEN_CACHE is replaced by a fresh instance for its poller
+    drive, as F05 does. Arm 4 does not replace it.
+  * No proxy: HTTP(S)_PROXY and ALL_PROXY, both spellings, are set empty before any
+    import.
+  * A hand-cranked clock in arms 1 and 3, the wall clock fixed at 2026-10-12 12:00
+    EDT. Arm 4 runs on the real clocks the import-time cache was built with; it
+    measures counts, its drive lasts a few seconds, and the hold it meets (600s) is
+    far longer than that.
+  * Arm 4 only, F07's precedent for driving the real loops: the poll cadences are
+    scaled by CADENCE_SCALE (ratio kept); the five non-NJT feed refreshers are no-ops
+    (one of them marks each feed cycle); pollers._refresh_alerts is wrapped by a
+    pass-through that marks each alert cycle; the four non-NJT static warmups and the
+    bus index build idle; and njt_static's loader returns F07's stub tables so the
+    REAL NJT warmup reaches ready without a request.
+  * DATA_DIR is a fresh temporary directory; the repository's data/ is never written.
 
-WHAT IT READS BY NAME, and why that is not a pin. Nothing private is read to
-decide a check: the counts come from the fake, the cooldown from the public
-TokenCache.cooldown() and from /api/status, and an outcome is classified by
-isinstance against the public exception classes (NjtAuthError,
-NjtMintCooldownError, NjtMintQuotaError, NjtUpstreamError), so a subclass of
-NjtAuthError for the refused fresh token, or any rename of the private names the
-mechanism lives in (TokenCache._start_cooldown, _serve_through_cooldown,
-_live_token, _cooldown_until, _cooldown_reason, _backoff_s, njt_post's _mint,
-_post, _body_or_raise, _httpx_post), leaves it green. The names it writes are
-INJECTION SEAMS: in every arm httpx's own two socket-layer methods (named in
-WHAT IS INJECTED; httpx's, not the backend's, so no backend rename can move
-them); in arms 2 and 3 njt_auth.TOKEN_CACHE, as F05 does; in arm 4 the two
-cadence constants, the FEED_REFRESHERS registry, pollers._refresh_alerts
-(wrapped, not replaced) and njt_static.load_njt_static, which are REQUIRED (a
-missing one raises, and the script goes red without leaving the machine), and
-the four main._warm_* warmups and bus_static.ensure_index, which are OPTIONAL: a
-rename of those leaves the real warmup running into the unreachable network at
-the socket layer, where it fails its download and makes no NJ Transit request,
-so the counts and the verdict do not move (measured: renaming
-_warm_subway_static, _warm_ferry_static and ensure_index throughout backend/
-leaves the script green, with zero sockets).
+WHAT IT READS BY NAME, and why that is not a pin. The counts come from the fake, the
+cooldown from the public TokenCache.cooldown() and from /api/status, and an outcome
+is classified by isinstance against the public exception classes, so a rename of any
+private name the mechanism lives in leaves it green. The names it writes are
+injection seams: httpx's own two socket-layer methods in every arm; in arm 3
+njt_auth.TOKEN_CACHE; in arm 4 the two cadence constants, the FEED_REFRESHERS
+registry, pollers._refresh_alerts (wrapped) and njt_static.load_njt_static, which are
+REQUIRED, and the four main._warm_* warmups and bus_static.ensure_index, which are
+OPTIONAL (a rename leaves the real warmup failing its download into the unreachable
+network, with no NJ Transit request).
 
 HERMETIC, AND WHY THE CREDENTIALS START "f05-". The consumers check
 njt_auth.is_configured(), so this script must look CONFIGURED, which is the case
-_hermetic.contain(keep_credentials=True) / verify(expect_configured=True)
-exists for. verify() accepts a fabricated pair only if the username starts
-"f05-" or "f07-" (its allow-list names the two 09-05 scripts that drive a
-configured deployment). Widening that list is an edit to the 09-05 harness,
-which this branch does not make, so the pair here is "f05-a01-...". Wall 1 is
-what keeps it safe: every NJT URL seam, and the two keyless alert seams
-(ALERTS_RT_BASE, FERRY_ALERTS_URL), is a loopback address set before the first
-backend import, and the socket layer and FakeRailData both hard-fail on any URL
-naming "njtransit" or "raildata". The real transport runs in every arm, and
-beneath it, in both interpreters, every connection pool's hand-off is the fake.
-No socket is opened and no mint is spent, in either interpreter (the 09-05
-_tracer records two interpreters, zero resolutions, zero connections).
+_hermetic.contain(keep_credentials=True) / verify(expect_configured=True) exists
+for; verify() accepts a fabricated pair only if the username starts "f05-" or
+"f07-". Every NJT URL seam and the two keyless alert seams are a loopback address set
+before the first backend import, and the socket layer and FakeRailData both hard-fail
+on any URL naming "njtransit" or "raildata". No socket is opened and no mint is
+spent, in either interpreter.
 
 RUN IT (from the repository root):
 
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py
 
-RECORDED DISPOSITION: VERIFIED. The script exits 0 while the code behaves the
-way the audit says and the ledger records, and 1 the moment it stops. A repair
-on any path the arms execute (the door, the cache, the transport and any httpx
-transport it composes, the refreshers, the poll loops, the lifespan, or how
-TOKEN_CACHE is built) that stops a refused fresh token from buying the next mint
-changes the counts and turns arm 1, 2 or 4 red. Arm 3 stays green under a repair
-that keeps F05's failed-mint path as it is; a repair whose hold is process-wide
-on the real clock, once armed by arm 1, also withholds arm 3's getToken POSTs
-and turns it red with the rest.
+RECORDED DISPOSITION: FIXED (claude/a01-mint-allowance). The script exits 0 while the
+repaired behaviour holds and 1 the moment it comes back: take reject_fresh out of
+njt_post's raising branch and arm 1 goes red at 11 and 20 again; let a working mint
+reset the ladder and arm 1's ladder half goes red at 60s.
 """
 
 from __future__ import annotations
@@ -612,26 +538,6 @@ def readme_numbers() -> dict:
     return found
 
 
-def readme_f05_before() -> dict:
-    """The 'before' column of README.md's F05 table (first minute, first hour, a
-    full day), for a printed cross-reference only. Nothing is asserted on it, so
-    a README rewrite cannot turn this script red."""
-    rows = {
-        "| first minute of unbroken failure |": "minute",
-        "| first hour |": "hour",
-        "| a full day, worst case |": "day",
-    }
-    found = {}
-    for i, line in enumerate((REPO / "README.md").read_text().splitlines(), start=1):
-        for prefix, key in rows.items():
-            if line.strip().startswith(prefix):
-                try:
-                    found[key] = (i, float(line.split("|")[2].strip().strip("*")))
-                except ValueError:
-                    pass
-    return found
-
-
 def _secs(t: float | None) -> str:
     return "no window" if t is None else f"{t:g}s"
 
@@ -764,7 +670,7 @@ def section_containment() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# ARM 1: the audit's ten calls, and the mechanism
+# ARM 1: the audit's ten calls, and the ladder
 # ---------------------------------------------------------------------------
 
 
@@ -789,11 +695,11 @@ async def arm1() -> dict:
                 }
             )
         cooldown_after_ten = cache.cooldown()
+        held_token = cache.peek()
         mints_ten, data_ten = fake.token_posts, fake.data_posts
 
-        # THE ELEVENTH CALL IS THE BEHAVIORAL READ OF "cooldown unset". With a
-        # cooldown running, TokenCache.get raises NjtMintCooldownError before any
-        # getToken POST (arm 3 shows that); without one, this call mints again.
+        # THE ELEVENTH CALL IS THE BEHAVIORAL READ OF THE HOLD: with it running,
+        # TokenCache.get refuses before any getToken POST.
         mints_before = fake.token_posts
         eleventh = await call_njt_post(cache)
         eleventh_mints = fake.token_posts - mints_before
@@ -814,72 +720,58 @@ async def arm1() -> dict:
     print(f"  total  {mints_ten:>8}   {data_ten:>5}")
     print()
     print(f"  TokenCache.cooldown() after the ten : {cooldown_after_ten}")
+    print(f"  token held after the ten            : {held_token}")
     print(
         f"  an 11th call                        : {eleventh_mints} getToken POST, "
         f"{_shown(eleventh)}"
     )
 
+    base = njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
     check(
-        "ARM1 ten calls made 11 getToken POSTs",
-        mints_ten == 11,
+        "ARM1 ten calls made 2 getToken POSTs, the cold mint and the one re-mint (was: 11)",
+        mints_ten == 2,
         str(mints_ten),
         "11 mint requests",
     )
     check(
-        "ARM1 ten calls made 20 data POSTs",
-        data_ten == 20,
+        "ARM1 ten calls made 2 data POSTs (was: 20)",
+        data_ten == 2,
         str(data_ten),
         "20 data requests",
     )
     check(
-        "ARM1 every call failed as a refused token does (an NjtAuthError that is neither the "
-        "cooldown nor the quota error); none was held by a cooldown",
-        all(r["outcome"][0] == "auth-error" for r in rows),
-        ", ".join(sorted({r["outcome"][0] for r in rows})),
+        "ARM1 the first call carries NJ Transit's refusal and every later call is held without "
+        "a request (was: every call a refused token, none held)",
+        rows[0]["outcome"][0] == "auth-error"
+        and [r["mints"] for r in rows] == [2] + [0] * 9
+        and all(r["outcome"][0] == "held" for r in rows[1:]),
+        ", ".join(f"{r['mints']}:{r['outcome'][0]}" for r in rows),
     )
     check(
-        "ARM1 the one-re-mint rule holds WITHIN a call: the cold call 2 mints, every later call 1",
-        [r["mints"] for r in rows] == [2] + [1] * 9 and all(r["data"] == 2 for r in rows),
-        str([r["mints"] for r in rows]),
-    )
-    check(
-        "ARM1 afterwards no cooldown is published (TokenCache.cooldown(), what /api/status reads)",
-        cooldown_after_ten is None,
+        f"ARM1 afterwards a cooldown of the refused-token base ({base:g}s) is published on "
+        "TokenCache.cooldown(), naming the refusal (was: unset)",
+        cooldown_after_ten is not None
+        and cooldown_after_ten[0] == base
+        and "rejected a freshly minted token" in cooldown_after_ten[1],
         str(cooldown_after_ten),
         "Cooldown remained unset",
     )
     check(
-        "ARM1 and an 11th call still reaches getToken rather than being refused by a cooldown",
-        eleventh_mints == 1 and eleventh[0] == "auth-error",
+        "ARM1 the refused token is dropped, so nothing can re-post it (was: each later call's "
+        "first data POST re-sent it, 9 of 9)",
+        held_token is None,
+        str(held_token),
+    )
+    check(
+        "ARM1 an 11th call is held before any getToken POST (was: it minted again)",
+        eleventh_mints == 0 and eleventh[0] == "held",
         f"{eleventh_mints} getToken POST, {eleventh[0]}",
     )
 
-    # THE MECHANISM, HALF ONE: the fresh token NJ Transit refused stays cached as
-    # good. njt_post's second rejection raises without telling the cache, so the
-    # next call's FIRST data POST carries the token the previous call minted and
-    # saw refused, and only then is it invalidated and replaced.
-    carried = [
-        len(rows[k]["tokens"]) >= 1
-        and len(rows[k - 1]["tokens"]) >= 2
-        and rows[k]["tokens"][0] == rows[k - 1]["tokens"][1]
-        for k in range(1, len(rows))
-    ]
-    print()
-    print("  THE MECHANISM, read off the tokens the data POSTs carried:")
-    print("    call k's second data POST carries the token call k just minted, and NJ")
-    print("    Transit refuses it. Call k+1's FIRST data POST carries that same token:")
-    print("    the cache handed a refused token out again as good, and only that second")
-    print("    refusal invalidates it and buys the next mint.")
-    check(
-        "ARM1 each later call's first data POST reuses the fresh token the last call saw refused",
-        all(carried),
-        f"{sum(carried)} of {len(carried)} calls",
-    )
-
-    # THE MECHANISM, HALF TWO: a mint whose token is then refused counts as a
-    # SUCCESS to the F05 ladder. Open a failed-mint window, let it lapse, have the
-    # next mint succeed and its token be refused, then fail a mint again: the new
-    # window is the BASE again, because the refused token's mint reset the streak.
+    # THE LADDER ACROSS A REFUSED FRESH TOKEN. A failed mint opens F05's window; it
+    # lapses; the next mint works and its token is refused, which opens a hold of
+    # its own; it lapses; a mint fails again. The streak survives the mint that
+    # issued the refused token, because only a 200 on that token ends it.
     clock = Clock()
     fake = FakeRailData(clock, mint_fails=True)
     cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
@@ -890,406 +782,37 @@ async def arm1() -> dict:
         clock.set(clock.now + (window_1 or 0.0))
         fake.mint_fails = False
         refused = await call_njt_post(cache)
-        after_refusal = cache.cooldown()
-        fake.mint_fails = True
-        second = await call_njt_post(cache)
         window_2 = cache.cooldown_remaining()
+        clock.set(clock.now + (window_2 or 0.0))
+        fake.mint_fails = True
+        third = await call_njt_post(cache)
+        window_3 = cache.cooldown_remaining()
     finally:
         uninstall()
-    base = njt_auth.MINT_COOLDOWN_BASE_S
+    f05_base = njt_auth.MINT_COOLDOWN_BASE_S
     print()
     print("  THE LADDER, across a refused fresh token:")
-    print(f"    a failed mint opens a window of              {_secs(window_1)}  ({_shown(first)})")
-    print(f"    it lapses; the next mint works, its token is refused ({_shown(refused)})")
-    print(f"    cooldown published after that refusal       : {after_refusal}")
-    print(f"    the next failed mint opens a window of       {_secs(window_2)}  ({_shown(second)})")
-    print(f"    a streak that survived the refusal would have doubled to {2 * base:g}s")
+    print(f"    a failed mint opens a window of        {_secs(window_1)}  ({_shown(first)})")
+    print(f"    a mint works, its token is refused:    {_secs(window_2)}  ({_shown(refused)})")
+    print(f"    a mint fails again:                    {_secs(window_3)}  ({_shown(third)})")
     check(
-        "ARM1 a refused fresh token leaves no cooldown even right after a failed-mint window",
-        window_1 == base and refused[0] == "auth-error" and after_refusal is None,
-        f"window {_secs(window_1)}, then {refused[0]}, then {after_refusal}",
+        "ARM1 a fresh token refused right after a failed-mint window opens a hold from its own "
+        f"base, max({base:g}s, twice the streak) (was: no hold at all)",
+        window_1 == f05_base and refused[0] == "auth-error" and window_2 == max(base, 2 * f05_base),
+        f"{_secs(window_1)}, then {refused[0]} and {_secs(window_2)}",
     )
     check(
-        "ARM1 the mint whose token was refused reset the F05 backoff ladder to its base",
-        window_2 == base,
-        f"{_secs(window_2)} against a base of {base:g}s",
+        "ARM1 the mint whose token was refused did not end the streak: the next failed mint "
+        f"doubles it (was: reset to the {f05_base:g}s base)",
+        window_3 == min(2 * window_2, njt_auth.MINT_COOLDOWN_CAP_S) if window_2 else False,
+        f"{_secs(window_3)}",
     )
     return {
         "mints": mints_ten,
         "data": data_ten,
         "eleventh_mints": eleventh_mints,
-        # The exception njt_post raised for a refused fresh token, kept so arm 2 can
-        # look for what the feed poller published about it without spelling it out.
-        "refusal": rows[0]["outcome"][1],
-    }
-
-
-# ---------------------------------------------------------------------------
-# ARM 2: the two production consumers at production cadence
-# ---------------------------------------------------------------------------
-
-
-def production_schedule(horizon_s: float, poll_s: float, alert_s: float) -> list[tuple]:
-    """Every poll in [0, horizon_s) at the production cadences, as (t, consumers).
-
-    Where both are due at one instant they run in the same cycle; the order
-    inside it (feed, then alerts) does not change any count measured here.
-    """
-    by_t: dict[float, list[str]] = {}
-    k = 0
-    while k * poll_s < horizon_s:
-        by_t.setdefault(k * poll_s, []).append("feed")
-        k += 1
-    k = 0
-    while k * alert_s < horizon_s:
-        by_t.setdefault(k * alert_s, []).append("alerts")
-        k += 1
-    return sorted(by_t.items())
-
-
-async def drive_timeline(
-    consts: dict, horizon_s: float, *, quota_after: int | None = None, overlap: bool = False
-) -> dict:
-    """Run the real feed and alert pollers over `horizon_s` of production time.
-
-    A RUNNING PROCESS, NOT A COLD ONE. One healthy feed poll a cadence before t = 0
-    mints the token the process holds; from t = 0 NJ Transit mints every token it
-    is asked for and refuses every token presented. So every count below is the
-    steady cost of the finding, with no cold mint folded in.
-    """
-    poll_s, alert_s = consts["poll_s"], consts["alert_s"]
-    clock = Clock()
-    cache = reset_token_cache(clock)
-    entry = seed_app()
-    app = main_module.app
-
-    warm = FakeRailData(clock, accept_data=True)
-    install(warm)
-    try:
-        clock.set(-poll_s)
-        async with alerts_client() as client:
-            await pollers._refresh_njt(app, client)
-    finally:
-        uninstall()
-    warm_ok = warm.token_posts == 1 and entry["error"] is None
-
-    fake = FakeRailData(
-        clock, quota_after=quota_after, latency_ticks=OVERLAP_TICKS if overlap else 0
-    )
-    install(fake)
-    requests_at_zero = cache.mint_requests
-    events = []
-    first_cooldown_at = None
-    try:
-        async with alerts_client() as client:
-            for t, consumers in production_schedule(horizon_s, poll_s, alert_s):
-                clock.set(t)
-                m0, d0 = fake.token_posts, fake.data_posts
-                if overlap and len(consumers) > 1:
-                    await asyncio.gather(
-                        pollers._refresh_njt(app, client), pollers._refresh_alerts(app, client)
-                    )
-                    events.append(
-                        {
-                            "t": t,
-                            "who": "feed+alerts",
-                            "mints": fake.token_posts - m0,
-                            "data": fake.data_posts - d0,
-                        }
-                    )
-                else:
-                    for who in consumers:
-                        m1, d1 = fake.token_posts, fake.data_posts
-                        if who == "feed":
-                            await pollers._refresh_njt(app, client)
-                        else:
-                            await pollers._refresh_alerts(app, client)
-                        events.append(
-                            {
-                                "t": t,
-                                "who": who,
-                                "mints": fake.token_posts - m1,
-                                "data": fake.data_posts - d1,
-                            }
-                        )
-                if first_cooldown_at is None and njt_auth.TOKEN_CACHE.cooldown() is not None:
-                    first_cooldown_at = t
-    finally:
-        uninstall()
-
-    status = (await serve("/api/status")).json()
-    healthz = (await serve("/healthz")).json()
-    njt_alert_health = (app.state.alerts_cache.get("health") or {}).get("njt") or {}
-    return {
-        "warm_ok": warm_ok,
-        "events": events,
-        "mint_times": list(fake.mint_times),
-        "mint_answers": list(fake.mint_answers),
-        "token_posts": fake.token_posts,
-        "data_posts": fake.data_posts,
-        "cache_mint_requests": cache.mint_requests - requests_at_zero,
-        "first_cooldown_at": first_cooldown_at,
-        "status_cooldown": status.get("njt_mint_cooldown"),
-        "status_njt_error": (status.get("feeds", {}).get("njt") or {}).get("last_error"),
-        "alert_njt_error": njt_alert_health.get("last_error"),
-        "healthz_degraded": healthz.get("degraded"),
-    }
-
-
-def nth_mint_time(schedule_costs: list[tuple[float, int]], n: int) -> float | None:
-    """The instant the n-th mint happens, given (t, mints) per event in order."""
-    total = 0
-    for t, mints in schedule_costs:
-        total += mints
-        if total >= n:
-            return t
-    return None
-
-
-async def arm2(consts: dict, refusal: BaseException | None) -> dict:
-    rule("ARM 2: the feed and alert pollers, through their real paths, at production cadence")
-    poll_s, alert_s = consts["poll_s"], consts["alert_s"]
-    limit, spare = consts["limit"], consts["spare"]
-    horizon = 3 * alert_s  # three alert cycles: long enough to see the ten go
-    run = await drive_timeline(consts, horizon)
-    events = run["events"]
-
-    print()
-    print(f"  Timeline: {horizon:g}s from the first refusal, polls at the production cadences.")
-    print("      t   consumer   getToken POSTs   data POSTs")
-    print("  " + "-" * 50)
-    for e in events:
-        print(f"  {e['t']:>5g}s  {e['who']:<9}  {e['mints']:>14}   {e['data']:>10}")
-    print("  " + "-" * 50)
-    print(f"  total               {run['token_posts']:>14}   {run['data_posts']:>10}")
-    feed_ev = [e for e in events if e["who"] == "feed"]
-    alert_ev = [e for e in events if e["who"] == "alerts"]
-    both_at = sorted({e["t"] for e in alert_ev} & {e["t"] for e in feed_ev})
-    per_cycle = [sum(e["mints"] for e in events if e["t"] == t) for t in both_at]
-    print()
-    print(f"  /api/status njt_mint_cooldown        : {run['status_cooldown']}")
-    print(f"  /api/status feeds.njt.last_error     : {run['status_njt_error']}")
-    print(f"  alerts health njt.last_error         : {run['alert_njt_error']}")
-
-    check(
-        "ARM2 the warm-up poll minted one token and was served (a running process, not a cold one)",
-        run["warm_ok"],
-    )
-    check(
-        "ARM2 every feed poll costs exactly one getToken POST (and two data POSTs)",
-        bool(feed_ev) and all(e["mints"] == 1 and e["data"] == 2 for e in feed_ev),
-        f"{[e['mints'] for e in feed_ev]} over {len(feed_ev)} polls",
-    )
-    check(
-        "ARM2 every alert poll costs exactly one getToken POST (and two NJT data POSTs)",
-        bool(alert_ev) and all(e["mints"] == 1 and e["data"] == 2 for e in alert_ev),
-        f"{[e['mints'] for e in alert_ev]} over {len(alert_ev)} polls",
-    )
-    check(
-        "ARM2 a cycle in which both run costs two mints, one each (single-flight shares nothing)",
-        bool(per_cycle) and all(c == 2 for c in per_cycle),
-        f"{per_cycle} at t = {[f'{t:g}' for t in both_at]}",
-    )
-    check(
-        "ARM2 the token cache agrees with what the upstream received",
-        run["cache_mint_requests"] == run["token_posts"],
-        f"{run['cache_mint_requests']} vs {run['token_posts']}",
-    )
-    check(
-        "ARM2 after every one of those refusals /api/status publishes no NJ Transit cooldown",
-        run["status_cooldown"] is None and run["first_cooldown_at"] is None,
-        str(run["status_cooldown"]),
-        "Cooldown remained unset",
-    )
-    # What the feed poller published, compared with what njt_post RAISED for the same
-    # refusal in arm 1 (passed through production's own sanitiser), rather than with
-    # any wording this script would have to spell out.
-    raised = cache_module._sanitize_upstream(refusal) if refusal is not None else None
-    check(
-        "ARM2 /api/status does report the refusal: the njt feed's last_error carries the "
-        "refused-token error njt_post raised in arm 1",
-        bool(raised) and raised in str(run["status_njt_error"]),
-    )
-
-    # ---- The budget arithmetic, in F05's form, over the measured per-poll cost.
-    feed_cost = feed_ev[0]["mints"] if feed_ev else 0
-    alert_cost = alert_ev[0]["mints"] if alert_ev else 0
-    per_min = (60 / poll_s) * feed_cost + (60 / alert_s) * alert_cost
-    per_hour = per_min * 60
-    per_day = per_min * 1440
-    # The schedule times the measured per-call cost, F05's form, computed
-    # without looking at when the drive's POSTs landed; the check below then
-    # compares the two.
-    costs = [
-        (t, feed_cost if who == "feed" else alert_cost)
-        for t, consumers in production_schedule(horizon, poll_s, alert_s)
-        for who in consumers
-    ]
-    arith_spare = nth_mint_time(costs, spare)
-    arith_all = nth_mint_time(costs, limit)
-    times = run["mint_times"]
-    meas_spare = times[spare - 1] if len(times) >= spare else None
-    meas_all = times[limit - 1] if len(times) >= limit else None
-    print()
-    rule("ARM 2: the budget arithmetic (F05's form), over the measured per-poll cost")
-    print()
-    print("  Measured cost per call, from the drive above:")
-    print(f"    one feed poll  = {feed_cost} getToken POST")
-    print(f"    one alert poll = {alert_cost} getToken POST")
-    print()
-    print("  Rate at the production cadences:")
-    print(
-        f"    per minute = (60 / {poll_s:g}) x {feed_cost} + (60 / {alert_s:g}) x {alert_cost}"
-        f" = {60 / poll_s:g} + {60 / alert_s:g} = {per_min:g}"
-    )
-    print(f"    per hour   = {per_min:g} x 60   = {per_hour:g}")
-    print(f"    per day    = {per_min:g} x 1440 = {per_day:g}   (attempted; see the end state)")
-    print()
-    print("  The budget, from README.md and njt_auth:")
-    print(
-        f"    committed on a quiet day = {consts['monitor']} (contract monitor) + "
-        f"{consts['production']} (production) = {consts['committed']}"
-    )
-    print(f"    spare = {limit} - {consts['committed']} = {spare}")
-    print()
-    print("  When they are gone, walking the schedule one poll at a time from t = 0:")
-    order = " ".join(f"{e['who'][0].upper()}{e['t']:g}" for e in events[:limit])
-    print(f"    polls in order        : {order} ...")
-    print(
-        f"    the {spare} spare go with mint #{spare}  : t = {_dur(arith_spare)}"
-        f"   (drive measured the #{spare} getToken POST at t = {_dur(meas_spare)})"
-    )
-    print(
-        f"    the {limit} go with mint #{limit}      : t = {_dur(arith_all)}"
-        f"   (drive measured the #{limit} getToken POST at t = {_dur(meas_all)})"
-    )
-    f05 = readme_f05_before()
-    ours = {"minute": per_min, "hour": per_hour, "day": per_day}
-    print()
-    print("  CROSS-REFERENCE, printed and not asserted: README.md's F05 table records")
-    print("  what a FAILED mint cost before PR 101's cooldown (its 'before' column):")
-    for key in ("minute", "hour", "day"):
-        line_no, value = f05.get(key, (None, None))
-        same = "the same" if value == ours[key] else "DIFFERENT"
-        print(
-            f"    per {key:<6}: README L{line_no} before = {value:g}   "
-            f"this path = {ours[key]:g}   ({same})"
-            if value is not None
-            else f"    per {key:<6}: not found in README.md"
-        )
-    print("  F05 closed that rate for a mint that fails; a mint that works and buys a")
-    print("  refused token still reaches getToken at the rate in the right-hand column.")
-    check(
-        "ARM2 the arithmetic's instants are the instants the drive's getToken POSTs landed",
-        arith_spare == meas_spare and arith_all == meas_all and arith_all is not None,
-        f"#{spare} at {_dur(meas_spare)}, #{limit} at {_dur(meas_all)}",
-    )
-
-    # ---- The overlap bound. Single-flight dedupes only CONCURRENT mints, so the
-    # two pollers share a re-mint only when their requests are in flight at the
-    # same moment. Driven with both consumers started together at every instant
-    # both are due and every request taking OVERLAP_TICKS loop turns: the best
-    # case production could ever get, since the two loops never synchronise.
-    overlap = await drive_timeline(consts, 4 * alert_s, overlap=True)
-    ov_events = overlap["events"]
-    ov_pairs = [e for e in ov_events if e["who"] == "feed+alerts"]
-    ov_costs = [(e["t"], e["mints"]) for e in ov_events]
-    ov_spare = nth_mint_time(ov_costs, spare)
-    ov_all = nth_mint_time(ov_costs, limit)
-    print()
-    print("  THE OVERLAP BOUND: the same drive with the two pollers started together at")
-    print("  every instant both are due, and every request slow enough that both are in")
-    print("  flight at once (the best case; the two poll loops never synchronise):")
-    print(f"    mints when both overlap : {[e['mints'] for e in ov_pairs]} per cycle")
-    print(
-        f"    the {spare} spare gone at     : {_dur(ov_spare)}   the {limit} gone at: "
-        f"{_dur(ov_all)}"
-    )
-    print(
-        f"    so production sits between the two: the {spare} spare last {_dur(meas_spare)} "
-        f"to {_dur(ov_spare)}, the {limit}"
-    )
-    print(
-        f"    last {_dur(meas_all)} to {_dur(ov_all)}, depending only on how the two loops' "
-        "phases drift."
-    )
-    check(
-        "ARM2 overlapping polls do share one re-mint, and every poll instant still mints once",
-        bool(ov_pairs) and all(e["mints"] == 1 for e in ov_events),
-        f"{[e['mints'] for e in ov_pairs]} per overlapping cycle, "
-        f"{sum(e['mints'] for e in ov_events)} over {len(ov_events)} poll instants",
-    )
-    check(
-        "ARM2 even in that best case no cooldown is ever published",
-        overlap["status_cooldown"] is None and overlap["first_cooldown_at"] is None,
-        str(overlap["status_cooldown"]),
-    )
-
-    # ---- The end state: what actually stops it. The fake now refuses after the
-    # account's tenth getToken POST, as NJ Transit does, and the run is long
-    # enough to cross that point.
-    end = await drive_timeline(consts, 4 * alert_s, quota_after=limit)
-    answers = end["mint_answers"]
-    refusal_idx = answers.index("quota-refusal") if "quota-refusal" in answers else None
-    refusal_at = end["mint_times"][refusal_idx] if refusal_idx is not None else None
-    after_refusal = [e for e in end["events"] if refusal_at is not None and e["t"] > refusal_at]
-    hold = (end["status_cooldown"] or {}).get("seconds_remaining")
-    print()
-    print(
-        f"  THE END STATE: the same drive for {4 * alert_s:g}s, NJ Transit refusing after the "
-        f"{limit}th mint:"
-    )
-    print(
-        f"    getToken POSTs            : {end['token_posts']}  "
-        f"({answers.count('quota-refusal')} of them the daily-cap refusal)"
-    )
-    print(f"    tokens issued and refused : {len(answers) - answers.count('quota-refusal')}")
-    print(f"    the refusal arrived at    : t = {_dur(refusal_at)}")
-    print(f"    first cooldown published  : t = {_dur(end['first_cooldown_at'])}")
-    print(
-        f"    getToken POSTs after it   : {sum(e['mints'] for e in after_refusal)} over "
-        f"{len(after_refusal)} polls"
-    )
-    print(f"    /api/status cooldown      : {_dur(hold)}, detail:")
-    print(f"      {(end['status_cooldown'] or {}).get('detail', '')}")
-    print(f"    /healthz degraded         : {end['healthz_degraded']}")
-    print("  The only thing that stops the storm is NJ Transit's own refusal: the first")
-    print("  cooldown appears after the budget is gone, never before it.")
-    check(
-        "ARM2 the first cooldown appears only once the account's ten are spent",
-        refusal_idx == limit
-        and end["first_cooldown_at"] is not None
-        and end["first_cooldown_at"] == refusal_at,
-        (
-            "no daily-cap refusal was ever reached"
-            if refusal_idx is None
-            else f"refusal on getToken POST #{refusal_idx + 1} at {_dur(refusal_at)}"
-        )
-        + f", cooldown from {_dur(end['first_cooldown_at'])}",
-        "quota enforcement would stop later mints only after the budget had already been consumed",
-    )
-    check(
-        "ARM2 after the refusal nothing reaches getToken, held to the Eastern reset",
-        bool(after_refusal)
-        and sum(e["mints"] for e in after_refusal) == 0
-        and (hold or 0) > njt_auth.MINT_COOLDOWN_CAP_S
-        and "njt-mint-quota" in (end["healthz_degraded"] or []),
-        f"{sum(e['mints'] for e in after_refusal)} POSTs, hold {_dur(hold)}",
-    )
-    return {
-        "feed_cost": feed_cost,
-        "alert_cost": alert_cost,
-        "per_cycle": per_cycle[0] if per_cycle else None,
-        "per_min": per_min,
-        "per_hour": per_hour,
-        "per_day": per_day,
-        "spare_at": meas_spare,
-        "all_at": meas_all,
-        "ov_spare": ov_spare,
-        "ov_all": ov_all,
-        "refusal_at": refusal_at,
-        "refusal_n": None if refusal_idx is None else refusal_idx + 1,
-        "hold": hold,
+        "hold": cooldown_after_ten[0] if cooldown_after_ten else None,
+        "ladder": (window_1, window_2, window_3),
     }
 
 
@@ -1363,8 +886,8 @@ async def arm3(consts: dict) -> dict:
             f"{r['cooldown']}s, next call {r['next_posts']} POSTs, {r['next_call']}",
         )
 
-    # The same /api/status surface arm 2 read as null, driven through the real
-    # feed poller with a failing mint: it is live, and it does publish.
+    # The /api/status surface, driven through the real feed poller with a failing
+    # mint: F05's window is live there, and it does publish.
     clock = Clock()
     reset_token_cache(clock)
     seed_app()
@@ -1382,7 +905,7 @@ async def arm3(consts: dict) -> dict:
     status = (await serve("/api/status")).json()
     published = status.get("njt_mint_cooldown")
     print()
-    print("  The /api/status surface arm 2 read as null, after one feed poll whose mint failed:")
+    print("  The /api/status surface, after one feed poll whose mint failed:")
     print(f"    njt_mint_cooldown : {published}")
     print(f"    the next poll, {consts['poll_s']:g}s later: {posts_second} getToken POSTs")
     check(
@@ -1577,6 +1100,7 @@ async def as_shipped_drive() -> dict:
                     and len(alert_marks) >= first_alert + ALERT_WINDOWS + 1
                 )
             )
+            out["refused_phase_mints"] = fake.token_posts - out["healthy_mints"]
             status = (await serve("/api/status")).json()
             out["status_cooldown"] = status.get("njt_mint_cooldown")
             out["status_njt_error"] = (status.get("feeds", {}).get("njt") or {}).get("last_error")
@@ -1688,22 +1212,41 @@ def arm4(consts: dict) -> dict:
         bool(payload.get("ran")),
         "" if payload.get("ran") else f"timed out after {WAIT_CEILING_S:g}s",
     )
+    feed_mints = feed_mints or []
+    alert_mints = alert_mints or []
+    after = payload.get("refused_phase_mints")
+    cooldown = payload.get("status_cooldown") or {}
+    print(f"    getToken POSTs after the refusals began, in all : {after}")
     check(
-        f"ARM4 every one of {FEED_WINDOWS} feed-loop cycles after the refusals began cost exactly "
-        "one getToken POST (and two data POSTs)",
-        feed_mints == [1] * FEED_WINDOWS and payload.get("feed_data") == [2] * FEED_WINDOWS,
-        str(feed_mints),
+        "ARM4 after the refusals began the process paid ONE getToken POST in all, the one "
+        "re-mint the first refused poll buys, 2 across the whole run (was: one per cycle, "
+        f"{FEED_WINDOWS} of {FEED_WINDOWS} feed and {ALERT_WINDOWS} of {ALERT_WINDOWS} alert "
+        "cycles)",
+        after == 1 and payload.get("healthy_mints") == 1,
+        f"{after} after, {payload.get('healthy_mints')} before",
     )
     check(
-        f"ARM4 every one of {ALERT_WINDOWS} alert-loop cycles after the refusals began cost "
-        "exactly one getToken POST (and two data POSTs)",
-        alert_mints == [1] * ALERT_WINDOWS and payload.get("alert_data") == [2] * ALERT_WINDOWS,
-        str(alert_mints),
+        "ARM4 every scheduler cycle after the first one in each loop cost no getToken POST "
+        "(was: 1 each)",
+        len(feed_mints) == FEED_WINDOWS
+        and len(alert_mints) == ALERT_WINDOWS
+        and sum(feed_mints[1:]) == 0
+        and sum(alert_mints[1:]) == 0
+        and sum(feed_mints) + sum(alert_mints) <= 1,
+        f"feed {feed_mints}, alerts {alert_mints}",
+    )
+    check(
+        "ARM4 /api/status publishes the refused-token hold (was: no cooldown)",
+        cooldown.get("seconds_remaining") is not None
+        and 0 < cooldown["seconds_remaining"] <= njt_auth.MINT_REJECTED_COOLDOWN_BASE_S
+        and "rejected a freshly minted token" in cooldown.get("detail", ""),
+        str(cooldown),
     )
     return {
         "feed_cycles": FEED_WINDOWS,
         "alert_cycles": ALERT_WINDOWS,
-        "mints": sum(feed_mints or []) + sum(alert_mints or []),
+        "after": after,
+        "total": (after or 0) + (payload.get("healthy_mints") or 0),
     }
 
 
@@ -1713,16 +1256,18 @@ def arm4(consts: dict) -> dict:
 async def run() -> dict:
     consts = section_containment()
     a1 = await arm1()
-    a2 = await arm2(consts, a1["refusal"])
     a3 = await arm3(consts)
-    return {"consts": consts, "a1": a1, "a2": a2, "a3": a3}
+    return {"consts": consts, "a1": a1, "a3": a3}
+
+
+BRANCH = "claude/a01-mint-allowance"
 
 
 def main() -> int:
-    print("A01: repeated NJ Transit token rejection bypasses the cooldown")
+    print("A01: repeated NJ Transit token rejection bypasses the cooldown (FIXED, the record)")
     print(f"repository : {REPO}")
     print("upstream   : entirely fake, in process. No NJT host, no real credential, no mint spent.")
-    print("clock      : arms 1 to 3 run on a hand-cranked clock, every timeline relative to")
+    print("clock      : arms 1 and 3 run on a hand-cranked clock, every timeline relative to")
     print("             t = 0 of the simulated rejection; arm 4 counts, it does not time")
     results = asyncio.run(run())
     results["a4"] = arm4(results["consts"])
@@ -1732,26 +1277,25 @@ def main() -> int:
         for name in FAILURES:
             print(f"    - {name}")
         print()
-        print("DISPOSITION: NOT AS RECORDED, see the failed checks above")
+        print("DISPOSITION: CHANGED, this script no longer matches the recorded fix.")
         return 1
     print("  every check matches the recorded disposition.")
-    c, a1, a2, a4 = results["consts"], results["a1"], results["a2"], results["a4"]
+    a1, a4 = results["a1"], results["a4"]
     twelve = next(r for r in results["a3"]["rows"] if r["n"] == 12)
+    w1, w2, w3 = a1["ladder"]
     print()
     print(
-        f"DISPOSITION: VERIFIED  Ten njt_post calls sharing one TokenCache, against a fake that "
-        f"mints every time and refuses every token, made {a1['mints']} getToken and "
-        f"{a1['data']} data POSTs and left no cooldown (an 11th call minted again), while "
-        f"F05's failed-mint cooldown still holds ({twelve['n']} concurrent callers, "
-        f"{twelve['posts']} getToken POST, {twelve['refused']} refused without a request); the "
-        f"process as built (real lifespan and poll loops, import-time TOKEN_CACHE) paid "
-        f"{a4['mints']} getToken POSTs for {a4['feed_cycles']} feed and {a4['alert_cycles']} "
-        f"alert cycles. Through the real feed and alert pollers every poll mints "
-        f"{a2['feed_cost']} ({a2['per_cycle']} per cycle when both run), {a2['per_min']:g} a "
-        f"minute at {c['poll_s']:g}s/{c['alert_s']:g}s, so the README's {c['spare']} spare mints "
-        f"last {_dur(a2['spare_at'])} ({_dur(a2['ov_spare'])} if the two polls overlap) and the "
-        f"documented {c['limit']} last {_dur(a2['all_at'])} ({_dur(a2['ov_all'])}), and the "
-        f"first cooldown is NJ Transit's own refusal on getToken POST #{a2['refusal_n']}."
+        f"DISPOSITION: FIXED ({BRANCH})  BEFORE: ten njt_post calls sharing one TokenCache, "
+        "against a fake that mints every time and refuses every token, made 11 getToken and "
+        "20 data POSTs and left no cooldown, and the process as built paid one getToken POST "
+        "per feed and alert cycle. AFTER: the same ten calls made "
+        f"{a1['mints']} getToken and {a1['data']} data POSTs, then every call was held without "
+        f"a request ({_secs(a1['hold'])} hold from the refused-token base, the token dropped); "
+        f"the streak ends on acceptance, not on issue (windows {_secs(w1)}, {_secs(w2)}, "
+        f"{_secs(w3)}); the process as built paid {a4.get('total')} getToken POSTs in all, "
+        f"{a4.get('after')} after the refusals began; and F05's failed-mint cooldown still "
+        f"holds ({twelve['n']} concurrent callers, {twelve['posts']} getToken POST, "
+        f"{twelve['refused']} refused without a request)."
     )
     return 0
 

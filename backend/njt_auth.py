@@ -270,7 +270,11 @@ MAX_TOKEN_AGE_S = 12 * 3600.0
 # also the whole price of a transient blip: a single failed mint costs a minute of
 # waiting before the retry that heals it, during which the feed cache keeps serving
 # what it already has.
-MINT_COOLDOWN_BASE_S = 60.0
+#
+# Both bases are OVERRIDABLE through a strict seam (env_seams.positive_seconds) for
+# one reader, the contract tier, which runs in real time and has to see a hold lapse
+# inside a scenario. A value that would switch the ladder off refuses to start.
+MINT_COOLDOWN_BASE_S = env_seams.positive_seconds("NJT_MINT_COOLDOWN_BASE_S", 60.0)
 
 # THE CAP, AND WHY IT IS HALF AN HOUR. Doubling with no ceiling would eventually
 # park the retry a day out, so a five-minute NJ Transit outage would leave the
@@ -310,7 +314,9 @@ MINT_COOLDOWN_CAP_S = 1800.0
 # two at 1800), a five-minute transient costs one wasted mint before the poll at 600
 # heals it, and the residual darkness after the fault clears is at most ten minutes,
 # which is nothing against a six-hourly monitor.
-MINT_REJECTED_COOLDOWN_BASE_S = 600.0
+MINT_REJECTED_COOLDOWN_BASE_S = env_seams.positive_seconds(
+    "NJT_MINT_REJECTED_COOLDOWN_BASE_S", 600.0
+)
 
 # HOW FAR PAST MIDNIGHT A QUOTA HOLD REACHES. The reset is an Eastern midnight
 # (observed 2026-09-03), and a retry aimed exactly at it is aimed at a boundary we

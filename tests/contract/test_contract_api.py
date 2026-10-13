@@ -1537,6 +1537,124 @@ def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers
         )
 
 
+def test_njt_a_token_refused_on_every_mint_costs_two_getTokens_then_holds(harness):
+    """AUDIT 6, A01, END TO END: a mint that works and buys a refused token.
+
+    NJ Transit answers every getToken with a token and refuses every token it is
+    shown, with the exact invalid-token body (`reject-all`). Before A01 the mint
+    succeeding ended the cooldown, so every poll re-posted, re-minted and was refused
+    again: one getToken POST per feed poll and per alert poll, the account's ten gone
+    in two minutes at the production cadences.
+
+    ACROSS THREE CONSUMERS. The app first runs healthy on one token, so the static
+    warmup has loaded on it and returned, and the trains and alerts pollers are both
+    polling; then every token starts being refused. The two pollers meet it, whichever
+    is first buys njt_post's one re-mint, that token is refused too, and the cache
+    holds: TWO getToken POSTs in the whole scenario, the cold one and the re-mint,
+    however many cycles follow. The hold is the refused-token base, not the midnight
+    latch, because NJ Transit has said nothing about the day.
+
+    Hermetic counterparts: backend/tests/test_njt_auth.py section 9, and arm 2 of
+    docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
+    """
+    with harness.launch() as app:
+        _await_njt_trains(app)
+        assert harness.sim.mint_requests() == 1, "one cold mint before the refusals"
+        harness.sim.set_token_mode("reject-all")
+        app.await_status(
+            lambda s: (
+                "rejected a freshly minted token"
+                in ((s.get("njt_mint_cooldown") or {}).get("detail") or "")
+            ),
+            "the refused fresh token to open a cooldown on /api/status",
+        )
+        # Several cycles of the whole app, waited on another upstream's polls: the
+        # app is alive and polling, and NJ Transit is asked nothing at all.
+        harness.sim.await_polls("subway:BDFM", 3)
+        njt_requests = harness.sim.gtfs_requests() + harness.sim.rt_requests()
+        harness.sim.await_polls("subway:BDFM", 3)
+        assert harness.sim.mint_requests() == 2, (
+            "a token refused on every mint costs the cold mint and ONE re-mint, then "
+            f"holds; got {harness.sim.mint_requests()} getToken POSTs"
+        )
+        assert harness.sim.gtfs_requests() + harness.sim.rt_requests() == njt_requests, (
+            "during the hold no request of any kind reaches NJ Transit: nothing is "
+            "re-posting a refused token"
+        )
+
+        status = app.status()
+        cooldown = status["njt_mint_cooldown"]
+        assert cooldown is not None, status
+        assert "rejected a freshly minted token" in cooldown["detail"], cooldown
+        # From the refused-token base, not doubled: the token NJ Transit refused first
+        # had been accepted, so no streak was running when the refusals began.
+        assert 0 < cooldown["seconds_remaining"] <= 600, cooldown
+        assert status["njt_mint_allowance"]["spent"] == 2, status["njt_mint_allowance"]
+        assert status["njt_mint_allowance"]["spent_out"] is False
+
+        # NOT A REASON TO 503, and not NJ Transit's quota either.
+        health = app.healthz()
+        assert health["status"] == "pass", health
+        assert "reasons" not in health, health
+        assert "njt-mint-quota" not in health["degraded"], health
+        assert app.get("/api/subway-stops"), "one refusing system must not dim the others"
+
+
+def test_njt_the_daily_allowance_stops_the_app_before_nj_transit_has_to(harness):
+    """AUDIT 6, A01: the allowance, end to end, from a cold start.
+
+    The allowance is lowered to two and both cooldown bases to a second through their
+    seams, because this tier runs in real time and the production hold is ten
+    minutes; the day boundary is the unit tests' and the A01 record's to cross, with
+    an injected clock. Under `reject-all` from boot, the static warmup and the alert
+    poller meet the refusal together: the cold mint, the one re-mint, a hold of a
+    second, and then the next attempt finds the day's allowance spent and sends
+    NOTHING, holding to the next Eastern midnight.
+
+    The static warmup's mints are counted with the pollers': it is one of the paths
+    to getToken the allowance has to cover, and here it is the one that minted first.
+
+    Hermetic counterparts: backend/tests/test_njt_auth.py section 10, and arms 2 and
+    5 of docs/reviews/audit-2026-10-12/a01_njt_fresh_token_rejected.py.
+    """
+    harness.sim.set_token_mode("reject-all")
+    with harness.launch(
+        NJT_DAILY_MINT_ALLOWANCE="2",
+        NJT_MINT_COOLDOWN_BASE_S="1",
+        NJT_MINT_REJECTED_COOLDOWN_BASE_S="1",
+    ) as app:
+        status = app.await_status(
+            lambda s: (s.get("njt_mint_allowance") or {}).get("spent_out") is True,
+            "the app to spend its daily mint allowance and hold",
+        )
+        allowance = status["njt_mint_allowance"]
+        assert allowance["spent"] == 2 and allowance["limit"] == 2, allowance
+        cooldown = status["njt_mint_cooldown"]
+        assert cooldown is not None, status
+        assert "daily NJ Transit mint allowance is spent" in cooldown["detail"], cooldown
+        # To the next Eastern midnight, not to a backoff rung of a second.
+        assert cooldown["seconds_remaining"] > 60, cooldown
+
+        harness.sim.await_polls("subway:BDFM", 3)
+        njt_requests = harness.sim.gtfs_requests() + harness.sim.rt_requests()
+        harness.sim.await_polls("subway:BDFM", 3)
+        assert harness.sim.mint_requests() == 2, (
+            "the allowance is a ceiling on getToken POSTs SENT: two, then nothing; "
+            f"got {harness.sim.mint_requests()}"
+        )
+        assert harness.sim.gtfs_requests() + harness.sim.rt_requests() == njt_requests, (
+            "and with no token left to serve, nothing reaches NJ Transit at all"
+        )
+
+        # OURS, AND NOT A REASON TO 503.
+        health = app.healthz()
+        assert "njt-mint-allowance" in health["degraded"], health
+        assert "njt-mint-quota" not in health["degraded"], health
+        assert health["status"] == "pass", health
+        assert "reasons" not in health, health
+        assert app.get("/api/subway-stops"), "a spent NJT allowance must not dim anything else"
+
+
 # ---------------------------------------------------------------------------
 # F1: the degraded states a monitor probing only /api/status could not see
 # ---------------------------------------------------------------------------

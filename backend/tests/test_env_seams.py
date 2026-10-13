@@ -76,6 +76,10 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # NJ Transit's mint budget (Audit 6, A01): getToken POSTs one process may send per
     # Eastern day. Four is a budget line (njt_auth.DAILY_MINT_ALLOWANCE), not a taste.
     "NJT_DAILY_MINT_ALLOWANCE": 4,
+    # The two bases the mint cooldown ladder starts from (njt_auth.MINT_COOLDOWN_BASE_S
+    # and MINT_REJECTED_COOLDOWN_BASE_S), each with its arithmetic beside it there.
+    "NJT_MINT_COOLDOWN_BASE_S": 60.0,
+    "NJT_MINT_REJECTED_COOLDOWN_BASE_S": 600.0,
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -362,6 +366,34 @@ def test_a_degenerate_mint_allowance_refuses_to_start(value):
     )
     assert result.returncode != 0, f"{value!r} was accepted"
     assert "NJT_DAILY_MINT_ALLOWANCE must be a positive whole number" in result.stderr
+
+
+def test_the_cooldown_base_seams_take_a_positive_duration():
+    out = _resolve(
+        "(__import__('njt_auth').MINT_COOLDOWN_BASE_S, "
+        "__import__('njt_auth').MINT_REJECTED_COOLDOWN_BASE_S)",
+        {"NJT_MINT_COOLDOWN_BASE_S": "0.5", "NJT_MINT_REJECTED_COOLDOWN_BASE_S": "1"},
+    )
+    assert out == "(0.5, 1.0)"
+
+
+@pytest.mark.parametrize("name", ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf", "2s", ""])
+def test_a_degenerate_cooldown_base_refuses_to_start(name, value):
+    """STRICTER THAN THE TIMINGS (env_seams.positive_seconds). Zero or a negative base
+    is a hold that has lapsed as it starts, nan one that never compares as running,
+    and inf one the cap quietly shortens: each switches the ladder off or misstates
+    it, on the path that spends the account's ten a day."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, name: value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{name}={value!r} was accepted"
+    assert "ValueError" in result.stderr
 
 
 def test_a_malformed_timing_value_fails_loudly():

@@ -174,6 +174,12 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip", "
 #                 the witness and a second listener would add nothing to it; the
 #                 cross-origin half of the claim is carried by the hermetic
 #                 transport tests in backend/tests.
+#   reject-all    AUDIT 6, A01. Every mint is answered with a working-looking token
+#                 and every token is refused with NJ Transit's exact invalid-token
+#                 body, on every route. A mint that works and buys nothing is the
+#                 shape the cooldown used to miss: the mint succeeding ended the
+#                 hold, so every poll minted again. The app must treat a refused
+#                 fresh token as a failed mint, and stop asking.
 #   quota         THE DAILY BUDGET, SPENT. getToken answers every mint HTTP 500 with
 #                 a body whose errorMessage begins "Daily usage limit", which is what
 #                 NJ Transit does after the tenth mint of an Eastern day (observed
@@ -182,7 +188,7 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip", "
 #                 answers wear one status code and the app has to tell them apart
 #                 from the body alone. One that gets it wrong reports a spent budget
 #                 as an NJ Transit outage and sends its operator hunting one.
-TOKEN_MODES = ("ok", "reject-first", "server-error", "redirect", "quota")
+TOKEN_MODES = ("ok", "reject-first", "reject-all", "server-error", "redirect", "quota")
 
 # Where the `redirect` token mode points a mint. Same simulator, its own route, so
 # a credential that follows the redirect is COUNTED rather than lost.
@@ -1067,10 +1073,10 @@ class UpstreamSim:
             self.archives[key].publication = publication
 
     def set_token_mode(self, mode: str) -> None:
-        """ok | reject-first | server-error | redirect. Validated like set_mode and
-        set_publication, and for the sharper of the two reasons: an unknown token
-        mode falling through to the healthy body would make a scenario about token
-        expiry pass without ever expiring a token."""
+        """One of TOKEN_MODES. Validated like set_mode and set_publication, and for
+        the sharper of the two reasons: an unknown token mode falling through to the
+        healthy body would make a scenario about token expiry pass without ever
+        expiring a token."""
         if mode not in TOKEN_MODES:
             raise ValueError(f"unknown token mode {mode!r}; expected one of {TOKEN_MODES}")
         with self._lock:
@@ -1302,6 +1308,9 @@ class UpstreamSim:
                 # request counter so a loader that retried with the SAME token
                 # still fails, which is the behavior the scenario is about.
                 return 500, NJT_INVALID_TOKEN_BODY
+            if mode == "reject-all":
+                # Every token, the re-mint included: nothing this mint issues works.
+                return 500, NJT_INVALID_TOKEN_BODY
             return 200, archive.bodies[archive.publication]
 
     def serve_njt_rt(self, key: str, fields: dict[str, str]) -> tuple[int, bytes]:
@@ -1359,6 +1368,8 @@ class UpstreamSim:
             if token not in self.njt.issued:
                 return 500, NJT_INVALID_TOKEN_BODY
             if mode_token == "reject-first" and token == self.njt.issued[0]:
+                return 500, NJT_INVALID_TOKEN_BODY
+            if mode_token == "reject-all":
                 return 500, NJT_INVALID_TOKEN_BODY
             if mode == "frozen":
                 assert feed.frozen_body is not None

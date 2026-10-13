@@ -33,6 +33,7 @@ Reading through here guarantees dotenv has loaded first, wherever the seam sits.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -87,10 +88,13 @@ SEAM_NAMES = (
     "NJT_TOKEN_URL",
     "NJT_STATIC_URL",
     # NJ Transit's mint budget (Audit 6, A01): how many getToken POSTs one process
-    # may send per Eastern day. A count, not a URL or a cadence, and it gates
-    # spending against an account the contract monitor shares, so it sits beside the
-    # token seam rather than among the timings.
+    # may send per Eastern day, and the two bases its cooldown ladder starts from.
+    # They gate spending against an account the contract monitor shares, so they sit
+    # beside the token seam rather than among the timings, and all three are read
+    # strictly.
     "NJT_DAILY_MINT_ALLOWANCE",
+    "NJT_MINT_COOLDOWN_BASE_S",
+    "NJT_MINT_REJECTED_COOLDOWN_BASE_S",
     # Timing.
     "POLL_INTERVAL_S",
     "ALERT_POLL_INTERVAL_S",
@@ -166,6 +170,27 @@ def count(name: str, default: int) -> int:
     if not (text.isascii() and text.isdecimal()) or int(text) <= 0:
         raise ValueError(f"{name} must be a positive whole number, got {raw!r}")
     return int(text)
+
+
+def positive_seconds(name: str, default: float) -> float:
+    """A duration that gates spending, refused at import unless positive and finite.
+
+    STRICTER THAN seconds() FOR THE REASON count() IS. The NJ Transit mint cooldown
+    bases are the first: zero or a negative turns the ladder off (a hold that has
+    lapsed the instant it starts), nan does the same through a comparison that is
+    never true, and inf is clamped to the cap without a word. Each would let an
+    override do something other than what it says on the path that spends a budget
+    of ten a day, so anything but a positive finite number raises ValueError while
+    the module imports.
+    """
+    _record(name, default)
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = float(raw)
+    if not (math.isfinite(value) and value > 0):
+        raise ValueError(f"{name} must be a positive, finite number of seconds, got {raw!r}")
+    return value
 
 
 def seconds_tuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:

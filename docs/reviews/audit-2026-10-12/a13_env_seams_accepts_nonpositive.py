@@ -117,18 +117,20 @@ RUN (from the repository root):
 
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a13_env_seams_accepts_nonpositive.py
 
-AMENDED ON claude/a01-mint-allowance (Audit 6, A01), because that branch added a seam
-this record's section C would otherwise poison: NJT_DAILY_MINT_ALLOWANCE, a count
-with a numeric default, read through a new strict parser, env_seams.count, which
-refuses '0', '-1', 'nan' and 'inf' at import. Section C sets every numeric-default
-registry seam to the bad value, so each child died at import on the count seam and
-measured nothing about the timing seams this finding is about. The amendment
-tightens rather than relaxes: the recorder now records count() as well; section A
-pins by name the one numeric seam not read through seconds() and checks it is the
-one count() reads; section C sets every numeric seam but that one; and section B
-checks that count() refuses all four values, which is the correction this finding
-recommends, in place for that seam alone. env_seams.seconds is untouched, so every
-check about it stands as recorded.
+AMENDED ON claude/a01-mint-allowance (Audit 6, A01), because that branch added three
+seams this record's section C would otherwise poison, all on the NJ Transit mint
+budget and all read through new strict parsers that refuse '0', '-1', 'nan' and
+'inf' at import: NJT_DAILY_MINT_ALLOWANCE through env_seams.count, and the two
+cooldown bases, NJT_MINT_COOLDOWN_BASE_S and NJT_MINT_REJECTED_COOLDOWN_BASE_S,
+through env_seams.positive_seconds. Section C sets every numeric-default registry
+seam to the bad value, so each child died at import on them and measured nothing
+about the timing seams this finding is about. The amendment tightens rather than
+relaxes: the recorder now records both strict parsers as well; section A pins by
+name the three numeric seams not read through seconds() and checks they are
+exactly the ones the strict parsers read; section C sets every numeric seam but
+those; and section B checks that both strict parsers refuse all four values,
+which is the correction this finding recommends, in place for those seams alone.
+env_seams.seconds is untouched, so every check about it stands as recorded.
 
 RECORDED DISPOSITION: VERIFIED. Exits 0 while the parser accepts all four values and the
 app starts and runs on them as measured; non-zero, naming every check that moved, the
@@ -243,12 +245,15 @@ import env_seams  # noqa: E402
 # signature and passes it through, so a call site that hands the parser an extra
 # keyword (a per-seam option) reaches the real parser rather than dying here.
 PARSER_CALLS: list[dict] = []
-# count() too since claude/a01-mint-allowance (see the docstring's amendment).
+# The two strict parsers too since claude/a01-mint-allowance (see the docstring's
+# amendment).
 _REAL_PARSERS = {
     "seconds": env_seams.seconds,
     "seconds_tuple": env_seams.seconds_tuple,
     "count": env_seams.count,
+    "positive_seconds": env_seams.positive_seconds,
 }
+STRICT_PARSERS = ("count", "positive_seconds")
 
 
 def _recording(kind: str, real):
@@ -648,34 +653,41 @@ def parent_main() -> int:
     rule("A. WHICH PRODUCTION SEAMS ROUTE THROUGH env_seams.seconds, observed while main imports")
     routed = [c for c in PARSER_CALLS if c["parser"] == "seconds"]
     routed_tuple = [c for c in PARSER_CALLS if c["parser"] == "seconds_tuple"]
-    routed_count = [c for c in PARSER_CALLS if c["parser"] == "count"]
+    routed_strict = [c for c in PARSER_CALLS if c["parser"] in STRICT_PARSERS]
     seams = {c["name"]: c["default"] for c in routed}
     tuple_seams = {c["name"]: c["default"] for c in routed_tuple}
-    count_seams = {c["name"]: c["default"] for c in routed_count}
-    print(f"  {'seam':<26}{'parser':<15}{'call-site default':>18}{'registry default':>18}")
-    for c in routed + routed_tuple + routed_count:
+    strict_seams = {c["name"]: c["default"] for c in routed_strict}
+    print(f"  {'seam':<35}{'parser':<17}{'call-site default':>18}{'registry default':>18}")
+    for c in routed + routed_tuple + routed_strict:
         registry = env_seams.DEFAULTS.get(c["name"], "(absent)")
         extra = f"  (also passed {c['kwargs']!r})" if c["kwargs"] else ""
-        print(f"  {c['name']:<26}{c['parser']:<15}{c['default']!r:>18}{registry!r:>18}{extra}")
+        print(f"  {c['name']:<35}{c['parser']:<17}{c['default']!r:>18}{registry!r:>18}{extra}")
     check("production seams declared through seconds() while main imports", len(seams), 4)
     check("production seams declared through seconds_tuple() while main imports",
           len(tuple_seams), 1)
     check("production seams declared through count() while main imports",
-          sorted(count_seams), ["NJT_DAILY_MINT_ALLOWANCE"])
+          sorted(c["name"] for c in routed_strict if c["parser"] == "count"),
+          ["NJT_DAILY_MINT_ALLOWANCE"])
+    check("production seams declared through positive_seconds() while main imports",
+          sorted(c["name"] for c in routed_strict if c["parser"] == "positive_seconds"),
+          ["NJT_MINT_COOLDOWN_BASE_S", "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
     mismatched = sorted(
-        name for name, default in {**seams, **tuple_seams, **count_seams}.items()
+        name for name, default in {**seams, **tuple_seams, **strict_seams}.items()
         if env_seams.DEFAULTS.get(name, object()) != default
     )
     check("routed seams whose default disagrees with env_seams.DEFAULTS", mismatched, [])
     # The seams section C sets: every registry entry with a plain-number default but the
-    # count seams. Taken from the registry, not from the recorder, so C still sets them if
-    # a change moves a call site to a different parser; the one exception is pinned by
-    # name, so a timing seam moved to count() turns this red rather than leaving C.
+    # strict seams. Taken from the registry, not from the recorder, so C still sets them
+    # if a change moves a call site to a different parser; the exceptions are pinned by
+    # name, so a timing seam moved to a strict parser turns this red rather than
+    # quietly leaving C.
     numeric = sorted(name for name, default in env_seams.DEFAULTS.items()
                      if isinstance(default, (int, float)) and not isinstance(default, bool))
     check("registry seams with a numeric default NOT read through seconds() (all others are "
-          "the ones C sets)", sorted(set(numeric) - set(seams)), ["NJT_DAILY_MINT_ALLOWANCE"])
-    timing = sorted(set(numeric) - set(count_seams))
+          "the ones C sets)", sorted(set(numeric) - set(seams)),
+          ["NJT_DAILY_MINT_ALLOWANCE", "NJT_MINT_COOLDOWN_BASE_S",
+           "NJT_MINT_REJECTED_COOLDOWN_BASE_S"])
+    timing = sorted(set(numeric) - set(strict_seams))
 
     # ---- B: the parser itself ----------------------------------------------
     rule("B. THE PARSER: each recorded production call to env_seams.seconds, replayed as made,\n"
@@ -698,11 +710,14 @@ def parent_main() -> int:
     print("  BEYOND THE AUDIT'S CITATION, the tuple sibling (the static retry schedule):")
     check(f"seconds_tuple() on {schedule_raw!r}", tuple_parsed, "(0.0, -1.0, nan, inf)")
     print()
-    print("  AND THE COUNT PARSER (claude/a01-mint-allowance), each recorded call replayed:")
-    for raw in (*BAD_VALUES, CONTROL, MALFORMED):
-        want = "30" if raw == CONTROL else "raised ValueError"
-        got = summarize({c["name"]: replay(c, raw) for c in routed_count})
-        check(f"count() on {raw!r}, every count seam", got, want)
+    print("  AND THE TWO STRICT PARSERS (claude/a01-mint-allowance), each recorded call "
+          "replayed:")
+    for parser, control in (("count", "30"), ("positive_seconds", "30.0")):
+        calls = [c for c in routed_strict if c["parser"] == parser]
+        for raw in (*BAD_VALUES, CONTROL, MALFORMED):
+            want = control if raw == CONTROL else "raised ValueError"
+            got = summarize({c["name"]: replay(c, raw) for c in calls})
+            check(f"{parser}() on {raw!r}, every {parser} seam", got, want)
 
     # ---- C: the running app --------------------------------------------------
     rule(f"C. THE RUNNING APP: every timing seam set to the value, main imported, main.app\n"

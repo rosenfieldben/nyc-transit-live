@@ -86,6 +86,11 @@ SEAM_NAMES = (
     # spend real mints on every CI run.
     "NJT_TOKEN_URL",
     "NJT_STATIC_URL",
+    # NJ Transit's mint budget (Audit 6, A01): how many getToken POSTs one process
+    # may send per Eastern day. A count, not a URL or a cadence, and it gates
+    # spending against an account the contract monitor shares, so it sits beside the
+    # token seam rather than among the timings.
+    "NJT_DAILY_MINT_ALLOWANCE",
     # Timing.
     "POLL_INTERVAL_S",
     "ALERT_POLL_INTERVAL_S",
@@ -140,6 +145,27 @@ def seconds(name: str, default: float) -> float:
     if raw is None:
         return default
     return float(raw)
+
+
+def count(name: str, default: int) -> int:
+    """A positive whole number, refused at import unless it is one.
+
+    STRICTER THAN seconds() ON PURPOSE. A count here gates spending (the NJ Transit
+    mint allowance is the first), and every degenerate value means something worse
+    than its default: zero would hold every mint forever, a negative or a fraction
+    has no meaning at all, and a malformed string silently replaced by the default
+    would hide that an operator's override never took. So anything but a positive
+    integer written in decimal raises ValueError while the module imports, which is
+    when a deployment can still refuse to come up.
+    """
+    _record(name, default)
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    text = raw.strip()
+    if not (text.isascii() and text.isdecimal()) or int(text) <= 0:
+        raise ValueError(f"{name} must be a positive whole number, got {raw!r}")
+    return int(text)
 
 
 def seconds_tuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:

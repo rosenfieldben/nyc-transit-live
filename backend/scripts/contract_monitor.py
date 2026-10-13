@@ -305,11 +305,14 @@ PRODUCTION_HEALTH_CODES = (
     "subway-groups-down",
     "njt-mint-quota",
     "observations-qualified",
+    "njt-mint-allowance",
 )
 
-# Prose for the codes whose NAME does not say what the operator should do. Two need
+# Prose for the codes whose NAME does not say what the operator should do. Three need
 # it. "njt-mint-quota" reports a budget that is spent, which is a different
-# instruction from "something broke". "observations-qualified" reports what riders are
+# instruction from "something broke", and "njt-mint-allowance" reports production
+# holding at its own share of that budget, which is the same instruction.
+# "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
 # that nothing on the deployment's side can clear it, that a fresh process cannot see a
@@ -320,6 +323,14 @@ PRODUCTION_HEALTH_CODES = (
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
 # is not widened by them. Nothing from the wire is echoed.
 _HEALTH_CODE_NOTES = {
+    "njt-mint-allowance": (
+        "production has spent its own allowance of NJ Transit mints for the Eastern day "
+        f"({njt_auth.DAILY_MINT_ALLOWANCE} by default; /api/status njt_mint_allowance "
+        "carries the deployment's own figure) and is holding until midnight, so the rest "
+        "of the account's ten stay for this monitor and for operator work; this is the "
+        "budget, not an NJ Transit outage, and a redeploy would spend one more mint and "
+        "reset nothing it should not"
+    ),
     "njt-mint-quota": (
         "production has spent NJ Transit's ten mints for the Eastern day, so its NJ "
         "Transit layer is dark until midnight; this is the budget, not an NJ Transit "

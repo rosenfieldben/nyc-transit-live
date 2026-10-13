@@ -996,6 +996,22 @@ class NjtMintCooldown(BaseModel):
     detail: str
 
 
+class NjtMintAllowance(BaseModel):
+    """This process's daily NJ Transit mint allowance (Audit 6, A01).
+
+    `day` is the America/New_York date the count belongs to (null before the first
+    attempt), `spent` the getToken POSTs sent that day, `limit` the allowance, and
+    `spent_out` whether the hold is running. A day that has ended shows its own
+    count until the next attempt opens the new one, so `day` is what to read
+    `spent` against.
+    """
+
+    day: str | None
+    spent: int
+    limit: int
+    spent_out: bool
+
+
 class StatusResponse(BaseModel):
     served_at: float  # this snapshot's build time (see cache.py)
     feeds: dict[str, FeedStatus]
@@ -1024,6 +1040,12 @@ class StatusResponse(BaseModel):
     # Null whenever a mint may be attempted, and defaulted so every pre-F05
     # /api/status fixture validates unchanged.
     njt_mint_cooldown: NjtMintCooldown | None = None
+    # THE DAILY ALLOWANCE (Audit 6, A01), beside the cooldown and for the same
+    # reason: the cooldown says why no token is being asked for right now, this says
+    # how much of the day's budget this process has spent and whether it is holding
+    # for the rest of the Eastern day. Always published once the app is up; defaulted
+    # so every earlier /api/status fixture validates unchanged.
+    njt_mint_allowance: NjtMintAllowance | None = None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     # THE POSITION LADDER'S COUNTS PER RAILROAD SYSTEM (contract 6.3), a SIBLING of
@@ -1161,6 +1183,14 @@ HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # gets its own code so the answer reads "the budget is spent", not "something
 # broke", and so the fix reads "wait, or stop spending mints" rather than "restart".
 HEALTH_NJT_MINT_QUOTA = "njt-mint-quota"
+# OURS, WHERE njt-mint-quota IS NJ TRANSIT'S (Audit 6, A01), and degraded rather than
+# gating for the reason that one is. This instance has spent its own daily allowance
+# (njt_auth.DAILY_MINT_ALLOWANCE) and is sending no getToken POST until the next
+# Eastern midnight, so the account's other mints stay for the contract monitor and
+# for operator work. Nothing is broken by it: a held token keeps serving, and without
+# one the NJ Transit layer is dark until the reset, which is the price of a ceiling
+# that the fault it stops cannot reach past.
+HEALTH_NJT_MINT_ALLOWANCE = "njt-mint-allowance"
 
 HEALTH_DEGRADED_CODES = (
     HEALTH_NO_FEED_FRESH,
@@ -1170,6 +1200,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_SUBWAY_GROUPS_DOWN,
     HEALTH_NJT_MINT_QUOTA,
     HEALTH_OBSERVATIONS_QUALIFIED,
+    HEALTH_NJT_MINT_ALLOWANCE,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO

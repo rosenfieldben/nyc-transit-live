@@ -517,8 +517,8 @@ and each is a way a conventional poller gets this wrong:
    | --- | --- | --- |
    | N concurrent callers, mint failing | N attempts | **1** |
    | first minute of unbroken failure | 4 | **1** |
-   | first hour | 240 | **6** |
-   | a full day, worst case | 5760 | **52** |
+   | first hour | 240 | **4** |
+   | a full day | 5760 | **8** |
    | a *known* daily-cap refusal | 240/hour until midnight | **1, then nothing until midnight** |
 
    The policy is two-armed, chosen by which failure arrived. A quota refusal holds
@@ -527,10 +527,12 @@ and each is a way a conventional poller gets this wrong:
    credentials turn out to look like, which has never been probed) backs off from
    `njt_auth.MINT_COOLDOWN_BASE_S` (60s, longer than a feed poll or the cooldown
    would change nothing) doubling to `MINT_COOLDOWN_CAP_S` (1800s, short enough that
-   a real outage heals inside the hour it ends), and one working mint resets the
-   ladder. 52 a day is still more than ten, and honestly so: once those attempts do
-   spend the account's ten, NJ Transit answers with the quota refusal instead and the
-   hold latches until midnight at one attempt for the rest of the day.
+   a real outage heals inside the hour it ends), and the first token NJ Transit
+   accepts resets the ladder. The ladder alone still cost 52 a day, more than the account's ten, so the
+   process also stops itself at `njt_auth.DAILY_MINT_ALLOWANCE` getToken POSTs per
+   Eastern day (4) and holds until the next Eastern midnight (Audit 6, A01). The day
+   in the table runs noon to noon and so spans two Eastern dates: eight is two
+   dates' allowance, and NJ Transit's own refusal is never drawn.
 
    During a cooldown, `get()` raises `NjtMintCooldownError` **without calling
    getToken**, and an over-age token keeps serving: `MAX_TOKEN_AGE_S` is a budget

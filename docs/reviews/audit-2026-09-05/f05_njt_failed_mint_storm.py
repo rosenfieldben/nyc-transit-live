@@ -30,6 +30,22 @@ MINT_COOLDOWN_BASE_S doubling to MINT_COOLDOWN_CAP_S, and a success resets it. A
 over-age token keeps serving through a cooldown, because MAX_TOKEN_AGE_S is a
 budget ceiling and not an expiry.
 
+AMENDED ON claude/a01-mint-allowance (Audit 6, A01), because that branch changed
+two behaviours this record pinned. First, the cooldown streak now ends when NJ
+Transit ACCEPTS a token rather than when one is issued (TokenCache.confirm), since
+a token that is minted and then refused proved nothing; every drive here fails the
+mint itself, so no number moved for that. Second, the process now stops itself at
+njt_auth.DAILY_MINT_ALLOWANCE getToken POSTs per Eastern day (4) and holds to the
+next Eastern midnight, because the ladder alone still let one process spend the
+whole account. That moved three AFTER figures, and each is re-measured here rather
+than retyped: the first hour from 6 to 4, a day from 52 to 8 (two Eastern dates'
+allowance, since the day here runs noon to noon), and the documented ten from
+"gone at 2.5h" to never reached. Section D's two checks that read the ten as
+something a day of failure spends are replaced by stronger ones, not relaxed: each
+Eastern date costs exactly the allowance, the hold lapses at midnight plus the
+margin, and NJ Transit's own refusal is never drawn. The README rows section E
+matches are now matched whole, before and after on one labelled line.
+
 SO EVERY NUMBER BELOW IS NOW A BEFORE AND AN AFTER, measured the same way, and
 the script fails if the AFTER stops holding. The "before" figures are not
 retyped from the audit: they are the count of scheduled attempts the same drive
@@ -1161,6 +1177,17 @@ def time_to_reach(times: list[float], target: int) -> float | None:
     return times[target - 1]
 
 
+def per_eastern_date(posts: list[float]) -> dict[str, int]:
+    """getToken POSTs grouped by the America/New_York date they landed on, reading
+    each simulated instant against the Clock's noon-Eastern origin."""
+    eastern = ZoneInfo("America/New_York")
+    counts: dict[str, int] = {}
+    for t in posts:
+        day = datetime.fromtimestamp(Clock.NOON_EDT + t, eastern).date().isoformat()
+        counts[day] = counts.get(day, 0) + 1
+    return counts
+
+
 def _clock_str(t: float | None) -> str:
     """A duration in the unit a reader can hold: seconds, minutes or hours."""
     if t is None:
@@ -1232,19 +1259,50 @@ async def section_arithmetic(rates: dict) -> dict:
         f"(before: {_clock_str(results['regime_a']['before_spare'])} and "
         f"{_clock_str(results['regime_b']['before_spare'])})",
     )
+    # AMENDED ON claude/a01-mint-allowance (Audit 6, A01). This check used to say the
+    # whole ten outlasted the first hour, and measured the instant the tenth POST
+    # landed. Under the daily allowance this process never sends a tenth POST at all,
+    # so that instant is "never" and the old comparison had no number left to compare.
+    # What replaces it asserts the stronger property directly, per Eastern date,
+    # because that is the unit NJ Transit counts in: each date the failure touches
+    # costs exactly the allowance, never more, and the ten are never reached.
+    allowance = njt_auth.DAILY_MINT_ALLOWANCE
+    per_date = {k: per_eastern_date(rates[k]["posts"]) for k in ("regime_a", "regime_b")}
+    print()
+    print(f"    njt_auth.DAILY_MINT_ALLOWANCE (this process, per Eastern day) = {allowance}")
+    for key in ("regime_a", "regime_b"):
+        print(f"    {key}: getToken POSTs per Eastern date = {per_date[key]}")
     check(
-        "D and the whole ten outlasts the first hour, rather than the first two minutes",
-        all(results[k]["after_all"] > 3600 for k in ("regime_a", "regime_b")),
-        f"A at {_clock_str(results['regime_a']['after_all'])}, "
-        f"B at {_clock_str(results['regime_b']['after_all'])} "
-        f"(before: {_clock_str(results['regime_a']['before_all'])} and "
+        "D and this process alone never sends the ten: exactly the allowance on each "
+        "Eastern date the failure touches",
+        allowance < limit
+        and all(results[k]["after_all"] is None for k in ("regime_a", "regime_b"))
+        and all(
+            len(per_date[k]) == 2 and set(per_date[k].values()) == {allowance}
+            for k in ("regime_a", "regime_b")
+        ),
+        f"A {per_date['regime_a']}, B {per_date['regime_b']} against an allowance of "
+        f"{allowance} (before: the ten were gone at "
+        f"{_clock_str(results['regime_a']['before_all'])} and "
         f"{_clock_str(results['regime_b']['before_all'])})",
     )
+    # The simulated failure starts at noon Eastern, twelve hours before the date
+    # turns, so the first POST of the second date is the hold lapsing: the next
+    # Eastern midnight plus the margin, not a backoff rung that happened to land there.
+    reset_at = 12 * 3600.0 + njt_auth.MINT_QUOTA_RESET_MARGIN_S
+    check(
+        "D the allowance holds to the next Eastern midnight plus the margin, then resumes",
+        all(rates[k]["posts"][allowance] == reset_at for k in ("regime_a", "regime_b")),
+        f"POST {allowance + 1} at A {_clock_str(rates['regime_a']['posts'][allowance])}, "
+        f"B {_clock_str(rates['regime_b']['posts'][allowance])}, against "
+        f"{_clock_str(reset_at)}",
+    )
 
-    # THE END STATE, and it is the honest one. 52 a day is still more than ten, so
-    # the run below lets the budget really be spent: the fake answers ordinary 500s
-    # until the tenth POST and the observed daily-cap refusal after it, which is
-    # what NJ Transit does. The cooldown's quota arm then latches.
+    # THE END STATE, and it is the honest one. Before the allowance, 52 a day was more
+    # than ten, so this run let the budget really be spent: the fake answers ordinary
+    # 500s until the tenth POST and the observed daily-cap refusal after it, which is
+    # what NJ Transit does. The fake is kept exactly as it was, so the same run now
+    # shows that refusal is never drawn: the allowance stops this process first.
     print()
     print("  WHAT A WHOLE DAY OF UNBROKEN FAILURE ACTUALLY COSTS, with the upstream")
     print(f"  refusing after the {limit}th POST the way NJ Transit does:")
@@ -1254,13 +1312,13 @@ async def section_arithmetic(rates: dict) -> dict:
     print(f"    getToken POSTs that reached NJ Transit : {len(posts)}")
     print(f"    they land at t =                       : "
           f"{[_clock_str(t) for t in posts]}")
-    print(f"    the {limit}th is the last ordinary failure; the next is the refusal, which")
-    print("    holds to Eastern midnight, and the one after it is the single attempt")
-    print("    the app is entitled to make once the budget has actually reset.")
+    print(f"    {allowance} before the Eastern midnight and {allowance} after it; each date's "
+          "allowance")
+    print(f"    is spent and held, so NJ Transit's refusal after the {limit}th never comes.")
     check(
-        "D a day of unbroken failure costs the ten, the refusal, and one attempt after "
-        "the reset",
-        limit < len(posts) <= limit + 2,
+        "D a day of unbroken failure costs two Eastern dates' allowance and never draws "
+        "the refusal",
+        len(posts) == 2 * allowance and len(posts) <= limit,
         f"{len(posts)} POSTs across {spent['events']} attempts",
     )
     check(
@@ -1276,7 +1334,7 @@ async def section_arithmetic(rates: dict) -> dict:
     print("  ATTEMPT RATE, before and after. The budget consequence follows only if the")
     print("  recorded upstream behavior still holds, which is the same conditional the")
     print("  audit attached to it. What the fix changes is not that conditional: it is")
-    print("  the rate the conditional would be applied to, from 240 an hour to 6.")
+    print("  the rate the conditional would be applied to, from 240 an hour to 4.")
     return {"limit": limit, "spare": spare, "readme": readme, "results": results}
 
 
@@ -1319,19 +1377,21 @@ def section_readme_claim(arith: dict, rates: dict) -> None:
     ):
         check(f"E the README names {phrase}", phrase in readme)
     # The numbers in the README's before/after table are the ones measured above,
-    # not a second set that could drift away from them.
-    for label, value in (
-        ("first minute, before", rates["regime_b"]["min"]),
-        ("first minute, after", rates["regime_b"]["posts_min"]),
-        ("first hour, before", rates["regime_b"]["hour"]),
-        ("first hour, after", rates["regime_b"]["posts_hour"]),
-        ("first day, before", rates["regime_b"]["day"]),
-        ("first day, after", rates["regime_b"]["posts_day"]),
+    # not a second set that could drift away from them. Each before and after is
+    # matched together on its own labelled row: amended on claude/a01-mint-allowance,
+    # when the hour fell to 4, a figure the budget table above it already printed for
+    # the contract monitor, so a bare "| 4 |" anywhere in the README proved nothing.
+    b = rates["regime_b"]
+    for label, before, after in (
+        ("first minute of unbroken failure", b["min"], b["posts_min"]),
+        ("first hour", b["hour"], b["posts_hour"]),
+        ("a full day", b["day"], b["posts_day"]),
     ):
+        row = f"| {label} | {before} | **{after}** |"
         check(
-            f"E the README's {label} figure ({value}) is the one measured here",
-            f"| **{value}** |" in readme or f"| {value} |" in readme,
-            str(value),
+            f"E the README's '{label}' row is the one measured here ({before} -> {after})",
+            row in readme,
+            row,
         )
     print()
     print("  AND THE CALLERS STILL RETRY, which is the half that must NOT have")
@@ -1398,16 +1458,18 @@ def main() -> int:
         "NjtMintCooldownError without a request: the audit's 12 callers / 12 attempts / "
         "0 tokens is now 12 callers / 1 attempt / 0 tokens. The three consumers still "
         f"retry on their own schedules ({a['day']} attempts a day in regime A, "
-        f"{b['day']} in regime B) and the cooldown decides how many of those reach NJ "
+        f"{b['day']} in regime B) and the cooldown and the allowance decide how many reach NJ "
         f"Transit: {b['posts_min']} in the first minute against {b['min']} before, "
         f"{b['posts_hour']} in the first hour against {b['hour']}, {b['posts_day']} in a "
         f"day against {b['day']}. The README's four spare mints now last until "
         f"{_clock_str(res['regime_b']['after_spare'])} instead of "
-        f"{_clock_str(res['regime_b']['before_spare'])} and the documented ten until "
-        f"{_clock_str(res['regime_b']['after_all'])} instead of "
-        f"{_clock_str(res['regime_b']['before_all'])}; a day of unbroken failure ends "
-        "held rather than looping, because once the ten really are spent the quota arm "
-        "latches to the next Eastern midnight. An over-age token keeps serving through a "
+        f"{_clock_str(res['regime_b']['before_spare'])}, and the documented ten, gone at "
+        f"{_clock_str(res['regime_b']['before_all'])} before, are now never reached by "
+        f"this process: since claude/a01-mint-allowance it sends at most "
+        f"{njt_auth.DAILY_MINT_ALLOWANCE} getToken POSTs per Eastern day and then holds "
+        "to the next Eastern midnight, so a day of unbroken failure ends held rather "
+        "than looping without NJ Transit ever having to refuse. An over-age token keeps "
+        "serving through a "
         "cooldown, so a failed proactive re-mint no longer takes the layer dark. The "
         "README no longer claims that nothing anywhere retries a failed mint; it "
         "documents the policy and this arithmetic instead."

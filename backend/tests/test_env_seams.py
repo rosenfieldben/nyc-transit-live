@@ -73,6 +73,9 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # has to be able to fail TRIP UPDATES while alerts keep flowing.
     "NJT_TU_URL": _NJT_RAILDATA + "/getTripUpdates",
     "NJT_ALERTS_URL": _NJT_RAILDATA + "/getAlerts",
+    # NJ Transit's mint budget (Audit 6, A01): getToken POSTs one process may send per
+    # Eastern day. Four is a budget line (njt_auth.DAILY_MINT_ALLOWANCE), not a taste.
+    "NJT_DAILY_MINT_ALLOWANCE": 4,
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -335,6 +338,30 @@ def test_a_trailing_slash_on_a_base_does_not_double_the_separator():
         {"ALERTS_RT_BASE": "http://127.0.0.1:9999/sim/"},
     )
     assert out == "http://127.0.0.1:9999/sim/camsys%2Flirr-alerts"
+
+
+def test_the_mint_allowance_seam_takes_a_positive_whole_number():
+    out = _resolve("__import__('njt_auth').DAILY_MINT_ALLOWANCE", {"NJT_DAILY_MINT_ALLOWANCE": "2"})
+    assert out == "2"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "2.5", "two", "", " ", "1e3", "\u0663"])
+def test_a_degenerate_mint_allowance_refuses_to_start(value):
+    """STRICTER THAN THE TIMINGS (env_seams.count). Zero would hold every mint
+    forever, a negative or a fraction means nothing, and a malformed value quietly
+    replaced by the default would hide an operator's override that never took. Each
+    one stops the process at import, which is when a deployment can still refuse to
+    come up."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, "NJT_DAILY_MINT_ALLOWANCE": value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{value!r} was accepted"
+    assert "NJT_DAILY_MINT_ALLOWANCE must be a positive whole number" in result.stderr
 
 
 def test_a_malformed_timing_value_fails_loudly():

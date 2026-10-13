@@ -78,7 +78,7 @@ import math
 import os
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from datetime import time as time_of_day
 from zoneinfo import ZoneInfo
 
@@ -147,6 +147,43 @@ _PLACEHOLDERS = {
 # than by convention, and why a loop that re-mints on failure is the one bug this
 # module is built to make unwritable.
 DAILY_MINT_LIMIT = 10
+
+# THE ALLOWANCE: HOW MANY OF THE TEN THIS PROCESS MAY SPEND (Audit 6, A01). Counted in
+# getToken POSTs SENT per Eastern day, the quantity mint_requests counts and the
+# account's ten are spent by, so a refused or failed POST costs one exactly as a
+# working one does. When it is spent, the cache sends nothing more until the next
+# Eastern midnight plus MINT_QUOTA_RESET_MARGIN_S, keeps serving a token it already
+# holds, and says so (TokenCache.mint_allowance_spent, /healthz njt-mint-allowance).
+#
+# WHY FOUR. What production spends on an ordinary day is two (MAX_TOKEN_AGE_S below:
+# a process that spans the day re-mints twice); a real expiry buys one re-mint per
+# attempt; a deploy's cold mint is one. Four covers each of those once over, and it
+# turns the budget above into a ceiling instead of a forecast:
+#
+#     4   the contract monitor, six-hourly, one mint per run
+#     4   production, AT MOST, per process per Eastern day (this allowance)
+#   ---
+#     8   the most the two of them can spend
+#     2   left for an operator's own work: a fixture pull, a manual monitor dispatch
+#
+# THE LADDER STILL SPACES THE ATTEMPTS; THIS BOUNDS THEIR NUMBER. Neither replaces the
+# other. Without this, a fault the ladder only slows (a mint that keeps failing, a
+# fresh token that keeps being refused) still reached into the monitor's four, and
+# the first thing to stop it was NJ Transit's own refusal of the eleventh.
+#
+# IN MEMORY, PER PROCESS, AND THAT IS ITS LIMIT. The count is not persisted: a deploy
+# is a fresh process, it starts at zero, and its cold mint is its own first. So this
+# bounds what ONE process can spend in one Eastern day. A deploy storm is the
+# operator's own doing and is not bounded here; nothing in a process can see the
+# account's count (see DAILY_MINT_LIMIT), and a counter that survived a restart would
+# need a store this app does not have.
+#
+# OVERRIDABLE through a strict seam (env_seams.count): a positive whole number or the
+# app refuses to start. The contract tier lowers it to see the hold in real time.
+DAILY_MINT_ALLOWANCE = env_seams.count("NJT_DAILY_MINT_ALLOWANCE", 4)
+
+# The reason an allowance hold carries, ours and fixed, like MINT_QUOTA_MESSAGE.
+MINT_ALLOWANCE_MESSAGE = "this process's daily NJ Transit mint allowance is spent"
 
 # The fixed message every quota refusal is reported with, here and in the contract
 # monitor. A CONSTANT MATCHED AGAINST A KNOWN PHRASE IS NOT A QUOTE (Audit 4, F3):
@@ -365,6 +402,26 @@ class NjtMintCooldownError(NjtAuthError):
         # The exact seconds left, unrounded, beside the message's whole-second
         # rendering: a surface that wants to do arithmetic on it (a status block, a
         # test asserting the ladder doubled) should not have to parse prose.
+        self.remaining_s = remaining_s
+
+
+class NjtMintAllowanceError(NjtAuthError):
+    """A mint was NOT attempted, because this process has spent its daily allowance.
+
+    THE SECOND ERROR THAT REPORTS SOMETHING WE DID NOT DO, and deliberately not a
+    subclass of NjtMintCooldownError: a cooldown is a fault being waited out, this is
+    a budget decision that holds until the next Eastern midnight whatever NJ Transit
+    is doing, and the two (and the quota refusal, which is NJ Transit's own word)
+    must be tellable apart everywhere they are caught. A subclass of NjtAuthError for
+    the reason the other two are: every caller that handles a failed mint already
+    handles this one.
+
+    `remaining_s` is the seconds until the hold lapses, unrounded, as on
+    NjtMintCooldownError.
+    """
+
+    def __init__(self, message: str, *, remaining_s: float) -> None:
+        super().__init__(message)
         self.remaining_s = remaining_s
 
 
@@ -778,6 +835,7 @@ class TokenCache:
         max_age_s: float = MAX_TOKEN_AGE_S,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        daily_allowance: int = DAILY_MINT_ALLOWANCE,
     ) -> None:
         self._token: str | None = None
         self._minted_at: float = 0.0
@@ -850,6 +908,18 @@ class TokenCache:
         # Eastern-midnight reset needs no clock here: the first mint that succeeds
         # after it clears the flag as a side effect of working.
         self.mint_quota_refused = False
+        # THE DAILY ALLOWANCE (Audit 6, A01; see DAILY_MINT_ALLOWANCE). A count of
+        # getToken POSTs sent, keyed by the America/New_York date of the attempt that
+        # sent them. Only a new day resets it: not a working mint, not a 200, not a
+        # hold lapsing. An instance argument so a test can isolate the ladder from it
+        # and pin the two separately; the process-wide cache takes the seam's value.
+        self._allowance = daily_allowance
+        self._allowance_day: date | None = None
+        self._allowance_spent = 0
+        # WHICH HOLD IS RUNNING, because two of them raise different errors through
+        # the same window: "allowance" while the allowance holds, "" otherwise.
+        # Written wherever _cooldown_until is, so the two cannot disagree.
+        self._hold_kind = ""
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -935,6 +1005,8 @@ class TokenCache:
         """
         if self._token is not None:
             return self._token
+        if self._hold_kind == "allowance":
+            raise NjtMintAllowanceError(self._cooldown_message(remaining), remaining_s=remaining)
         raise NjtMintCooldownError(self._cooldown_message(remaining), remaining_s=remaining)
 
     def _start_cooldown(self, exc: BaseException, base_s: float = MINT_COOLDOWN_BASE_S) -> float:
@@ -966,7 +1038,57 @@ class TokenCache:
         if self._cooldown_until is None or until >= self._cooldown_until:
             self._cooldown_until = until
             self._cooldown_reason = str(exc)
+            self._hold_kind = ""
         return hold_s
+
+    def _spend_allowance(self) -> float | None:
+        """Charge one getToken POST to today's allowance, or refuse it.
+
+        Returns None when the attempt may go out (and has been counted), or the
+        length of the hold it started when the allowance for this Eastern day is
+        already spent. Called inside the lock, immediately before the POST is
+        counted, so a burst of waiters queued behind one mint cannot each spend one.
+
+        THE WALL CLOCK IS READ ONCE, HERE, AND ONLY FOR TWO CALENDAR ANSWERS: which
+        Eastern date this attempt belongs to, and how far away the next Eastern
+        midnight is. The hold itself runs on the monotonic clock like every other.
+        """
+        wall = self._wall_clock()
+        day = datetime.fromtimestamp(wall, tz=_EASTERN).date()
+        if day != self._allowance_day:
+            self._allowance_day = day
+            self._allowance_spent = 0
+        if self._allowance_spent < self._allowance:
+            self._allowance_spent += 1
+            return None
+        hold_s = seconds_to_next_eastern_midnight(wall)
+        self._cooldown_until = self._clock() + hold_s
+        self._cooldown_reason = (
+            f"{MINT_ALLOWANCE_MESSAGE} ({self._allowance_spent} of {self._allowance} "
+            f"getToken POSTs sent on {day.isoformat()}, Eastern)"
+        )
+        self._hold_kind = "allowance"
+        return hold_s
+
+    @property
+    def mint_allowance_spent(self) -> bool:
+        """Whether the allowance hold is running: true from the attempt it refused
+        until the next Eastern midnight plus the margin, and false again after, with
+        nothing to reset. Read off the monotonic hold, so it clears when the hold
+        lapses, which is the start of the next Eastern day for the allowance."""
+        return self._hold_kind == "allowance" and self.cooldown_remaining() is not None
+
+    def allowance(self) -> dict:
+        """The allowance as /api/status publishes it: the Eastern day the count
+        belongs to (None before the first attempt), the getToken POSTs sent that
+        day, the limit, and whether the hold is running. A pure read: a day that has
+        ended shows its own count until the next attempt opens the new one."""
+        return {
+            "day": self._allowance_day.isoformat() if self._allowance_day else None,
+            "spent": self._allowance_spent,
+            "limit": self._allowance,
+            "spent_out": self.mint_allowance_spent,
+        }
 
     def reject_fresh(self, token: str, exc: BaseException) -> None:
         """NJ Transit refused `token`, which this cache issued and NJ Transit never
@@ -1035,6 +1157,10 @@ class TokenCache:
             held = self.cooldown_remaining()
             if held is not None:
                 return self._serve_through_cooldown(held)
+            # THE ALLOWANCE (Audit 6, A01), the last thing before the POST is counted.
+            held = self._spend_allowance()
+            if held is not None:
+                return self._serve_through_cooldown(held)
             self.mint_requests += 1
             try:
                 token = await mint_token()
@@ -1076,6 +1202,7 @@ class TokenCache:
             # continues the ladder rather than restarting it.
             self._cooldown_until = None
             self._cooldown_reason = ""
+            self._hold_kind = ""
             self._unconfirmed = token
             self.mints += 1
             self._token = token

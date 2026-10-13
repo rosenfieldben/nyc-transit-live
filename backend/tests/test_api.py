@@ -1072,6 +1072,46 @@ async def test_status_names_a_running_njt_mint_cooldown_and_its_seconds(client, 
     assert models.HEALTH_NJT_MINT_QUOTA in (await client.get("/healthz")).json()["degraded"]
 
 
+async def test_status_publishes_the_njt_mint_allowance_and_healthz_carries_its_hold(
+    client, healthz_env, monkeypatch
+):
+    """THE ALLOWANCE ON THE OPERATOR'S SURFACES (Audit 6, A01).
+
+    /api/status carries the block always: the Eastern day the count belongs to, the
+    getToken POSTs sent on it, the limit, and whether the hold is running. /healthz
+    carries njt-mint-allowance for exactly as long as the hold runs, and answers 200
+    while it does, for the reason njt-mint-quota never gates: a refused promotion is
+    retried and every fresh process mints, so a probe that refused the build would
+    spend the budget the code is there to protect."""
+    _fresh(healthz_env["buses"])
+    cache = njt_auth.TokenCache(daily_allowance=1)
+    monkeypatch.setattr(njt_auth, "TOKEN_CACHE", cache)
+
+    block = (await client.get("/api/status")).json()["njt_mint_allowance"]
+    assert block == {"day": None, "spent": 0, "limit": 1, "spent_out": False}
+    assert (await client.get("/healthz")).json() == {"status": "pass", "degraded": []}
+
+    async def mint():
+        return "only"
+
+    await cache.get(mint)
+    cache.invalidate(None)
+    with pytest.raises(njt_auth.NjtMintAllowanceError):
+        await cache.get(mint)
+
+    status = (await client.get("/api/status")).json()
+    block = status["njt_mint_allowance"]
+    assert (block["spent"], block["limit"], block["spent_out"]) == (1, 1, True)
+    assert block["day"] is not None and len(block["day"]) == len("2026-10-13")
+    assert njt_auth.MINT_ALLOWANCE_MESSAGE in status["njt_mint_cooldown"]["detail"]
+    res = await client.get("/healthz")
+    assert res.status_code == 200, "a spent allowance must never refuse a deploy"
+    assert res.json()["status"] == "pass"
+    assert res.json()["degraded"] == [models.HEALTH_NJT_MINT_ALLOWANCE]
+    assert "reasons" not in res.json()
+    assert models.HEALTH_NJT_MINT_ALLOWANCE not in models.HEALTH_GATING_CODES
+
+
 async def test_healthz_is_quiet_about_njt_when_no_mint_has_been_refused(client, healthz_env):
     """The other side, and it is what makes the test above mean anything: the code
     is absent by default, including on a deployment with no NJ Transit credentials

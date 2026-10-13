@@ -167,6 +167,7 @@ def test_the_simulator_points_at_every_url_seam_the_backend_declares():
         "STATIC_RETRY_S",
         "STATIC_RETRY_SCHEDULE_S",
         "DATA_DIR",
+        "NJT_DAILY_MINT_ALLOWANCE",
     }
     seams = _load_env_seams()
     pointed = set(UpstreamSim().env("http://127.0.0.1:1", REPO_ROOT))

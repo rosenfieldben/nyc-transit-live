@@ -11,15 +11,15 @@ bash docs/reviews/audit-2026-10-12/run_all.sh      # from the repository root
 PY=backend/.venv/bin/python bash docs/reviews/audit-2026-10-12/run_all.sh   # a local venv
 ```
 
-Eleven scripts, about forty seconds. Each one exits 0 while the finding still behaves the way the table
-records it, and non-zero the moment the code stops matching, so these are regression
-checks on the audit record rather than one-off prints. A script measures what the code
-DOES and never where it lives: none asserts a line number, a symbol name or the text
-of a comment, so a behavior-preserving refactor cannot turn a row red, and a fix will.
-One class of refactor is the exception, and it fails closed rather than open: A02, A02b
-and A13 observe the static warmup's backoff through `asyncio.sleep`, so a backoff
-rewritten to wait some other way turns those three rows red, never green.
-Run one on its own with `backend/.venv/bin/python <script>` or `node <script>`.
+Eleven scripts, about forty seconds. Each one exits 0 while the finding still behaves
+the way the table records it, and non-zero the moment the code stops matching, so these
+are regression checks on the audit record rather than one-off prints. A script measures
+what the code DOES and never where it lives: none asserts a line number, a symbol name
+or the text of a comment, so a behavior-preserving refactor cannot turn a row red, and a
+fix will. One class of refactor is the exception, and it fails closed rather than open:
+A02, A02b and A13 observe the static warmup's backoff through `asyncio.sleep`, so a
+backoff rewritten to wait some other way turns those three rows red, never green. Run
+one on its own with `backend/.venv/bin/python <script>` or `node <script>`.
 
 **Read the tally, not the count.** `run_all.sh` ends with a line like
 `11 passed: 11 VERIFIED, 0 PARTLY, 0 REFUTED, 0 FIXED`. Every script here records an

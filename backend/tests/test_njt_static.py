@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import io
 import re
+import struct
 import zipfile
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1700,3 +1702,91 @@ def test_golden_the_bounded_parse_reaches_every_shape_the_committed_trips_refere
     assert set(parsed["shapes"]) == referenced, (
         "the bounded parse and the committed trips disagree about which shapes exist"
     )
+
+
+# ---------------------------------------------------------------------------
+# A02b: damaged DEFLATE data, in the optional member and in a required one
+# ---------------------------------------------------------------------------
+#
+# THE FINDING (audit 2026-10-12, A02b): a shapes.txt whose DEFLATE stream inflate rejects
+# raises zlib.error, which the shapes parse's except tuple did not name, so it escaped
+# load_njt_static and took all 164 stations down for the cache's 30-day life, against the
+# module's promise that an unreadable shapes.txt costs the lines and nothing else. The
+# residual arm under the parse had the same gap. Both tuples name zlib.error now; these
+# two tests are one per site, on the committed fixture with one byte of the member's
+# first deflate block header set to the block type RFC 1951 reserves (BTYPE 11).
+
+# Inside the committed fixture's service span (20260818 to 20270501): the audit's date.
+_FIXTURE_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=NYC_TZ).timestamp()
+
+
+def _fixture_with_damaged_deflate(member: str) -> bytes:
+    """The committed fixture zipped with ZIP_DEFLATED, `member`'s first deflate block
+    header rewritten to BTYPE 11, its stored CRC-32 and sizes untouched. Reading the
+    member raises zlib.error (not BadZipFile, which a CRC mismatch would raise)."""
+    payload = bytearray(
+        _zip_bytes(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(FIXTURE_DIR.iterdir())
+                if path.suffix == ".txt"
+            }
+        )
+    )
+    with zipfile.ZipFile(io.BytesIO(bytes(payload))) as zf:
+        offset = zf.getinfo(member).header_offset
+    name_len, extra_len = struct.unpack("<HH", payload[offset + 26 : offset + 30])
+    start = offset + 30 + name_len + extra_len
+    payload[start] = (payload[start] & 0b11111001) | 0b00000110
+    damaged = bytes(payload)
+    with zipfile.ZipFile(io.BytesIO(damaged)) as zf, pytest.raises(zlib.error):
+        with zf.open(member) as raw:
+            while raw.read(1 << 16):
+                pass
+    return damaged
+
+
+@golden_shapes
+async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_else(
+    monkeypatch, tmp_path
+):
+    """THE PROMISE, at the site the finding named: a publication whose optional
+    shapes.txt raises zlib.error passes the gate (15c: shapes.txt stays out of it),
+    is promoted, and loads every station with no route lines, rather than failing
+    the whole system. Through the real staged path and load_njt_static."""
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    publication = _fixture_with_damaged_deflate("shapes.txt")
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(publication))
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164
+    assert data["shapes"] == {}
+    assert njt_static.build_njt_route_shapes(data["trips"], data["shapes"], data["routes"]) == []
+    assert zip_path.read_bytes() == publication, "a servable publication is promoted"
+
+
+@golden
+async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discarded(
+    monkeypatch, tmp_path
+):
+    """THE RESIDUAL ARM, with the same damage in a REQUIRED member. stop_times.txt is
+    one the light cached-archive validator never opens, so a cache carrying it is
+    accepted as usable and fresh and fails the parse; the arm must discard it so the
+    next attempt downloads, rather than letting zlib.error escape and the same bytes
+    fail every attempt until MAX_AGE_DAYS. No network is allowed: a fresh cache
+    downloads nothing."""
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    zip_path.write_bytes(_fixture_with_damaged_deflate("stop_times.txt"))
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
+    with zipfile.ZipFile(zip_path) as zf:
+        njt_static.validate_njt_archive(zf, now=_FIXTURE_NOW)  # the premise: accepted
+
+    assert await njt_static.load_njt_static(now=_FIXTURE_NOW) == {}
+    assert not zip_path.exists(), "an archive the load cannot read must not stay the cache"

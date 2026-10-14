@@ -89,6 +89,7 @@ import io
 import logging
 import time
 import zipfile
+import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -834,15 +835,25 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     the trains, which is precisely the trade _REQUIRED_MEMBERS refuses. It degrades
     to no lines, loudly, and the rest of the load carries on.
 
+    A DAMAGED DEFLATE STREAM IS UNREADABLE TOO (audit 2026-10-12, A02b). Inflate
+    rejecting the member's compressed data raises zlib.error, not BadZipFile (that is
+    what a CRC mismatch raises) and not OSError, and it was missing from the tuple
+    below: the error escaped load_njt_static and took every station down for the
+    cache's 30-day life, the exact trade this arm exists to refuse.
+
+    NOTHING BEFORE THIS PARSE OPENS shapes.txt. The publication gate
+    (validate_njt_publication) parses every REQUIRED member and deliberately not this
+    one, since a publication without usable geometry is still promoted (15c), so a
+    damaged shapes.txt reaches the cache and is first read here, by the load. What
+    follows from that is the age policy's: the lines stay gone until the cache ages
+    out at MAX_AGE_DAYS and the next download replaces it.
+
     THE ONE TIMED PARSE IN THIS APP. Not because the bound is known to be a large
     saving (that depends on how much of a publication's geometry its trips
     actually reference, which nobody here has measured), but because this is the
     biggest member the app reads and a cost nobody records is a cost nobody can
     check later. The first real number arrives with the fixture refresh. It logs at
-    INFO like every other static load line, and it fires TWICE per download
-    (validate_njt_publication runs this same parse against the staged file before
-    the promote, then the load parses the promoted copy), which is the truth about
-    what the process did rather than an accident worth hiding.
+    INFO like every other static load line, once per load.
     """
     wanted = {shape_id for trip in trips.values() if (shape_id := trip.get("shape_id"))}
     try:
@@ -854,7 +865,7 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     try:
         with member as raw:
             shapes = _parse_shapes(raw, wanted)
-    except (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, OSError) as exc:
+    except (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, OSError) as exc:
         logger.warning("NJ Transit shapes.txt is unreadable (%s); serving without route lines", exc)
         return {}
     logger.info(
@@ -1001,14 +1012,31 @@ async def load_njt_static(*, now: float | None = None) -> dict:
             )
     try:
         data = _parse_zip(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error, OSError) as exc:
+    except (
+        zipfile.BadZipFile,
+        KeyError,
+        UnicodeDecodeError,
+        csv.Error,
+        zlib.error,
+        OSError,
+    ) as exc:
         # The residual below the CACHED-archive validator. Reaching here means the
         # bytes on disk were fully parseable when they were promoted and are not now
         # (rot, a truncated write), or no file was ever written because the first
         # download failed. Unlink is right in exactly that case: this file IS the
         # cache, nothing better sits behind it, and keeping it would wedge every
-        # retry on the same bytes. A freshly promoted archive cannot land here,
-        # because validate_njt_publication ran this same parse before the rename.
+        # retry on the same bytes. zlib.error is a damaged deflate stream inside a
+        # member (A02b), as BadZipFile is a damaged CRC; the tuple missed it, so such
+        # an archive raised out of here instead and was kept for every attempt.
+        #
+        # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. A freshly promoted archive
+        # reaches here only through a member the publication gate does not parse:
+        # validate_njt_publication parses every REQUIRED member, and shapes.txt,
+        # the one optional member, is never opened before the load. Its failures
+        # are caught in _parse_shapes_member and degrade to no route lines, so this
+        # arm sees the required members only, and only from a cache that changed
+        # after it was checked (the light validator a load runs does not open
+        # stop_times.txt).
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

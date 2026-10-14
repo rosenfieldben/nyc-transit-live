@@ -9,7 +9,7 @@ import re
 import time
 import zipfile
 import zlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from typing import IO
@@ -48,8 +48,14 @@ MAX_AGE_DAYS = 30
 # that is not free, because at cold start with no cache a required member missing
 # means the system is absent from the map entirely rather than merely reduced.
 #
-# stops.txt places every marker and every train. shapes.txt draws every subway
-# route line.
+# stops.txt places every marker and every train.
+#
+# shapes.txt IS NOT HERE, though the load reads it: it draws the route lines, and the
+# lines are decorative (load_subway_route_shapes has always degraded to none rather
+# than fail). Requiring it would be exactly the cost the rule above names: at a cold
+# start a bad shapes.txt would take every station and train off the map to protect
+# lines. It has a gate of its own, validate_subway_geometry, with the two-mode rule
+# that goes with being decorative (see it, and static_shared.staged_fetch).
 #
 # trips.txt AND stop_times.txt ARE HERE NOW, and this comment used to argue the
 # opposite. It said their only subway consumer was load_subway_station_routes, "the
@@ -106,17 +112,33 @@ MAX_AGE_DAYS = 30
 # anything, not how much.
 #
 # EVERY MEMBER HERE IS PARSED AT VALIDATION, NOT ONLY PRESENT (audit 2026-10-12, A02,
-# with 2026-09-05's F08). Presence was the rule for trips.txt, stop_times.txt and
-# shapes.txt, and it let an archive the load cannot read replace one it can: one
-# undecodable byte in trips.txt or stop_times.txt was promoted and then failed every
-# warmup attempt for MAX_AGE_DAYS, because the cached-archive check runs this same
-# validator and so kept answering that the archive was fine; the same byte in
-# shapes.txt was promoted and drew 0 route lines. So each member is read at validation
-# through the loader's own parser (the one generator the load reads it with, drained
-# rather than kept) and must yield at least one row: "the validator passed" now means
-# "the load will read every member it opens". stop_times.txt is the costly one (565,093
-# rows in the live table, measured with backend/scripts/measure_subway_validation.py).
-_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt", "transfers.txt")
+# with 2026-09-05's F08). Presence was the rule for trips.txt and stop_times.txt (and
+# shapes.txt, then here), and it let an archive the load cannot read replace one it
+# can: one undecodable byte in trips.txt or stop_times.txt was promoted and then failed
+# every warmup attempt for MAX_AGE_DAYS, because the cached-archive check runs this
+# same validator and so kept answering that the archive was fine. So each member is
+# read at validation through the loader's own parser (the one generator the load reads
+# it with, drained rather than kept) and must yield at least one row: "the validator
+# passed" now means "the load will read every member it opens". stop_times.txt is the
+# costly one (565,093 rows in the live table, measured with
+# backend/scripts/measure_subway_validation.py).
+#
+# AND THE THREE JOIN, the operator's ruling on the branch's review. One row of each
+# proves each reads, not that together they build the routes-per-station index: a
+# trips.txt whose route_id column is renamed, or stop_times rows whose trips name no
+# route or whose stops fold to no parent station, read fine and index nothing, which is
+# MR2 F1's empty index under "ready" again. So the gate also asks for one stop_times row
+# whose trip carries a route_id and whose stop folds to a parent station: the index the
+# load builds will have at least one station in it. It walks the loader's own readers
+# and stops at the first such row, the first row of the live table.
+#
+# WHICH FAILURES REFUSE AND WHICH DEGRADE follows the operator's earlier decisions, not
+# a new one. A derived floor on a table three rider-visible consumers read rejects
+# always: that is the H2 ruling on transfers.txt, and the stations, the routes join and
+# the transfers floor here are all of that kind. The route lines degrade, as
+# load_subway_route_shapes always has and as NJ Transit's shapes.txt does by 15c, so
+# their gate refuses only when a cache that draws is there to keep.
+_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "stop_times.txt", "transfers.txt")
 
 
 def validate_subway_archive(zf: zipfile.ZipFile) -> None:
@@ -152,28 +174,84 @@ def validate_subway_archive(zf: zipfile.ZipFile) -> None:
         "transfers.txt",
         "cross-stop transfers",
     )
-    # THE THREE MEMBERS THAT WERE ONLY PRESENT (A02, F08), each through the generator
-    # the load reads it with, drained to a count and kept nowhere. Cheapest first, so a
+    # THE TWO MEMBERS THAT WERE ONLY PRESENT (A02), each through the generator the load
+    # reads it with, drained to a count and kept nowhere: the whole member is read, so
+    # an undecodable byte anywhere in it is refused here and named. Cheapest first, so a
     # publication bad in several places is refused without paying for stop_times.txt.
     # The generators are looked up at call time, so the load and this gate cannot be
     # handed different parsers.
-    #
-    # WHAT THE FLOOR OF ONE ROW PROVES, AND WHAT IT DOES NOT. It proves each member
-    # reads and is not empty, which is A02's question. It does not prove the members
-    # JOIN: a trips.txt whose route_id column is renamed yields rows with no route, and
-    # stop_times.txt whose trip ids match no trip yields rows too, so either passes
-    # here and the routes-per-station index the load builds from them is empty, as it
-    # was before this gate. Refusing that is a floor on the join, not on the members,
-    # and is recorded as open rather than built here.
     require_parsed(lambda: _drained(zf, "trips.txt", _iter_trip_routes), "trips.txt", "trips")
-    require_parsed(
-        lambda: _drained(zf, "shapes.txt", _iter_shape_points),
-        "shapes.txt",
-        "route shape points",
-    )
     require_parsed(
         lambda: _drained(zf, "stop_times.txt", _iter_trip_stops), "stop_times.txt", "stop times"
     )
+    # THE JOIN (see _REQUIRED_MEMBERS). Last, so a member that is unreadable or empty is
+    # refused by its own name above before the join can be blamed for it.
+    require_parsed(
+        lambda: _first_station_route(zf),
+        "stop_times.txt",
+        "call of a trip that has a route_id at a stop that folds to a parent station "
+        "(trips.txt, stop_times.txt and stops.txt do not join, so the routes-per-station "
+        "index would be empty)",
+    )
+
+
+def _first_station_route(zf: zipfile.ZipFile) -> tuple[str, str] | None:
+    """The first (parent station, route) the routes-per-station index would hold, or
+    None. Walks the loader's own readers: trips through _parse_trip_routes (its first
+    route per trip), stations and the platform fold from stops.txt, then stop_times.txt
+    row by row through _iter_trip_stops, stopping at the first row whose trip has a
+    route and whose stop folds to a station. The fold is derive_subway_station_routes
+    itself on that one row, so this asks exactly what the load's index does, and it has
+    no route test of its own: the fold drops a trip with no route, as the load's does,
+    and a second predicate here could only drift from that one."""
+    trip_routes = _parse_trip_routes(zf)
+    stations = parse_member(zf, "stops.txt", _parse_stations_rows)
+    child_to_parent = _parse_child_to_parent(zf)
+
+    def first(raw: IO[bytes]) -> tuple[str, str] | None:
+        for trip_id, stop_id in _iter_trip_stops(raw):
+            index = derive_subway_station_routes(
+                {trip_id: trip_routes.get(trip_id)}, {trip_id: [stop_id]}, child_to_parent
+            )
+            for station, routes in index.items():
+                if station in stations:
+                    return station, routes[0]
+        return None
+
+    return parse_member(zf, "stop_times.txt", first)
+
+
+def validate_subway_geometry(zf: zipfile.ZipFile) -> None:
+    """Can the route lines be drawn from this archive? Raises StaticValidationError if
+    not. DECORATIVE, so handed to staged_fetch as `validate_when_replacing`: a failure
+    refuses the publication only when a cache that passes validate_subway_archive is
+    there to keep serving, and otherwise the publication is promoted with shapes.txt
+    named as a degraded member on /api/status (static_shared.staged_fetch, the two-mode
+    rule; 2026-09-05's F08 is the first mode, a cold start the second).
+
+    shapes.txt is read whole through _iter_shape_points, the one reader the route-shapes
+    loader uses, and must yield at least one drawable shape: two points of one shape
+    whose id names a route. A shape_id format the reader does not recognize draws
+    nothing, so it fails here as an empty table does."""
+    require_members(zf, ("shapes.txt",))
+    require_parsed(
+        lambda: _drawable_shapes(zf),
+        "shapes.txt",
+        "drawable route shapes (two points of one shape whose id names a route)",
+    )
+
+
+def _drawable_shapes(zf: zipfile.ZipFile) -> int:
+    """How many shapes the route-shapes loader could draw a line of: those with at
+    least two points, read through its own generator."""
+
+    def count(raw: IO[bytes]) -> int:
+        points: Counter[str] = Counter()
+        for _route, shape_id, *_point in _iter_shape_points(raw):
+            points[shape_id] += 1
+        return sum(1 for n in points.values() if n >= 2)
+
+    return parse_member(zf, "shapes.txt", count)
 
 
 def _drained(zf: zipfile.ZipFile, member: str, rows: Callable[[IO[bytes]], Iterable]) -> int:
@@ -197,7 +275,24 @@ def _drained(zf: zipfile.ZipFile, member: str, rows: Callable[[IO[bytes]], Itera
 # downloads. The validator parses every member the load reads, so nothing should reach
 # this arm; it is here because a backstop that is never reached costs less than a
 # month of a failed subway static group.
-_UNREADABLE = (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, KeyError, OSError)
+#
+# THE ARCHIVE'S ERRORS ONLY, NOT THE ENVIRONMENT'S (the operator's ruling on the
+# branch's review). Every class here says something about the bytes: they do not
+# decode, are not CSV, do not inflate, are truncated, or lack a member. OSError is not
+# one of them: running out of file descriptors or a failing disk says nothing about the
+# archive, and discarding a good cache over it turned a transient fault into a failed
+# group whenever upstream was down at the same moment. Such an error now fails the
+# attempt with the cache kept, and the next attempt reads it again.
+#
+# NOT QUITE EVERY ARCHIVE ERROR, as the branch's review measured: a member compressed
+# with bzip2 whose stream is damaged raises a plain OSError, one with lzma raises
+# LZMAError, and a bit-rotted central-directory offset raises OSError(EINVAL), errno and
+# all, none of them caught here. For the subway that is moot: the
+# cached check runs validate_subway_archive under validate_archive's broad catch, and it
+# reads every member the reads wrapped here read, so such a cache is refused before any
+# load (shapes.txt is not one of them, and its loader degrades on any exception). The
+# ledger's live list carries it for NJ Transit, where it is not moot.
+_UNREADABLE = (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, KeyError, EOFError)
 
 
 @contextmanager
@@ -212,14 +307,18 @@ def _discarding_an_unreadable_cache() -> Iterator[None]:
         raise
 
 
-async def _download_zip() -> None:
-    """Stage, validate, then promote the subway archive (see static_shared)."""
+async def _download_zip(*, cache_serves: bool | None = None) -> None:
+    """Stage, validate, then promote the subway archive (see static_shared). The route
+    lines are gated by the two-mode rule (validate_subway_geometry), whose mode is
+    `cache_serves`: the loader's own verdict on the cache, so the two cannot disagree."""
     await staged_fetch(
         SUBWAY_GTFS_URL,
         SUBWAY_GTFS_ZIP,
         validate_subway_archive,
         key="subway",
         label="static subway GTFS",
+        validate_when_replacing=validate_subway_geometry,
+        cache_serves=cache_serves,
     )
 
 
@@ -304,7 +403,10 @@ async def load_subway_stops() -> dict[str, dict]:
     fresh = usable and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
-            await _download_zip()
+            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache
+            # this check called usable keeps serving through bad geometry, and one it
+            # called unusable is no cache to keep, whatever a second read would say.
+            await _download_zip(cache_serves=usable)
         except Exception as exc:
             if not usable:
                 # No valid cache AND a failing download: failed-and-retrying, never
@@ -369,13 +471,13 @@ def _iter_shape_points(raw: IO[bytes]) -> Iterator[tuple[str, str, int, float, f
     can draw, coordinates rounded to 5 decimals (~1 m).
 
     THE ONE READER OF shapes.txt (A02, F08): load_subway_route_shapes accumulates these
-    rows into polylines and validate_subway_archive drains them to a count, so the gate
+    rows into polylines and validate_subway_geometry counts them per shape, so the gate
     asks exactly what the load reads. A row is drawable when its shape_id names a route
     (_SHAPE_ID_RE) and its sequence and coordinates are numbers; any other row is
-    skipped here, as the loader always skipped it, so the gate's floor of one row means
-    "at least one point of one route line", and a table of points for shapes no route
-    owns is refused rather than promoted to an empty map. A row the codec or the CSV
-    reader cannot read raises, which is the case the gate exists for.
+    skipped here, as the loader always skipped it, so a table of points for shapes no
+    route owns, or in a shape_id format this does not recognize, draws nothing and
+    fails the gate as an empty one does. A row the codec or the CSV reader cannot read
+    raises, which is the case the gate exists for.
     """
     reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
     for row in reader:
@@ -398,9 +500,10 @@ def load_subway_route_shapes() -> list[dict]:
     Returns [{"route": "A", "polylines": [[[lat, lon], ...], ...]}, ...] with
     coordinates rounded to 5 decimals (~1 m). Assumes the zip exists (call
     after load_subway_stops succeeds). Route lines are decorative, so any
-    parse problem logs and returns [] rather than raising; the validator has
-    already read this member through the same generator, so that arm is for a
-    cache that changed after it was checked.
+    parse problem logs and returns [] rather than raising. That arm is reached
+    two ways: a cache that changed after it was checked, and, by design, an
+    archive promoted on a cold start with shapes.txt failing
+    validate_subway_geometry, which /api/status names as a degraded member.
     """
     try:
         shapes: dict[str, list] = defaultdict(list)
@@ -447,8 +550,8 @@ def _iter_trip_routes(raw: IO[bytes]) -> Iterator[tuple[str, str | None]]:
     THE ONE READER OF trips.txt (A02): _parse_trip_routes accumulates these rows for
     the routes-per-station index and validate_subway_archive drains them to a count, so
     an archive whose trips.txt the index cannot read, or that holds no trip, is refused
-    before it is promoted. Rows that read but name no route still count (see the
-    validator on what its floor does not prove).
+    before it is promoted. A row with no route counts toward that floor; the join floor
+    (_first_station_route) is what refuses a trips.txt whose trips name no route.
     """
     reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
     for row in reader:

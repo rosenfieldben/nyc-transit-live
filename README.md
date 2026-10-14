@@ -709,6 +709,20 @@ load and there is nothing behind it to protect anyway. A cached archive that fai
 its check is treated as absent, which forces a fresh staged download rather than
 serving garbage.
 
+One member degrades rather than refuses: the subway's `shapes.txt`, which draws
+only the route lines. Its gate refuses a publication when a cached archive that
+serves is there to keep; with none (a cold start, which is every deploy, since the
+data directory does not persist) the publication is promoted, every station serves
+without lines, `static_archives.subway.degraded_members` names `shapes.txt` with the
+parser's reason, and `/healthz` carries `subway-lines-degraded`. Both stay until a
+later promotion whose geometry draws, which in production means the next deploy: a
+running process does not re-fetch an archive it has promoted, so a corrected upstream
+publication is picked up by redeploying, not by waiting. Whether a cache "serves" is
+the loader's own verdict on it at the start of that attempt, so the rule and the
+loader never disagree about the same file. The subway's other tables
+(stations, trips, calls, transfers, and the join the routes-per-station index is
+built from) refuse in every mode.
+
 That makes one state deliberate and worth recognizing: a group can be `ready`
 while its archive is older than the 30-day refresh threshold. It is reachable
 ONLY by a download that was attempted and failed validation, never by skipping a
@@ -731,7 +745,10 @@ nothing is failing and nothing is retrying, and an operator reading `failed` wou
 otherwise go looking for a broken upstream that does not exist. Beside those,
 `static_archives` reports each downloaded ARCHIVE (`subway`, `railroad_LIRR`,
 `railroad_MNR`, `path`, `ferry`, `njt`): when a download last passed validation and was
-promoted, why the last one was rejected, and how many have been rejected since.
+promoted, why the last one was rejected, how many have been rejected since, and,
+for the subway, which members the archive now serving was promoted without
+(`degraded_members`; every other archive reports it empty, NJ Transit's included,
+whose `shapes.txt` degrades inside its loader rather than at promotion).
 A group state answers "can I serve this system"; these answer "how old is the
 archive I am serving it from, and why", which together make the deliberate
 ready-but-stale state legible. The `alerts` entry reports the alert poll's `age_s`, its
@@ -820,6 +837,17 @@ has not decoded since it came up, so a quiet probe after a redeploy is not proof
 recovery (`/api/status`'s `subway_feeds.failed` and `railroad_feeds.failed` still name
 the group), and a sparsely served LIRR late at night can trip the code with nothing
 wrong.
+
+One more is read off the subway lines being served. `subway-lines-degraded` says the
+subway group is `ready` and no route line it serves draws (none has two points). The
+usual cause is a cold start promoting a publication whose `shapes.txt` draws nothing,
+which it does rather than leave no subway at all, and then
+`static_archives.subway.degraded_members` names the member and the parser's reason;
+when that is empty, the lines failed to load from an archive that draws, and a
+redeploy restores them. It never gates, because the usual fault is in upstream's
+publication rather than in the build, and the monitor's `subway-static` check `WARN`s
+on that publication from upstream's side, through the app's own geometry gate, so
+whoever reads the run knows whether a redeploy would bring the lines back yet.
 
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule

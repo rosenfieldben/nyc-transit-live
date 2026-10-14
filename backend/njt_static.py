@@ -1039,7 +1039,7 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         UnicodeDecodeError,
         csv.Error,
         zlib.error,
-        OSError,
+        EOFError,
     ) as exc:
         # The residual below the CACHED-archive validator. Reaching here means the
         # bytes on disk were fully parseable when they were promoted and are not now
@@ -1049,6 +1049,22 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         # retry on the same bytes. zlib.error is a damaged deflate stream inside a
         # member (A02b), as BadZipFile is a damaged CRC; the tuple missed it, so such
         # an archive raised out of here instead and was kept for every attempt.
+        # EOFError is a member cut short.
+        #
+        # THE ARCHIVE'S ERRORS ONLY (the operator's ruling on the A02 branch's review):
+        # OSError is not here. Out of file descriptors, or a disk that fails a read, says
+        # nothing about these bytes, and discarding a good cache over it left NJ Transit
+        # with nothing to serve whenever the download that followed also failed. Such an
+        # error now fails the attempt with the cache kept, for the next one to read.
+        # NOT QUITE EVERY ARCHIVE ERROR (the branch's review, recorded on the ledger's
+        # live list for the operator): a member compressed with bzip2 whose stream is
+        # damaged raises a plain OSError, lzma's raises LZMAError, and a bit-rotted
+        # central-directory offset raises OSError(EINVAL) on every member read, errno
+        # and all, so no errno test separates them from the environment. stop_times.txt
+        # is the required member the light cached check never opens, so a cache that
+        # rots there escapes this arm and is kept until MAX_AGE_DAYS. The ruling named
+        # this tuple, so it is reported, not widened; the subway's answer, a cached
+        # check that opens what the load reads, is the one that closes it.
         #
         # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. A freshly promoted archive
         # reaches here only through a member the publication gate does not parse:

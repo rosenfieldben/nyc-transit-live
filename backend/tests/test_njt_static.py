@@ -28,6 +28,7 @@ but one day per fixture.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import struct
@@ -1885,3 +1886,66 @@ async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_
     assert set(data["stops"]) == {"109", "112", "38", "125"}
     assert threads, "the cached check must have run the validator"
     assert threading.get_ident() not in threads
+
+
+async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
+    monkeypatch, tmp_path
+):
+    """THE RESIDUAL ARM IS THE ARCHIVE'S (the operator's ruling on the A02 branch's
+    review): OSError left its tuple. Through the real NJ Transit warmup, an environment
+    error while parsing a valid, fresh cache fails the attempt with the cache kept, and
+    the next attempt reads the same cache and reaches ready with nothing sent to NJ
+    Transit: no mint, no download. The committed fixture, so the archive is in service
+    on the real clock the warmup reads."""
+    import errno
+    import types
+
+    import main as app_module
+    import warmups
+
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    zip_path.write_bytes(
+        _zip_bytes(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(FIXTURE_DIR.iterdir())
+                if path.suffix == ".txt"
+            }
+        )
+    )
+    cached = zip_path.read_bytes()
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    calls: list = []
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(b"", calls))
+    real_parse = njt_static._parse_zip
+    faults = {"left": 1}
+
+    def failing_once(path):
+        if faults["left"]:
+            faults["left"] -= 1
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real_parse(path)
+
+    monkeypatch.setattr(njt_static, "_parse_zip", failing_once)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(njt_static_status="loading"))
+    seen: list = []
+    task = asyncio.create_task(warmups._warm_njt_static(app))
+    try:
+        for _ in range(2000):
+            status = app.state.njt_static_status
+            if not seen or seen[-1] != status:
+                seen.append(status)
+            if status == "ready":
+                break
+            await asyncio.sleep(0.001)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert seen == ["loading", "failed", "ready"]
+    assert faults["left"] == 0
+    assert zip_path.read_bytes() == cached, "the cache is kept"
+    assert calls == [], "nothing was sent to NJ Transit"
+    assert len(app.state.njt_stops) == 164

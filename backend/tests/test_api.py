@@ -22,6 +22,7 @@ import main as app_module
 import models
 import njt_auth
 import pollers
+import static_shared
 import warmups
 from conftest import configure_njt
 from routes import status as status_routes
@@ -886,7 +887,13 @@ def healthz_env(cache, monkeypatch):
     monkeypatch.setattr(bus_static, "_status", "ready")
     for index in _ARRIVALS_INDEXES:
         monkeypatch.setattr(app_module.app.state, index, {}, raising=False)
-    return cache
+    # /healthz reads the subway's served lines (subway-lines-degraded), and tests here
+    # assign the group's status directly, so both are put back after each test.
+    monkeypatch.setattr(app_module.app.state, "subway_static_status", "loading", raising=False)
+    monkeypatch.setattr(app_module.app.state, "subway_routes", [], raising=False)
+    static_shared.reset_archive_status()
+    yield cache
+    static_shared.reset_archive_status()
 
 
 def _fresh(entry, age=5.0):
@@ -1110,6 +1117,38 @@ async def test_status_publishes_the_njt_mint_allowance_and_healthz_carries_its_h
     assert res.json()["degraded"] == [models.HEALTH_NJT_MINT_ALLOWANCE]
     assert "reasons" not in res.json()
     assert models.HEALTH_NJT_MINT_ALLOWANCE not in models.HEALTH_GATING_CODES
+
+
+async def test_healthz_carries_subway_lines_degraded_while_no_served_line_draws(
+    client, healthz_env
+):
+    """THE TWO-MODE RULE'S SIGNAL (claude/a02-publication-validation). A cold start
+    promotes a publication whose shapes.txt draws nothing, so the subway group is ready
+    with every station and no line, and nothing a watcher reads said so:
+    subway-static-failed cannot fire, since nothing failed. /healthz carries
+    subway-lines-degraded while the group is ready and no route line it serves has two
+    points, and answers 200 while it does (the fault is upstream's,
+    models.HEALTH_SUBWAY_LINES_DEGRADED). Read off what is served, so a degraded member
+    recorded under lines that draw raises nothing, and lines lost with nothing recorded
+    do; a group still loading raises nothing either."""
+    state = app_module.app.state
+    _fresh(healthz_env["buses"])
+    assert (await client.get("/healthz")).json() == {"status": "pass", "degraded": []}
+
+    state.subway_static_status = "ready"
+    res = await client.get("/healthz")
+    assert res.status_code == 200, "upstream's broken geometry must never refuse a deploy"
+    assert res.json() == {"status": "pass", "degraded": [models.HEALTH_SUBWAY_LINES_DEGRADED]}
+    assert models.HEALTH_SUBWAY_LINES_DEGRADED not in models.HEALTH_GATING_CODES
+
+    state.subway_routes = [{"route": "1", "polylines": [[[40.7, -74.0]]]}]
+    assert (await client.get("/healthz")).json()["degraded"] == [
+        models.HEALTH_SUBWAY_LINES_DEGRADED
+    ], "a one-point polyline draws nothing"
+
+    static_shared._record("subway", promoted=True, degraded={"shapes.txt": "an EMFILE"})
+    state.subway_routes = [{"route": "1", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}]
+    assert (await client.get("/healthz")).json() == {"status": "pass", "degraded": []}
 
 
 async def test_healthz_is_quiet_about_njt_when_no_mint_has_been_refused(client, healthz_env):

@@ -24,6 +24,7 @@ from models import (
     HEALTH_NO_FEED_FRESH,
     HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_SUBWAY_GROUPS_DOWN,
+    HEALTH_SUBWAY_LINES_DEGRADED,
     HEALTH_SUBWAY_STATIC_FAILED,
     AlertFeed,
     HealthzResponse,
@@ -276,6 +277,7 @@ def _health_codes(
     now: float,
     observations_qualified: bool = False,
     njt_mint_allowance: bool = False,
+    subway_lines_degraded: bool = False,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
 
@@ -392,7 +394,23 @@ def _health_codes(
     # observations-qualified is.
     if njt_mint_allowance:
         codes.append(HEALTH_NJT_MINT_ALLOWANCE)
+
+    # THE SUBWAY SERVING WITHOUT ITS LINES, AND NOT A REASON TO 503 (the two-mode rule,
+    # claude/a02-publication-validation). A cold start promotes a publication whose
+    # shapes.txt draws nothing, so the group is "ready" with every station and no line,
+    # a state no code above sees; models.HEALTH_SUBWAY_LINES_DEGRADED says why it does
+    # not gate and why it is read off what riders are served. The handler computes it
+    # (_draws_a_line) and hands in the answer, as it does the allowance. LAST, and
+    # defaulted, for the reason observations-qualified is.
+    if subway_lines_degraded:
+        codes.append(HEALTH_SUBWAY_LINES_DEGRADED)
     return codes
+
+
+def _draws_a_line(routes: list) -> bool:
+    """Whether the route lines being served draw anything: a polyline of two points or
+    more, the measure validate_subway_geometry applies to a publication."""
+    return any(len(line) >= 2 for route in routes for line in route.get("polylines", ()))
 
 
 class _ServedSystem(NamedTuple):
@@ -672,6 +690,10 @@ async def healthz(request: Request) -> JSONResponse:
             _systems_serving_nothing_current(_served_arrival_systems(app.state), now)
         ),
         njt_mint_allowance=njt_auth.TOKEN_CACHE.mint_allowance_spent,
+        subway_lines_degraded=(
+            getattr(app.state, "subway_static_status", None) == "ready"
+            and not _draws_a_line(getattr(app.state, "subway_routes", None) or [])
+        ),
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

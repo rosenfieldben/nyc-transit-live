@@ -58,7 +58,15 @@ class StaticValidationError(Exception):
     required member(s): trips.txt"), not a stack of parser detail: the message is
     published on /api/status, and it is written here rather than derived from an
     upstream string, so it is safe to serve as-is.
+
+    `member` names the one archive member the failure is about, where it is about one
+    (require_members and require_parsed set it), so staged_fetch can publish a
+    degraded member under its own name rather than parse it back out of the message.
     """
+
+    def __init__(self, message: str, *, member: str | None = None) -> None:
+        super().__init__(message)
+        self.member = member
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +93,10 @@ def require_members(zf: zipfile.ZipFile, required: Iterable[str]) -> None:
     present = set(zf.namelist())
     missing = [name for name in required if name not in present]
     if missing:
-        raise StaticValidationError(f"missing required member(s): {', '.join(sorted(missing))}")
+        raise StaticValidationError(
+            f"missing required member(s): {', '.join(sorted(missing))}",
+            member=missing[0] if len(missing) == 1 else None,
+        )
 
 
 def parse_member(
@@ -100,6 +111,15 @@ def parse_member(
     """
     with zf.open(member) as raw:
         return parse(raw)
+
+
+_OTHER_READ_ERRORS: tuple[type[BaseException], ...] = (OSError, NotImplementedError, RuntimeError)
+try:
+    import lzma
+
+    _OTHER_READ_ERRORS += (lzma.LZMAError,)
+except ImportError:  # a build without liblzma, where zipfile cannot read such a member
+    pass
 
 
 def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
@@ -141,15 +161,28 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     try:
         parsed = parse()
     except KeyError as exc:
-        raise StaticValidationError(f"missing required member(s): {member}") from exc
+        raise StaticValidationError(f"missing required member(s): {member}", member=member) from exc
     except (UnicodeDecodeError, csv.Error) as exc:
-        raise StaticValidationError(f"{member} is not readable as CSV ({exc})") from exc
+        raise StaticValidationError(
+            f"{member} is not readable as CSV ({exc})", member=member
+        ) from exc
     except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
         raise StaticValidationError(
-            f"{member} is not readable ({type(exc).__name__}: {exc})"
+            f"{member} is not readable ({type(exc).__name__}: {exc})", member=member
+        ) from exc
+    except _OTHER_READ_ERRORS as exc:
+        # THE REST OF WHAT READING A MEMBER CAN RAISE, named by member so a degraded
+        # member is keyed by its name and not as "archive" (the branch's review, F4):
+        # a bz2 stream the decompressor refuses (a plain OSError with no errno), an
+        # lzma one (LZMAError), a compression method this build lacks, an encrypted
+        # member, and the environment (an OSError with an errno). The TYPE only, as
+        # validate_archive's broad catch does, because an OSError's text can carry a
+        # path of ours and this message is published.
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__})", member=member
         ) from exc
     if not parsed:
-        raise StaticValidationError(f"{member} yielded no usable {what}")
+        raise StaticValidationError(f"{member} yielded no usable {what}", member=member)
 
 
 def validate_archive(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> None:
@@ -240,7 +273,7 @@ async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFi
 # Per-archive status, for the operator surface
 # ---------------------------------------------------------------------------
 
-# key -> {last_promoted_at, last_download_error, failed_downloads}
+# key -> {last_promoted_at, last_download_error, failed_downloads, degraded_members}
 # Module-level because the loaders have no app handle (the warmups call them as
 # plain module functions, and two of them run off the event loop); routes/status.py
 # reads it through archive_status(). The contract monitor needs none of this: it
@@ -252,7 +285,10 @@ _ARCHIVE_STATUS: dict[str, dict] = {}
 
 def archive_status() -> dict[str, dict]:
     """A copy of the per-archive record, for /api/status."""
-    return {key: dict(value) for key, value in _ARCHIVE_STATUS.items()}
+    return {
+        key: {**value, "degraded_members": dict(value["degraded_members"])}
+        for key, value in _ARCHIVE_STATUS.items()
+    }
 
 
 def reset_archive_status() -> None:
@@ -260,10 +296,21 @@ def reset_archive_status() -> None:
     _ARCHIVE_STATUS.clear()
 
 
-def _record(key: str, *, promoted: bool, error: str | None = None) -> None:
+def _record(
+    key: str,
+    *,
+    promoted: bool,
+    error: str | None = None,
+    degraded: dict[str, str] | None = None,
+) -> None:
     entry = _ARCHIVE_STATUS.setdefault(
         key,
-        {"last_promoted_at": None, "last_download_error": None, "failed_downloads": 0},
+        {
+            "last_promoted_at": None,
+            "last_download_error": None,
+            "failed_downloads": 0,
+            "degraded_members": {},
+        },
     )
     if promoted:
         entry["last_promoted_at"] = time.time()
@@ -272,6 +319,10 @@ def _record(key: str, *, promoted: bool, error: str | None = None) -> None:
         # failure answers neither.
         entry["last_download_error"] = None
         entry["failed_downloads"] = 0
+        # And replaces the degraded members wholesale: they describe the archive now
+        # being served, which is this one. A refused download leaves them alone,
+        # since the archive they describe is still the one serving.
+        entry["degraded_members"] = dict(degraded or {})
     else:
         entry["last_download_error"] = error
         entry["failed_downloads"] += 1
@@ -333,6 +384,8 @@ async def staged_fetch(
     label: str,
     deadline_s: float = DOWNLOAD_DEADLINE_S,
     download: Callable[[str, Path, float], Awaitable[None]] | None = None,
+    validate_when_replacing: Callable[[zipfile.ZipFile], None] | None = None,
+    cache_serves: bool | None = None,
 ) -> None:
     """Download to a stage file, validate it, and only then promote it over `dest`.
 
@@ -361,6 +414,38 @@ async def staged_fetch(
 
     `download` is injectable so tests can publish bytes without a socket; it
     defaults to the streaming transfer above.
+
+    THE TWO-MODE RULE, for what `validate_when_replacing` checks (the operator's ruling
+    on the A02 branch's review). `validate` is the always-gate: what the layer cannot
+    do without, so a failure refuses the publication whatever the cache holds (the
+    subway's stations, its routes join and its transfers floor, which the H2 ruling made
+    a rejection). `validate_when_replacing` is for what is DECORATIVE (the subway's
+    route lines): it runs on every publication, and what its failure does depends on
+    what the publication would replace.
+      - A cache that passes `validate` is there: the publication is refused and the
+        cache keeps serving, exactly as an always-gate failure would be. Bad geometry
+        never replaces geometry that draws (2026-09-05's F08).
+      - No such cache (a cold start, which on this deployment is every deploy: the
+        data directory does not persist, confirmed against production's promotion
+        stamps of 2026-10-13): the publication is promoted, and the failure is
+        recorded on the archive's status as a degraded member with the parser's
+        reason, published on /api/status. Refusing it would trade every station for
+        the lines, and the loader of the decorative layer degrades to nothing as it
+        always has.
+    NJ Transit passes nothing here: its shapes.txt is outside every gate and degrades
+    in its loader (15c).
+
+    WHOSE VERDICT DECIDES THE MODE: the caller's, when it has one. `cache_serves` is
+    what the loader concluded about `dest` with `validate` at the start of this attempt
+    (cached_archive_is_usable), and the subway passes it, so the mode and the loader
+    cannot disagree about the same cache in the same attempt. The branch's review found
+    what a second, independent read here did: a fault while re-reading a cache that
+    serves promoted geometry that draws nothing over lines that draw, and an attempt to
+    tell the environment's faults from the bytes' by errno called "keep" a cache the
+    loader had already called unusable, so the publication was refused, the loader
+    raised and no station served (a bit-rotted end-of-central-directory offset raises
+    OSError(EINVAL), with an errno, from the bytes). Without a verdict (None) the cache
+    is read here with cached_archive_is_usable, the check every loader makes.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     for orphan in dest.parent.glob(f"{dest.stem}.*.part"):
@@ -383,6 +468,23 @@ async def staged_fetch(
         # unlinked below, which on Linux leaves its open handle readable, and a late
         # result has nowhere to go.
         await asyncio.to_thread(validate_archive, stage, validate)
+        degraded: dict[str, str] = {}
+        if validate_when_replacing is not None:
+            try:
+                await asyncio.to_thread(validate_archive, stage, validate_when_replacing)
+            except StaticValidationError as exc:
+                if cache_serves is None:
+                    cache_serves = await cached_archive_is_usable(dest, validate)
+                if cache_serves:
+                    raise  # a cache that serves is there: refuse, as above
+                degraded[exc.member or "archive"] = str(exc)
+                logger.warning(
+                    "Promoting %s publication with a degraded member (%s): there is no "
+                    "cached archive at %s to keep",
+                    label,
+                    exc,
+                    dest,
+                )
     except BaseException as exc:
         stage.unlink(missing_ok=True)
         # A cancellation is not a publication failure and must not be recorded as
@@ -411,5 +513,5 @@ async def staged_fetch(
         # did not happen.
         _record(key, promoted=False, error=describe_failure(exc))
         raise
-    _record(key, promoted=True)
+    _record(key, promoted=True, degraded=degraded)
     logger.info("Promoted %s to %s", label, dest)

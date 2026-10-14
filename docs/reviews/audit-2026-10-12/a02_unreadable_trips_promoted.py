@@ -35,10 +35,17 @@ THE AUDIT'S CLAIM (the 2026-10-12 report, finding A02, verbatim):
 FIXED ON claude/a02-publication-validation, by one rule: the validator is the
 loader's parser. Every member the subway load reads is read at validation through the
 one generator the load reads it with (static_data's _iter_* functions, drained to a
-count by the validator and accumulated by the loader), and must yield at least one row.
-So an archive the load cannot read is refused at staging and the last-known-good keeps
-serving. Behind it, a residual arm discards a cached archive that passes validation and
-still fails the load, so the next attempt downloads (ARM 1's bypass check reaches it).
+count by the validator and accumulated by the loader), and must yield at least one row;
+and the three the routes-per-station index is built from must JOIN, one call of a trip
+with a route at a stop that folds to a station (the join floor, the sixth row below).
+So an archive the load cannot read, or whose index would be empty, is refused at
+staging and the last-known-good keeps serving. shapes.txt is read by a gate of its own,
+by the operator's ruling that geometry is decorative, and its failure follows the
+two-mode rule (static_shared.staged_fetch): refused over a cache that serves, promoted
+with shapes.txt named a degraded member on a cold start (M5g; 09-05's F08 pins both
+arms). Behind it, a residual arm discards a cached archive that passes validation and
+still fails the load on the archive's own bytes, so the next attempt downloads (ARM 1's
+bypass check reaches it).
 
 BEFORE (this script's record at d5f6d70, the numbers the ledger's A02 row carries):
 the validator parsed 2 of its 5 required members (stops.txt and transfers.txt) and
@@ -52,8 +59,12 @@ by any of 75 further attempts over 6 h of the real backoff (74 from a good archi
 loaded a month earlier) or at MAX_AGE_DAYS less an hour; the first attempt an hour
 past MAX_AGE_DAYS fetched it.
 
-AFTER, asserted below: every one of the five members is refused with one 0xFF byte,
-by name and with the codec's own words; the trips.txt and stop_times.txt corruptions
+AFTER, asserted below: every one of the five members is refused with one 0xFF byte by
+the gate that reads it, by name and with the codec's own words; an archive whose tables
+do not join is refused by the always-gate, naming stop_times.txt; on a cold cache the
+four the always-gate reads, and the unjoinable archive, are refused on every attempt,
+while bad shapes.txt is promoted with every station served, 0 route lines and
+shapes.txt named a degraded member on /api/status; the trips.txt and stop_times.txt corruptions
 are refused at staging on every attempt from a cold cache (3 refusals, 3 downloads,
 0 promotions, no cache on disk, the group failed and retrying); a repair published
 after the first refusal is fetched and promoted by the very next attempt, one backoff
@@ -167,7 +178,9 @@ import sleep, from time import time) binds the injected one.
        at the end of the first trip's headsign in trips.txt; BAD_STOP_TIMES puts the
        same byte at the end of stop_times.txt's first row instead. The REPAIR is the
        GOOD archive with the first headsign reworded, so it serves the same index and
-       its promotion is visible as a change of cache bytes.
+       its promotion is visible as a change of cache bytes. JOIN_BROKEN is the GOOD
+       archive with trips.txt's route_id header renamed to route: every member reads
+       and holds rows, and no call belongs to a trip with a route.
     6. main.app's subway fields are reset to what main.lifespan sets before each
        warmup run, and static_shared.reset_archive_status() clears the per-archive
        record (it is module state and outlives a run), so each run starts as a
@@ -699,6 +712,20 @@ ABSENT = {
     )
     for m in GOOD_MEMBERS
 }
+# THE SIXTH ROW: every member present and readable, every one with rows, and trips.txt's
+# route_id column renamed, so no call belongs to a trip with a route and the
+# routes-per-station index the load builds is empty (MR2 F1's empty index, reached
+# through readable tables). The join floor is what refuses it.
+JOIN_BROKEN = write_zip(
+    UPSTREAM_DIR / "join_route_id_renamed.zip",
+    {**GOOD_MEMBERS, "trips.txt": TRIPS_BYTES.replace(b"route_id,", b"route,", 1)},
+)
+JOIN_MEMBER = "stop_times.txt"  # the member the join's refusal names: its rows are the calls
+JOIN_REASON = (
+    "stop_times.txt yielded no usable call of a trip that has a route_id at a stop that "
+    "folds to a parent station (trips.txt, stop_times.txt and stops.txt do not join, so the "
+    "routes-per-station index would be empty)"
+)
 
 CACHE = static_data.SUBWAY_GTFS_ZIP
 MAX_AGE_DAYS = static_data.MAX_AGE_DAYS
@@ -851,9 +878,10 @@ async def drive_warmup(plan, *, full: bool = True) -> dict:
     return {"pauses": pauses, "outcome": outcome, "final": final, "attempts": attempts}
 
 
-def staged_verdict(path: Path) -> str:
+def staged_verdict(path: Path, gate=None) -> str:
+    """One of the REAL gates over an archive file: the always-gate by default."""
     try:
-        static_shared.validate_archive(path, static_data.validate_subway_archive)
+        static_shared.validate_archive(path, gate or static_data.validate_subway_archive)
     except static_shared.StaticValidationError as exc:
         return f"REJECTED ({exc})"
     return "ACCEPTED"
@@ -918,92 +946,161 @@ def refused_by_name(verdict: str, member: str) -> bool:
     )
 
 
+# Which gate reads which member. shapes.txt is read by the route lines' own gate, which
+# staged_fetch runs under the two-mode rule; the always-gate does not ask for it.
+GEOMETRY = "shapes.txt"
+ALWAYS = [m for m in MEMBERS if m != GEOMETRY]
+
+
+def gate_for(member: str):
+    if member == GEOMETRY:
+        return static_data.validate_subway_geometry
+    return static_data.validate_subway_archive
+
+
 async def mechanism() -> dict:
-    rule("MECHANISM  what the publication validator asks of each required member")
+    rule("MECHANISM  what each gate asks of each member, and of the join")
     print("  Each row is one archive differing from the good one in a single member:")
-    print("  absent, or present with one 0xFF byte. Verdicts are the real staged")
-    print("  validator, cached_archive_is_valid handed that validator on the same bytes,")
-    print("  and two cold-cache attempts of the real warmup with that archive published")
-    print("  (the second shows whether the loader cached anything it cannot read).")
-    print(f"  good archive, staged validator: {staged_verdict(GOOD)}")
+    print("  absent, or present with one 0xFF byte; the sixth differs in one trips.txt")
+    print("  header (route_id renamed), so every member reads and the tables do not join.")
+    print("  Verdicts are the real gate that reads the member (the always-gate,")
+    print("  validate_subway_archive, or for shapes.txt the geometry gate,")
+    print("  validate_subway_geometry), cached_archive_is_valid handed the always-gate on")
+    print("  the same bytes, and two cold-cache attempts of the real warmup with that")
+    print("  archive published (the second shows whether the loader cached anything it")
+    print("  cannot read).")
+    print(f"  good archive: always-gate {staged_verdict(GOOD)}, geometry gate "
+          f"{staged_verdict(GOOD, static_data.validate_subway_geometry)}")
     rows = {}
-    for member in MEMBERS:
-        absent = staged_verdict(ABSENT[member])
-        staged = staged_verdict(CORRUPT[member])
-        as_cache = static_shared.cached_archive_is_valid(
-            CORRUPT[member], static_data.validate_subway_archive
-        )
+    for member in [*MEMBERS, "join"]:
+        bad = JOIN_BROKEN if member == "join" else CORRUPT[member]
+        gate = static_data.validate_subway_archive if member == "join" else gate_for(member)
+        absent = "n/a" if member == "join" else staged_verdict(ABSENT[member], gate)
+        always_absent = "n/a" if member == "join" else staged_verdict(ABSENT[member])
+        staged = staged_verdict(bad, gate)
+        as_cache = static_shared.cached_archive_is_valid(bad, static_data.validate_subway_archive)
         clear_data()
-        Upstream.publishing = CORRUPT[member]
+        Upstream.publishing = bad
         run = await drive_warmup(until(2))
         pauses = run["pauses"]
+        final = run["final"]
         rows[member] = {
             "absent_rejected": absent.startswith("REJECTED"),
+            "always_absent": always_absent,
             "refused": staged.startswith("REJECTED"),
-            "named": refused_by_name(staged, member),
+            "named": (
+                staged == f"REJECTED ({JOIN_REASON})"
+                if member == "join"
+                else refused_by_name(staged, member)
+            ),
             "cache_valid": as_cache,
             "raised": [p["raised"] for p in pauses],
             "promoted": any(p["archive"].get("last_promoted_at") for p in pauses),
             "cached": [p["cache"] for p in pauses],
             "downloads": [p["downloads"] for p in pauses],
             "outcome": run["outcome"],
+            "final": final,
         }
-        print(f"  {member:<15} absent: {absent[:8]}  one 0xFF: {staged[:84]}")
-        print(
-            f"  {'':<15} as a cache: valid={as_cache}  warmup: raised {rows[member]['raised']}, "
-            f"promoted={rows[member]['promoted']}, downloads by attempt {rows[member]['downloads']}"
-        )
+        label = "join" if member == "join" else member
+        gate_name = "geometry" if gate is static_data.validate_subway_geometry else "always"
+        print(f"  {label:<15} [{gate_name} gate] absent: {absent[:8]}  "
+              f"{'route_id renamed' if member == 'join' else 'one 0xFF'}: {staged[:84]}")
+        if pauses:
+            print(
+                f"  {'':<15} as a cache: valid={as_cache}  warmup: raised {rows[member]['raised']}, "
+                f"promoted={rows[member]['promoted']}, downloads by attempt "
+                f"{rows[member]['downloads']}"
+            )
+        else:
+            arch = final["archive"]
+            print(
+                f"  {'':<15} as a cache: valid={as_cache}  warmup: {run['outcome']} on attempt "
+                f"{run['attempts']}, {final['downloads']} download, group {final['group']!r}, "
+                f"{final['stations']} stations, {final['route_lines']} route lines"
+            )
+            print(f"  {'':<15} degraded_members={arch.get('degraded_members')!r}")
     print()
+    every = [*MEMBERS, "join"]
+    refusing = [*ALWAYS, "join"]  # what the always-gate refuses, so no mode promotes
     required = [m for m in MEMBERS if rows[m]["absent_rejected"]]
-    parsed = [m for m in MEMBERS if rows[m]["refused"]]
-    named = [m for m in MEMBERS if rows[m]["named"]]
-    agree = [m for m in MEMBERS if rows[m]["cache_valid"] is False]
+    parsed = [m for m in every if rows[m]["refused"]]
+    named = [m for m in every if rows[m]["named"]]
+    agree = [m for m in every if rows[m]["cache_valid"] is False]
     reached = [
         m
-        for m in MEMBERS
+        for m in refusing
         if rows[m]["promoted"]
         or rows[m]["outcome"] != "stopped"
         or rows[m]["raised"] != ["StaticValidationError"] * 2
         or rows[m]["cached"] != ["(absent)"] * 2
     ]
-    redownload = {m: rows[m]["downloads"] for m in MEMBERS}
+    redownload = {m: rows[m]["downloads"] for m in refusing}
+    geo = rows[GEOMETRY]
+    gf = geo["final"]
+    garch = gf["archive"]
     check(
-        "M1 every one of the five members is required (absent -> refused)",
-        required == MEMBERS,
-        required,
-        "'verifies ... the presence of required tables'",
+        "M1 every member the load reads is required by the gate that reads it (absent -> "
+        "refused), and shapes.txt by the geometry gate alone",
+        required == MEMBERS and rows[GEOMETRY]["always_absent"] == "ACCEPTED",
+        f"{required}; the always-gate on an archive without shapes.txt: "
+        f"{rows[GEOMETRY]['always_absent'][:8]}",
+        "'verifies ... the presence of required tables' (BEFORE: all five by the one gate)",
     )
     check(
-        "M2 the validator parses all five (one 0xFF -> refused)",
-        parsed == MEMBERS,
+        "M2 each gate parses its members (one 0xFF -> refused), and the always-gate refuses "
+        "tables that do not join (the sixth row)",
+        parsed == every,
         parsed,
-        "BEFORE: two of five, ['stops.txt', 'transfers.txt']",
+        "BEFORE: two of five, ['stops.txt', 'transfers.txt'], and no join",
     )
     check(
-        "M3 each refusal names its member and carries the codec's own words, which is what "
-        "archive status and /api/status publish",
-        named == MEMBERS,
+        "M3 each refusal names its member and carries the codec's own words (the join's names "
+        "stop_times.txt and says the index would be empty), which is what archive status and "
+        "/api/status publish",
+        named == every,
         f"named on {named}",
-        "BEFORE: no refusal to name for trips.txt, stop_times.txt or shapes.txt",
+        "BEFORE: no refusal to name for trips.txt, stop_times.txt, shapes.txt or the join",
     )
     check(
-        "M4 static_shared.cached_archive_is_valid, handed the staged validator, refuses all "
-        "five as a cache",
-        agree == MEMBERS,
-        f"refuses {agree}",
-        "BEFORE: True on trips.txt, stop_times.txt and shapes.txt",
+        "M4 static_shared.cached_archive_is_valid, handed the always-gate, refuses the four "
+        "and the join as a cache, and keeps a cache whose geometry does not draw (it serves "
+        "every station; geometry is decorative)",
+        agree == refusing and geo["cache_valid"] is True,
+        f"refuses {agree}; on bad shapes.txt {geo['cache_valid']}",
+        "BEFORE: True on trips.txt, stop_times.txt, shapes.txt and the join",
     )
     check(
-        "M5 no member reaches the warmup unreadable from a cold cache: each attempt is "
-        "refused at staging, nothing is promoted, no cache is written",
+        "M5 no member the always-gate reads, and no unjoinable archive, reaches the warmup "
+        "from a cold cache: each attempt is refused at staging, nothing is promoted, no cache "
+        "is written",
         reached == [],
-        f"members that got past staging: {reached}",
-        "BEFORE: trips.txt and stop_times.txt promoted then UnicodeDecodeError; shapes.txt "
-        "(F08) promoted, ready with 0 route lines",
+        f"got past staging: {reached}",
+        "BEFORE: trips.txt and stop_times.txt promoted then UnicodeDecodeError; the join "
+        "promoted with an empty index (0 of 496 stations with routes)",
+    )
+    check(
+        "M5g shapes.txt on a cold cache, the two-mode rule's second mode: promoted, ready on "
+        "the first attempt, every station and the index served, 0 route lines, and "
+        "/api/status names shapes.txt as a degraded member with the gate's reason",
+        geo["outcome"] == "ready-returned"
+        and gf["downloads"] == 1
+        and gf["group"] == "ready"
+        and gf["stations"] == EXPECTED_STATIONS
+        and gf["index"] == EXPECTED_INDEX
+        and gf["route_lines"] == 0
+        and bool(garch.get("last_promoted_at"))
+        and garch.get("last_download_error") is None
+        and list(garch.get("degraded_members") or {}) == [GEOMETRY]
+        and refused_by_name(f"REJECTED ({garch['degraded_members'][GEOMETRY]})", GEOMETRY),
+        f"{geo['outcome']}, {gf['downloads']} download, group {gf['group']!r}, "
+        f"{gf['stations']} stations, index built {gf['index'] == EXPECTED_INDEX}, "
+        f"{gf['route_lines']} route lines, degraded_members={garch.get('degraded_members')!r}",
+        "BEFORE: promoted, ready with 0 route lines and nothing on the status saying why "
+        "(F08's second half)",
     )
     check(
         "M6 the LOADER's decision, by behavior: the attempt after a refusal downloads again, "
-        "because nothing unreadable was cached as usable and fresh",
+        "because nothing unreadable or unjoinable was cached as usable and fresh",
         all(v == [1, 2] for v in redownload.values()),
         f"downloads by attempt {redownload}",
         "BEFORE: [1, 1] for trips.txt and stop_times.txt ('accept the same newly cached "
@@ -1362,7 +1459,9 @@ async def amain() -> int:
         "with UnicodeDecodeError on 1 download; stop_times.txt had the same gap and "
         "shapes.txt (F08) was promoted to 0 route lines; a repair published at once was not "
         "fetched for MAX_AGE_DAYS (75 further attempts over 6 h of the real backoff). AFTER: "
-        f"the validator parses all {len(mech['parsed'])} through the loader's own readers, so "
+        f"the gates refuse all {len(mech['parsed']) - 1} members and the unjoinable archive "
+        "through the loader's own readers (shapes.txt by its own gate, refused over a cache "
+        "that serves and promoted degraded and named on a cold start), so "
         f"the trips.txt and stop_times.txt corruptions were refused at staging on "
         f"{len(one['raised'])} and {len(one_b['raised'])} of 3 attempts with 0 promotions "
         "and no cache written, archive status naming the member and the codec's words; the "

@@ -541,6 +541,68 @@ def test_an_unreadable_trips_publication_never_costs_a_station_and_the_next_one_
     assert time.time() - archive.stat().st_mtime < 3600
 
 
+def test_damaged_subway_geometry_degrades_on_a_cold_start_and_is_refused_over_lines(harness):
+    """THE TWO-MODE RULE end to end, the operator's ruling on the A02 branch's review:
+    geometry stays decorative. Three app lifetimes over one data directory.
+
+    1. A cold start (every deploy is one) on a publication whose shapes.txt will not
+       inflate: promoted, ready, every station and its routes served, no route lines,
+       /api/status names shapes.txt as a degraded member with the parser's reason, and
+       /healthz carries subway-lines-degraded on a 200. Refusing it would have left no
+       subway at all.
+    2. A healthy publication at the next start replaces it: the lines are back and
+       nothing is degraded, on either surface.
+    3. The damaged publication again, now over a cache that draws (2026-09-05's F08):
+       refused, the cached lines keep serving.
+
+    Hermetic counterparts: backend/tests/test_static_data.py's two-mode tests.
+    """
+    harness.sim.set_publication("subway", "damaged-shapes")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["subway_static"] == "ready", "a cold start on damaged geometry to serve"
+        )
+        served = _stations_and_index(app)
+        assert served and any(served.values()), "every station and its routes serve"
+        assert app.get("/api/subway-routes") == [], "and no route line is drawn"
+        entry = app.status()["static_archives"]["subway"]
+        assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+        assert list(entry["degraded_members"]) == ["shapes.txt"]
+        assert entry["degraded_members"]["shapes.txt"].startswith("shapes.txt is not readable")
+        health = app.healthz()
+        assert health["status"] == "pass", health
+        assert "subway-lines-degraded" in health["degraded"], health
+
+    harness.age_archives()
+    harness.sim.set_publication("subway", "good")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("subway", {}).get("last_promoted_at") is not None,
+            "the healthy publication to be promoted at the next start",
+        )
+        app.await_status(lambda s: s["subway_static"] == "ready", "the subway to be ready on it")
+        lines = app.get("/api/subway-routes")
+        assert lines, "the healthy publication draws its lines"
+        assert app.status()["static_archives"]["subway"]["degraded_members"] == {}
+        assert "subway-lines-degraded" not in app.healthz()["degraded"]
+        assert _stations_and_index(app) == served
+
+    harness.age_archives()
+    harness.sim.set_publication("subway", "damaged-shapes")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("subway", {}).get("failed_downloads", 0) >= 1,
+            "the damaged geometry to be refused over the cache that draws",
+        )
+        app.await_status(lambda s: s["subway_static"] == "ready", "the cache to keep serving")
+        entry = app.status()["static_archives"]["subway"]
+        assert entry["last_promoted_at"] is None
+        error = entry["last_download_error"]
+        assert error.startswith("invalid archive: shapes.txt is not readable"), error
+        assert entry["degraded_members"] == {}
+        assert app.get("/api/subway-routes") == lines, "the cached lines keep drawing"
+
+
 def test_the_station_complexes_ride_the_real_warmup_to_the_stops_endpoint(contract_app):
     """claude/subway-hub-definition, end to end over a real socket: the simulator
     publishes an archive whose transfers.txt is the MTA's own table cut to the 1/7/S

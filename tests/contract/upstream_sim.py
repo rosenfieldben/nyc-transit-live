@@ -932,8 +932,10 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
         ),
         # A02b: shapes.txt present, its DEFLATE stream damaged. Like no-shapes, it
         # means different things per loader, and that is the point: NJ Transit gates
-        # nothing on shapes.txt and must degrade to no route lines; the subway, PATH
-        # and ferry read it and refuse the publication at validation.
+        # nothing on shapes.txt and must degrade to no route lines; the subway gates it
+        # as decorative, refusing it only over a cache that draws and otherwise
+        # promoting it with shapes.txt named degraded; PATH and the ferry read it and
+        # refuse the publication at validation.
         "damaged-shapes": (
             _with_damaged_deflate(_zip_of(members), "shapes.txt")
             if "shapes.txt" in members

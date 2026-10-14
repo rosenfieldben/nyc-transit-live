@@ -305,6 +305,10 @@ def seed_state() -> None:
     APP.state.subway_arrivals = {}
     APP.state.subway_arrivals_by_system = {}
     APP.state.subway_static_status = "ready"
+    # A ready subway draws its lines: /healthz reads them since the A02 branch
+    # (subway-lines-degraded), and this record is about a subway serving, not one
+    # whose geometry failed.
+    APP.state.subway_routes = [{"route": "1", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}]
     APP.state.subway_feed_health = None
     APP.state.railroad_feed_health = None
     APP.state.path_feed_health = None

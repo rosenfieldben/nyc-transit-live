@@ -719,13 +719,20 @@ def test_ferry_static_sends_courteous_user_agent():
 # ---------------------------------------------------------------------------
 
 
+_SUBWAY_SHAPES_COLS = b"shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\n"
+# One line of route 1, two points: what the monitor's WARN for geometry that draws
+# nothing (check_subway_static) needs in order to stay quiet.
+_DRAWABLE_SHAPES = _SUBWAY_SHAPES_COLS + b"1..N01R,1,40.7,-74.0\n1..N01R,2,40.71,-74.01\n"
+
+
 def _subway_members(n_stops):
     """A synthetic subway archive carrying every member the app requires, header-only
-    except stops.txt (and one transfers row, which the app's own validator would want;
-    the monitor checks presence and parses stops, shapes and stations)."""
+    except stops.txt (and one transfers row, which the app's own validator would want),
+    plus a shapes.txt that draws one line: the monitor checks presence, parses stops and
+    stations, and WARNs on geometry that draws nothing."""
     return {
         "stops.txt": _subway_stops_csv(n_stops),
-        "shapes.txt": b"shape_id\n",
+        "shapes.txt": _DRAWABLE_SHAPES,
         "trips.txt": b"route_id,service_id,trip_id\n",
         "stop_times.txt": b"trip_id,stop_id,stop_sequence\n",
         "transfers.txt": b"from_stop_id,to_stop_id,transfer_type\nS1,S2,2\n",
@@ -750,7 +757,7 @@ def test_subway_static_too_few_stops_is_fail():
 # THE APP'S REQUIRED MEMBERS, WRITTEN OUT BY HAND, for the reason test_static_shared's
 # EXPECTED_REQUIRED is: a parametrization read from the module under test cannot notice the
 # module doing less. Each one missing is a FAIL naming it.
-SUBWAY_REQUIRED = ["shapes.txt", "stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"]
+SUBWAY_REQUIRED = ["stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"]
 
 
 @pytest.mark.parametrize("missing", SUBWAY_REQUIRED)
@@ -763,13 +770,66 @@ def test_subway_static_missing_required_member_is_fail(missing):
     assert missing in result.detail
 
 
+def test_subway_static_missing_shapes_is_a_warn_naming_it():
+    """shapes.txt left the app's required list on claude/a02-publication-validation
+    (geometry stays decorative: a publication without usable lines is served, with
+    shapes.txt named as a degraded member), so upstream dropping it is a WARN here, a
+    human look, as NJ Transit's shapes.txt is, and never the FAIL that exits the run."""
+    members = _subway_members(120)
+    del members["shapes.txt"]
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.WARN
+    assert "shapes.txt" in result.detail
+    assert parsed is not None and len(parsed["stops"]) == 120
+
+
+@pytest.mark.parametrize(
+    "shapes",
+    [
+        _SUBWAY_SHAPES_COLS,
+        _DRAWABLE_SHAPES.replace(b"1..N01R", b"1-N01R"),
+        _SUBWAY_SHAPES_COLS + b"1..N01R,1,40.7\xff,-74.0\n1..N01R,2,40.71,-74.01\n",
+        _SUBWAY_SHAPES_COLS + b"1..N01R,1,40.7,-74.0\n1..N02R,1,40.71,-74.01\n",
+    ],
+    ids=["header only", "format drift", "one 0xFF", "one point per shape"],
+)
+def test_subway_static_shapes_that_draw_nothing_is_a_warn(shapes):
+    """PRESENT IS NOT DRAWING (the A02 branch's review). The app promotes such a
+    publication on a cold start with every line gone (the two-mode rule), so presence
+    alone would pass the very publication the next deploy serves without lines. Asked of
+    the app's own route-lines gate, not of the loader's output: the loader keeps a
+    one-point polyline, which draws nothing and which that gate refuses (the second
+    round). A WARN, as the member's absence is, carrying the gate's reason."""
+    members = _subway_members(120)
+    members["shapes.txt"] = shapes
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.WARN
+    assert "shapes.txt draws no route lines" in result.detail
+    assert parsed is not None and parsed["geometry"] is not None
+    assert parsed["geometry"].startswith("shapes.txt ")
+    assert len(parsed["stops"]) == 120
+
+
+def test_subway_static_drawable_shapes_raise_no_warn():
+    """The converse, so the WARN above cannot pass by warning on everything."""
+    fetch = FakeFetcher({"u": _zip_bytes(_subway_members(120))})
+    result, parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.PASS
+    assert parsed is not None and parsed["geometry"] is None
+    assert [r["route"] for r in parsed["shapes"]] == ["1"]
+
+
 def test_the_monitor_requires_what_the_app_requires():
     """Review finding H8, closed on the operator's ruling: the monitor's subway list
     stayed ("stops.txt", "shapes.txt") while the app's grew to five, so a publication
     production refuses passed the drift check. The two are held equal here, and each is
-    held to the hand-written list, so neither can move without a test moving."""
+    held to the hand-written list, so neither can move without a test moving. The app's
+    list is four since shapes.txt became decorative, and the monitor watches it instead."""
     assert sorted(cm.SUBWAY_REQUIRED_MEMBERS) == SUBWAY_REQUIRED
     assert sorted(cm.static_data._REQUIRED_MEMBERS) == SUBWAY_REQUIRED
+    assert cm.SUBWAY_WATCHED_MEMBERS == ("shapes.txt",)
 
 
 def test_subway_static_parse_does_not_leak_module_path():
@@ -3182,6 +3242,25 @@ def test_the_allowance_code_is_watched_and_explained_in_words():
     assert "not an NJ Transit outage" in health.detail
     assert "redeploy does not fix it" in health.detail
     assert "fresh allowance" in health.detail and "up to 4 more" in health.detail
+
+
+def test_the_lines_code_is_watched_and_explained_in_words():
+    """PRODUCTION SERVING WITHOUT LINES BY RULE (the two-mode rule). Its name says what
+    riders lost and nothing of what to do: that the fault is upstream's publication,
+    that the running process will not re-fetch it, and that a redeploy helps only once
+    upstream's geometry draws again, which this same run's subway-static check says. So
+    it gets a sentence, out of the monitor's own literal. On the roster, never gating."""
+    import models
+
+    assert "subway-lines-degraded" in cm.PRODUCTION_HEALTH_CODES
+    assert "subway-lines-degraded" not in models.HEALTH_GATING_CODES
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["subway-lines-degraded"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "subway-lines-degraded" in health.detail
+    assert "without route lines" in health.detail and "degraded_members" in health.detail
+    assert "never re-fetches" in health.detail and "subway-static check" in health.detail
 
 
 @pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)

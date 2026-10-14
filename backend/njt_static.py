@@ -101,7 +101,7 @@ from feeds.shared import NYC_TZ
 from static_routes import fold_stop_routes
 from static_shared import (
     StaticValidationError,
-    cached_archive_is_valid,
+    cached_archive_is_usable,
     parse_member,
     require_members,
     require_parsed,
@@ -976,7 +976,7 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     # FRESH MEANS VALID AND RECENT (C5), and for this feed "valid" carries the
     # service-date guard, so a cached archive whose schedule expired overnight is
     # rejected here and re-downloaded rather than served for another 30 days.
-    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate)
+    usable = await cached_archive_is_usable(zip_path, validate)
     fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:

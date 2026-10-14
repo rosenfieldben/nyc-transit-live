@@ -4,11 +4,12 @@
 WHY THIS EXISTS (audit 2026-10-12, A02, and the A09 dependency it carries). A02's
 repair makes validate_subway_archive parse every member the subway load reads, and
 two of those members, stop_times.txt above all, are the biggest tables in the
-publication. Validation runs synchronously on the serving event loop in two places
+publication. Validation ran synchronously on the serving event loop in two places
 (staged_fetch on a download, and load_subway_stops' cached-archive check at every
-load), so whatever it costs is time every other coroutine in the process (the
-pollers, /healthz) waits. Whether validation moves off the loop is decided by this
-number, measured on the real archive, rather than by a guess about it.
+load), so whatever it cost was time every other coroutine in the process (the
+pollers, /healthz) waited. Whether validation moved off the loop was decided by this
+number, measured on the real archive, rather than by a guess about it; the branch's
+third commit moved both behind asyncio.to_thread, and a re-run measures that.
 
 WHAT IT PRINTS, as one table:
   the publication  bytes on the wire; each member's compressed and expanded size; the
@@ -27,8 +28,10 @@ WHAT IT PRINTS, as one table:
                    warmup runs after validation is visible as that loader's. A stall
                    AT validation is the whole uninterrupted stretch the loop could not
                    run, which includes whatever runs inline before the next await
-                   (today the stops, route shapes and station loaders): that is what
-                   the other coroutines feel, so it is what is reported.
+                   (the stops, route shapes and station loaders): that is what the
+                   other coroutines feel, so it is what is reported. Beside it, the
+                   same stretch clipped to the validation window, which is what the
+                   validation itself holds the loop for.
 
 THE CANDIDATE IS BRANCH-LOCAL ON PURPOSE. It is defined here, not in static_data, so
 the cost of the repair can be measured before the repair is live. Its drains read
@@ -269,6 +272,19 @@ class Timed:
             self.windows.append((started, time.perf_counter()))
 
 
+def stall_within(stamps: list[float], windows: list[tuple[float, float]]) -> float:
+    """The longest stretch INSIDE a validation window during which the heartbeat did not
+    tick: each gap clipped to each window it overlaps. Inline, a validation sits inside
+    one gap, so this is the validation's own length; off the loop it is a scheduling
+    slice. The unclipped gap (longest_gap) also counts whatever runs inline before the
+    next await, which is what the other coroutines feel and is reported beside it."""
+    worst = 0.0
+    for a, b in zip(stamps, stamps[1:]):
+        for start, end in windows:
+            worst = max(worst, min(b, end) - max(a, start))
+    return worst
+
+
 def longest_gap(
     stamps: list[float], windows: list[tuple[float, float]] | None = None, *, inside: bool = True
 ) -> float:
@@ -327,8 +343,12 @@ async def one_attempt(modules: dict, validate, *, cached: bool, archive: Path) -
     stop = asyncio.Event()
 
     async def heartbeat() -> None:
-        while not stop.is_set():
+        # Stamp on every wake, the last included, so a stall that runs up to the
+        # moment `stop` is set is still closed by a tick and counted.
+        while True:
             stamps.append(time.perf_counter())
+            if stop.is_set():
+                return
             await asyncio.sleep(HEARTBEAT_S)
 
     ticker = asyncio.create_task(heartbeat())
@@ -356,6 +376,7 @@ async def one_attempt(modules: dict, validate, *, cached: bool, archive: Path) -
         "elapsed": elapsed,
         "gap_any": longest_gap(stamps),
         "gap_validation": longest_gap(stamps, windows) if windows else None,
+        "within_validation": stall_within(stamps, windows) if windows else None,
         "gap_outside": longest_gap(stamps, windows, inside=False),
         "loaders": {name: sum(b - a for a, b in t.windows) for name, t in timed.items()},
         "downloaded": static_shared.archive_status().get("subway", {}).get("last_promoted_at")
@@ -501,10 +522,11 @@ async def measure(plan: dict[str, Path], archive_arg: Path | None, runs: int, at
         f"median of {attempts} attempts"
     )
     print("  stall at validation: the longest heartbeat gap overlapping the validation")
+    print("  within             : that gap clipped to the validation window")
     print("  other stall        : the longest heartbeat gap overlapping no validation")
     print(
         f"  {'form':<11}{'start':<7}{'status':<7}{'attempt':>10}{'validation':>12}"
-        f"{'stall at validation':>21}{'other stall':>13}"
+        f"{'stall at validation':>21}{'within':>10}{'other stall':>13}"
     )
     loaders: list[tuple[str, dict]] = []
     for name, validate in forms:
@@ -523,7 +545,8 @@ async def measure(plan: dict[str, Path], archive_arg: Path | None, runs: int, at
             validation = statistics.median(r["loaders"]["validation"] for r in runs_)
             print(
                 f"  {name:<11}{start:<7}{status:<7}{ms(med('elapsed')):>10}{ms(validation):>12}"
-                f"{ms(med('gap_validation')):>21}{ms(med('gap_outside')):>13}"
+                f"{ms(med('gap_validation')):>21}{ms(med('within_validation')):>10}"
+                f"{ms(med('gap_outside')):>13}"
             )
             columns = runs_[0]["loaders"]
             median_loaders = {

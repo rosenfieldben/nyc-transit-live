@@ -18,7 +18,7 @@ import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     StaticValidationError,
-    cached_archive_is_valid,
+    cached_archive_is_usable,
     parse_member,
     require_members,
     require_parsed,
@@ -292,9 +292,7 @@ async def load_subway_stops() -> dict[str, dict]:
     # absent, which forces a fresh staged download instead of parsing garbage.
     # This replaces the old parse-then-recover arm below it: nothing can reach the
     # parse except an archive that already passed the same gates.
-    usable = SUBWAY_GTFS_ZIP.exists() and cached_archive_is_valid(
-        SUBWAY_GTFS_ZIP, validate_subway_archive
-    )
+    usable = await cached_archive_is_usable(SUBWAY_GTFS_ZIP, validate_subway_archive)
     fresh = usable and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:

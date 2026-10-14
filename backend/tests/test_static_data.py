@@ -1136,3 +1136,92 @@ def test_the_validator_and_the_load_read_a_member_through_one_generator(
     with zipfile.ZipFile(gtfs_zip) as zf:
         static_data.validate_subway_archive(zf)  # the validator counted the sentinel
     assert load() == expected  # and the load built it
+
+
+# ---------------- D5: validation runs off the serving loop ----------------
+#
+# A02's repair made the subway validator parse every member its load reads, which on the
+# live publication is 1.1 to 1.5 s of CPU (backend/scripts/measure_subway_validation.py,
+# recorded in the ledger). Validation runs in two places, staged_fetch on a download and
+# every loader's cached-archive check at a load, and both now hand it to a worker thread
+# behind an await, so the loop the pollers and /healthz share keeps running.
+
+SLOW_VALIDATION_S = 0.2
+# The loop's longest stall inside a validation window must stay under this. A thread
+# doing CPU work hands the interpreter lock back every switch interval (5 ms), so the
+# heartbeat's gaps are a few milliseconds; inline, the gap IS the validation.
+LOOP_STALL_BOUND_S = SLOW_VALIDATION_S / 2
+
+
+def _slowed(validate, windows: list):
+    """The real validator, then CPU until SLOW_VALIDATION_S has passed (a busy-wait,
+    not a sleep, because a parse holds the interpreter lock and a sleep would not), its
+    (start, end) recorded."""
+
+    def slow(zf):
+        started = time.perf_counter()
+        validate(zf)
+        while time.perf_counter() - started < SLOW_VALIDATION_S:
+            pass
+        windows.append((started, time.perf_counter()))
+
+    return slow
+
+
+def _stall_within(stamps: list, windows: list) -> float:
+    """The longest stretch inside a validation window during which the heartbeat did not
+    tick: each gap between ticks, clipped to each window it overlaps."""
+    worst = 0.0
+    for a, b in zip(stamps, stamps[1:]):
+        for start, end in windows:
+            worst = max(worst, min(b, end) - max(a, start))
+    return worst
+
+
+@pytest.mark.parametrize("start", ["cold, staged validation", "cache present, cached check"])
+async def test_a_slow_validation_does_not_hold_the_serving_loop(gtfs_zip, monkeypatch, start):
+    """D5, pinned at both places validation runs. A 1 ms heartbeat shares the loop with
+    load_subway_stops while a validation that takes SLOW_VALIDATION_S runs: from a cold
+    cache it is staged_fetch's, with a cache already on disk it is the cached-archive
+    check's, the one every process start runs. The heartbeat must keep ticking.
+
+    WHAT THIS TEST NEEDS TO SEE, which is why the first assertion is a precondition and
+    not decoration: a validation long enough that holding the loop for it would break
+    LOOP_STALL_BOUND_S. With a fast validator the same assertion on the heartbeat would
+    pass inline and off the loop alike, and the test would say nothing, so it fails
+    instead when the validation it watched was short."""
+    windows: list = []
+    slow = _slowed(static_data.validate_subway_archive, windows)
+    monkeypatch.setattr(static_data, "validate_subway_archive", slow)
+    if start.startswith("cold"):
+        _publish(monkeypatch, {"bytes": _zip_bytes(loadable_members())}, [])
+    else:
+        write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: the cached check, no download
+    stamps: list = []
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        # Stamp on EVERY wake, the last included: the tick that ends a stall is the
+        # one after it, and a ticker that checked `stop` first would exit on that
+        # wake without recording it, hiding a stall that runs up to the load's return.
+        while True:
+            stamps.append(time.perf_counter())
+            if stop.is_set():
+                return
+            await asyncio.sleep(0.001)
+
+    ticker = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.01)
+    try:
+        stops = await static_data.load_subway_stops()
+    finally:
+        stop.set()
+        await ticker
+
+    assert "101N" in stops
+    assert len(windows) == 1 and windows[0][1] - windows[0][0] >= SLOW_VALIDATION_S
+    stall = _stall_within(stamps, windows)
+    assert stall < LOOP_STALL_BOUND_S, (
+        f"the loop stalled {stall * 1000:.0f} ms inside a "
+        f"{(windows[0][1] - windows[0][0]) * 1000:.0f} ms validation"
+    )

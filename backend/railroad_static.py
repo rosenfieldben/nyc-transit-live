@@ -25,7 +25,7 @@ import env_seams
 import route_geometry
 from static_routes import fold_stop_routes
 from static_shared import (
-    cached_archive_is_valid,
+    cached_archive_is_usable,
     require_members,
     require_parsed,
     staged_fetch,
@@ -381,7 +381,7 @@ async def _load_one(system: str) -> dict | None:
     # the general rule from two directions: validate_railroad_archive refuses to
     # promote such a publication at all, and cached_archive_is_valid rejects one
     # already on disk before it is parsed, so the retry re-fetches by itself.
-    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate_railroad_archive)
+    usable = await cached_archive_is_usable(zip_path, validate_railroad_archive)
     fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:

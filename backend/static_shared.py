@@ -213,6 +213,22 @@ def cached_archive_is_valid(path: Path, validate: Callable[[zipfile.ZipFile], No
     return True
 
 
+async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> bool:
+    """Is there a cached archive at `path` we can serve from? Decided OFF the serving loop.
+
+    What every loader asks before its freshness test, as an await: the existence check
+    here, and cached_archive_is_valid (the validation) in a worker thread through
+    asyncio.to_thread. The reason is staged_fetch's below, and the subway is where it
+    bites: its validator parses every member its load reads (A02), and on the live
+    publication that is 1.1 to 1.5 s of CPU, every one of which a coroutine on the
+    serving loop (a poller, /healthz) would otherwise wait out at every process start.
+    Behind an await the loop keeps running while the thread parses.
+    """
+    if not path.exists():
+        return False
+    return await asyncio.to_thread(cached_archive_is_valid, path, validate)
+
+
 # ---------------------------------------------------------------------------
 # Per-archive status, for the operator surface
 # ---------------------------------------------------------------------------
@@ -323,7 +339,7 @@ async def staged_fetch(
        is a rename within one filesystem and therefore atomic, and so concurrent
        workers (uvicorn --workers N all run lifespan) cannot interleave writes into
        one file.
-    3. Validate the staged bytes with the loader's own validator.
+    3. Validate the staged bytes with the loader's own validator, in a worker thread.
     4. PASS: rename over the cache. This is the one rename that always existed;
        C5 only moved it after the validation.
        FAIL: delete the stage, leave the cache untouched, and raise. The caller's
@@ -349,7 +365,17 @@ async def staged_fetch(
     transfer = download or _stream_to_file
     try:
         await transfer(url, stage, deadline_s)
-        validate_archive(stage, validate)
+        # OFF THE SERVING LOOP (A02's measurement, A09's arm 1). Validation is
+        # synchronous CPU, and the subway's parses every member its load reads: 1.1 to
+        # 1.5 s on the live publication, during which every other coroutine sharing
+        # the loop (the pollers, /healthz) used to wait. In a worker thread the loop
+        # keeps running, and a caller's expired asyncio.timeout is delivered HERE, at
+        # this await, before the promotion below rather than after it (A09 recorded
+        # an 80 ms validator running through a 10 ms deadline and promoting). The
+        # thread cannot be stopped and finishes on its own; the stage it reads is
+        # unlinked below, which on Linux leaves its open handle readable, and a late
+        # result has nowhere to go.
+        await asyncio.to_thread(validate_archive, stage, validate)
     except BaseException as exc:
         stage.unlink(missing_ok=True)
         # A cancellation is not a publication failure and must not be recorded as

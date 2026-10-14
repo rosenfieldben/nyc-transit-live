@@ -1,4 +1,4 @@
-"""F08 (P2), "Bad subway geometry can replace known-good geometry": reproduction.
+"""F08 (P2), "Bad subway geometry can replace known-good geometry": the repair, pinned.
 
 THE AUDIT'S CLAIM (section 1 of docs/reviews/audit-2026-09-05.md, verbatim):
 
@@ -11,8 +11,28 @@ THE AUDIT'S CLAIM (section 1 of docs/reviews/audit-2026-09-05.md, verbatim):
     Remedy (the symmetric case this script also checks): "Test empty and
     unreadable geometry independently of stop validation."
 
-    Evidence links: backend/static_data.py L61 (the publication validator) and
-    backend/static_data.py L251 (the route loader).
+FIXED ON claude/a02-publication-validation, by the rule the 2026-10-12 audit's A02
+generalized this finding into: the validator is the loader's parser. Every member the
+subway load reads is read at validation through the one generator the load reads it
+with, and must yield at least one row, so shapes.txt is parsed before promotion and a
+geometry the loader would drop is refused at staging while the last-known-good archive
+keeps drawing.
+
+BEFORE (this script's record at 1e3e73d, every number measured by the same phases
+below): validate_subway_archive required shapes.txt to EXIST and parsed only stops.txt
+(and, from claude/subway-hub-definition, transfers.txt). A replacement whose shapes.txt
+alone held one 0xFF byte was ACCEPTED, promoted over the good cache, and dropped the
+served subway geometry from 1 route (5 points) to 0 (0 points), while archive_status
+reported a promotion, last_download_error None and failed_downloads 0; the bad cache
+then persisted (cached_archive_is_valid True, no download on the next load, 0 routes)
+until MAX_AGE_DAYS. A well formed but EMPTY shapes.txt was accepted and promoted
+identically. An archive with no shapes.txt at all was correctly refused.
+
+AFTER, asserted below: the invalid-UTF-8 replacement and the header-only one are each
+REFUSED at staging, the cache is byte-untouched and still draws 1 route (5 points),
+and archive_status records the refusal (not promoted, failed_downloads 1,
+last_download_error naming shapes.txt and the codec's own words). The control is
+unchanged: an archive without shapes.txt is refused.
 
 WHAT THIS SCRIPT MEASURES, AND HOW.
 
@@ -22,14 +42,15 @@ WHAT THIS SCRIPT MEASURES, AND HOW.
     static_shared.staged_fetch         sweep, stage, validate, promote
     static_shared.validate_archive     the zip-open boundary
     static_data.validate_subway_archive the publication validator itself
-    static_shared.require_members / require_parsed  its two gates
-    static_data.load_subway_route_shapes the route-line loader the warmup calls
-                                       on the next line (backend/warmups.py L174)
+    static_data.load_subway_route_shapes the route-line loader the warmup calls next
     static_shared.archive_status       the operator surface /api/status reads
 
   The staged path is driven end to end, not called in isolation: every archive in
   this script arrives at the cache by way of load_subway_stops deciding the cache
   is stale, calling _download_zip, and staged_fetch validating and promoting it.
+  The mechanism is measured by behavior (which archives the real validator refuses),
+  never by reading the source: the record used to parse static_data.py for the
+  validator's member lists, which a behavior-preserving refactor could turn red.
 
   INJECTED, and this is the whole of it:
     1. DATA_DIR is pointed at a fresh temp directory before static_data imports,
@@ -46,34 +67,30 @@ WHAT THIS SCRIPT MEASURES, AND HOW.
     4. Four archives, built here: a GOOD one, one whose shapes.txt holds a lone
        0xFF byte (invalid UTF-8) with a byte-identical stops.txt, one whose
        shapes.txt is a well formed header with zero data rows, and one with no
-       shapes.txt at all (the control).
+       shapes.txt at all (the control). Each carries one trip and one call, which
+       the repaired validator requires.
     5. Between publications the cache's mtime is set 40 days back, past
        static_data.MAX_AGE_DAYS, so the loader decides to re-download. That is a
        clock nudge on a file this script wrote, not a dependence on today's date.
 
-  MEASURED: routes before, routes after, the validator's verdict on each staged
-  archive, the three archive-status fields the audit names (promotion result,
-  download error, failed download count), and whether the cache bytes changed.
-
 NO NJ TRANSIT ANYTHING. No NJT module is imported, no NJT function is called, and
-the NJT credential variables backend/.env may carry are removed from the
-environment after the imports. Nothing here can reach raildata.njtransit.com or
-spend a mint. Nothing here opens a socket at all.
+the NJT credential variables backend/.env may carry are blanked after the imports.
+Nothing here can reach raildata.njtransit.com or spend a mint. Nothing here opens a
+socket at all.
 
 Hermetic and deterministic: no network, no live feed, no committed fixture needed
-(the subway static GTFS is a 40 MB download, not a committed fixture, so the
-archives are built here), and no dependence on today's date.
+(the subway static GTFS is a 5.6 MB download that expands to 43 MB, not a committed
+fixture, so the archives are built here), and no dependence on today's date.
 
 RUN, from the repository root:
   .venv/bin/python docs/reviews/audit-2026-09-05/f08_bad_geometry_replaces_good.py
 
-Exits 0 while F08 still behaves as recorded, non-zero (with the failed assertion
-named) if the code has changed underneath the audit record.
+RECORDED DISPOSITION: FIXED (claude/a02-publication-validation). Exits 0 while the
+repair holds, non-zero (with every check that moved named) the moment it does not.
 """
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import csv
 import hashlib
@@ -194,19 +211,26 @@ def csv_text(columns, rows) -> str:
 
 
 GOOD_STOPS_TXT = csv_text(STOPS_COLS, STOP_ROWS)
-GOOD_TRIPS_TXT = csv_text(TRIPS_COLS, ())
+# ONE TRIP AND ONE CALL, in every archive below. They were headers only until the A02
+# repair (claude/a02-publication-validation) made the validator read every member the
+# load reads and want a row from each: a header-only trips.txt is now a publication it
+# refuses, and an archive refused for THAT would measure nothing about shapes.txt.
+GOOD_TRIPS_TXT = csv_text(
+    TRIPS_COLS, [{"route_id": "A", "service_id": "wk", "trip_id": "t1", "shape_id": "A..N01R"}]
+)
 GOOD_SHAPES_TXT = csv_text(SHAPES_COLS, SHAPE_ROWS)
 
 # stop_times.txt joined _REQUIRED_MEMBERS with the F1 branch (MR2's review finding:
 # the routes-per-station index feeds the transfer ring, the hub label class and the
-# station alerts join, so an archive without it is a reduced archive). Header only, in
-# every archive below, for the same reason trips.txt is: this record is about a
+# station alerts join, so an archive without it is a reduced archive). In every archive
+# below, with one call, for the same reason trips.txt has a row: this record is about a
 # shapes.txt that is invalid UTF-8, and every archive here has to be otherwise complete
 # or the validator rejects it for the wrong reason and the record stops measuring what
 # it was taken for. That is exactly what happened when the member was added: the run
 # derailed at phase 2 with "REJECTED missing required member(s): stop_times.txt".
 GOOD_STOP_TIMES_TXT = csv_text(
-    ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], ()
+    ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"],
+    [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}],
 )
 # In every archive below, for the reason stop_times.txt is: transfers.txt became a required
 # member of the subway archive on claude/subway-hub-definition, with a floor of one
@@ -375,6 +399,7 @@ async def publish_and_load(source: Path | None, *, forbid_download: bool = False
     _UPSTREAM["forbid"] = forbid_download
     before_transfers = int(_UPSTREAM["transfers"])
     before_digest = digest(CACHE)
+    promoted_before = static_shared.archive_status().get("subway", {}).get("last_promoted_at")
     error: str | None = None
     stops: dict = {}
     try:
@@ -397,6 +422,9 @@ async def publish_and_load(source: Path | None, *, forbid_download: bool = False
         "cache_digest_after": digest(CACHE),
         "transfers": int(_UPSTREAM["transfers"]) - before_transfers,
         "last_promoted_at": status.get("last_promoted_at"),
+        # A refusal leaves the previous promotion's time in place, so "this publication
+        # was promoted" is a change in it, not its presence.
+        "promoted": status.get("last_promoted_at") != promoted_before,
         "last_download_error": status.get("last_download_error"),
         "failed_downloads": status.get("failed_downloads"),
         "log": CAPTURE.drain(),
@@ -423,51 +451,15 @@ def show(label: str, result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Static confirmation of the mechanism the audit names
-# ---------------------------------------------------------------------------
-
-
-def inspect_validator() -> dict:
-    """Read backend/static_data.py: which members are required, which are parsed."""
-    source = (_BACKEND / "static_data.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    required_line = None
-    required: tuple = ()
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_REQUIRED_MEMBERS" for t in node.targets
-        ):
-            required = ast.literal_eval(node.value)
-            required_line = node.lineno
-    fn = next(
-        n
-        for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "validate_subway_archive"
-    )
-    parsed_members = [
-        ast.literal_eval(call.args[1])
-        for call in ast.walk(fn)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Name)
-        and call.func.id == "require_parsed"
-        and len(call.args) >= 2
-    ]
-    return {
-        "required": required,
-        "required_line": required_line,
-        "validator_line": fn.lineno,
-        "parsed_members": parsed_members,
-    }
-
-
-# ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
+
+BRANCH = "claude/a02-publication-validation"
 
 
 async def amain() -> int:
     print("=" * 78)
-    print("F08  Bad subway geometry can replace known-good geometry")
+    print("F08  Bad subway geometry can replace known-good geometry (the repair)")
     print("=" * 78)
     print(f"repo            : {_REPO}")
     print(f"DATA_DIR seam   : {os.environ['DATA_DIR']}")
@@ -477,27 +469,35 @@ async def amain() -> int:
     print(f"MAX_AGE_DAYS    : {static_data.MAX_AGE_DAYS}")
     print()
 
-    # ---- the mechanism, read out of the source ----------------------------
-    v = inspect_validator()
+    # ---- the mechanism, by behavior ----------------------------------------
     print("-" * 78)
-    print("MECHANISM  what validate_subway_archive actually asks of each member")
+    print("MECHANISM  what validate_subway_archive asks of shapes.txt, by behavior")
     print("-" * 78)
-    print(f"  _REQUIRED_MEMBERS (static_data.py line {v['required_line']}) : {v['required']}")
-    print(f"  validate_subway_archive (line {v['validator_line']}) parses  : "
-          f"{v['parsed_members']}")
-    print("  so shapes.txt is required to EXIST (require_members, presence only)")
-    print("  and is never handed to a parser before promotion.")
+    verdicts = {
+        "good": validator_verdict(ARCHIVE_GOOD),
+        "absent": validator_verdict(ARCHIVE_NO_SHAPES),
+        "one 0xFF": validator_verdict(ARCHIVE_BAD_UTF8),
+        "header only": validator_verdict(ARCHIVE_EMPTY_SHAPES),
+    }
+    for label, (verdict, message) in verdicts.items():
+        print(f"  shapes.txt {label:<12}: {verdict} {message}")
+    print("  BEFORE: absent was the only refusal; one 0xFF and header only were ACCEPTED,")
+    print("  because shapes.txt was checked for presence and never parsed.")
+    check(verdicts["good"][0] == "ACCEPTED", "the good archive is no longer accepted")
     check(
-        "shapes.txt" in v["required"],
-        "shapes.txt is no longer in static_data._REQUIRED_MEMBERS",
+        verdicts["absent"][0] == "REJECTED" and "shapes.txt" in verdicts["absent"][1],
+        "an archive with no shapes.txt is no longer refused (the control)",
     )
-    # THE CLAIM IS ABOUT shapes.txt, so the check is. It used to read "parses stops.txt and
-    # nothing else", which held until claude/subway-hub-definition gave transfers.txt a floor
-    # through the same require_parsed; that is a new member parsed, not shapes.txt parsed, and
-    # this record's disposition is about the second only.
     check(
-        "shapes.txt" not in v["parsed_members"],
-        f"validate_subway_archive now parses shapes.txt ({v['parsed_members']})",
+        verdicts["one 0xFF"][0] == "REJECTED"
+        and verdicts["one 0xFF"][1].startswith("shapes.txt is not readable as CSV (")
+        and "can't decode byte 0xff" in verdicts["one 0xFF"][1],
+        "an invalid-UTF-8 shapes.txt is ACCEPTED again (or refused without naming the "
+        f"member and the codec's words): {verdicts['one 0xFF']}",
+    )
+    check(
+        verdicts["header only"] == ("REJECTED", "shapes.txt yielded no usable route shape points"),
+        f"a header-only shapes.txt is ACCEPTED again: {verdicts['header only']}",
     )
     print()
 
@@ -505,76 +505,65 @@ async def amain() -> int:
     print("-" * 78)
     print("PHASE 1  cold start: publish the GOOD archive through the real staged path")
     print("-" * 78)
-    verdict, message = validator_verdict(ARCHIVE_GOOD)
-    print(f"  validator verdict on the staged bytes : {verdict} {message}")
     good = await publish_and_load(ARCHIVE_GOOD)
     show("after load_subway_stops + load_subway_route_shapes:", good)
     good_digest = good["cache_digest_after"]
     routes_before = good["route_entries"]
     points_before = good["points"]
-    check(verdict == "ACCEPTED", "the good archive is no longer accepted by the validator")
     check(good["transfers"] == 1, "the cold start no longer performs exactly one download")
     check(
-        routes_before == 1 and good["routes"] == ["A"],
-        f"the good archive no longer yields exactly one route (got {good['routes']})",
+        routes_before == 1 and good["routes"] == ["A"] and points_before == 5,
+        f"the good archive no longer yields exactly one route of 5 points (got {good['routes']})",
     )
     check(good["stops"] == 2, "the good archive no longer yields its two stops")
     print()
 
-    # ---- phase 2: THE FINDING ---------------------------------------------
+    # ---- phase 2: THE FINDING, refused ------------------------------------
     print("-" * 78)
     print("PHASE 2  THE FINDING: a replacement whose shapes.txt alone is invalid UTF-8")
     print("-" * 78)
     print("  stops.txt in the replacement is byte identical to the good archive's;")
     print("  the only difference is one 0xFF byte inside a shapes.txt latitude.")
-    verdict_bad, message_bad = validator_verdict(ARCHIVE_BAD_UTF8)
-    print(f"  validator verdict on the staged bytes : {verdict_bad} {message_bad}")
     age_cache(days=40)  # past MAX_AGE_DAYS, so the loader re-downloads
     bad = await publish_and_load(ARCHIVE_BAD_UTF8)
     show("after the replacement was published:", bad)
     routes_after = bad["route_entries"]
     points_after = bad["points"]
-    check(
-        verdict_bad == "ACCEPTED",
-        "the invalid-UTF-8 shapes.txt is now REJECTED by the validator",
-    )
     check(bad["transfers"] == 1, "the stale cache no longer triggers a download")
     check(
-        bad["cache_digest_before"] == good_digest
-        and bad["cache_digest_after"] == digest(ARCHIVE_BAD_UTF8),
-        "the bad archive no longer overwrites the good cache",
+        bad["cache_digest_after"] == good_digest,
+        "the invalid-UTF-8 replacement overwrote the good cache again",
     )
-    check(routes_after == 0, f"the route count no longer falls to zero (got {routes_after})")
+    check(
+        routes_after == 1 and points_after == 5,
+        f"the served geometry fell again ({routes_after} routes, {points_after} points)",
+    )
     check(
         bad["load_error"] is None and bad["stops"] == 2,
-        "load_subway_stops no longer succeeds on the replacement (it now raises or loses stops)",
+        "load_subway_stops no longer serves the cached archive through the refusal",
     )
+    check(not bad["promoted"], "archive status reports a promotion again")
     check(
-        bad["last_promoted_at"] is not None,
-        "archive status no longer reports a successful promotion",
-    )
-    check(
-        bad["last_download_error"] is None,
-        f"archive status now reports a download error ({bad['last_download_error']!r})",
-    )
-    check(
-        bad["failed_downloads"] == 0,
-        f"archive status no longer reports zero failed downloads ({bad['failed_downloads']})",
+        bad["failed_downloads"] == 1
+        and (bad["last_download_error"] or "").startswith(
+            "invalid archive: shapes.txt is not readable as CSV ("
+        ),
+        f"archive status no longer records the refusal by member ({bad['last_download_error']!r}, "
+        f"failed_downloads {bad['failed_downloads']})",
     )
     print()
 
-    # ---- phase 2b: does it heal? ------------------------------------------
-    print("  Does the bad publication heal itself on the next load?")
+    # ---- phase 2b: the next load ------------------------------------------
+    print("  The next load, with the replacement withdrawn upstream (no download allowed):")
     still_valid = static_shared.cached_archive_is_valid(CACHE, static_data.validate_subway_archive)
-    stuck = await publish_and_load(None, forbid_download=True)
+    os.utime(CACHE)  # the good cache, fresh again: the next load must not download
+    nxt = await publish_and_load(None, forbid_download=True)
     print(f"    cached_archive_is_valid(cache)      : {still_valid}")
-    print(f"    downloads attempted on next load    : {stuck['transfers']}")
-    print(f"    route entries on next load          : {stuck['route_entries']}")
-    print(f"    the geometry stays gone for         : MAX_AGE_DAYS = "
-          f"{static_data.MAX_AGE_DAYS} days, until the mtime goes stale again")
+    print(f"    downloads attempted on next load    : {nxt['transfers']}")
+    print(f"    route entries on next load          : {nxt['route_entries']}")
     check(
-        still_valid and stuck["transfers"] == 0 and stuck["route_entries"] == 0,
-        "the bad cache no longer persists across a subsequent load",
+        still_valid and nxt["transfers"] == 0 and nxt["route_entries"] == 1,
+        "the good cache no longer serves its route on the next load",
     )
     print()
 
@@ -583,29 +572,20 @@ async def amain() -> int:
     print("PHASE 3  the remedy's other half: a well formed but EMPTY shapes.txt")
     print("-" * 78)
     age_cache(days=40)
-    restored = await publish_and_load(ARCHIVE_GOOD)
-    print(f"  good archive republished              : {restored['route_entries']} route entries, "
-          f"{restored['points']} points")
-    check(
-        restored["route_entries"] == 1,
-        "republishing the good archive no longer restores the single route",
-    )
-    verdict_empty, message_empty = validator_verdict(ARCHIVE_EMPTY_SHAPES)
-    print(f"  validator verdict on header-only bytes: {verdict_empty} {message_empty}")
-    age_cache(days=40)
     empty = await publish_and_load(ARCHIVE_EMPTY_SHAPES)
     show("after the header-only shapes.txt was published:", empty)
     check(
-        verdict_empty == "ACCEPTED",
-        "a header-only shapes.txt is now rejected by the validator",
+        empty["cache_digest_after"] == good_digest,
+        "the header-only archive overwrote the good cache again",
     )
     check(
-        empty["cache_digest_after"] == digest(ARCHIVE_EMPTY_SHAPES),
-        "the header-only archive no longer overwrites the good cache",
+        empty["route_entries"] == 1 and not empty["promoted"],
+        "the header-only archive is promoted to a zero-route cache again",
     )
     check(
-        empty["route_entries"] == 0 and empty["last_download_error"] is None,
-        "the header-only archive no longer promotes to a zero-route cache cleanly",
+        empty["last_download_error"]
+        == "invalid archive: shapes.txt yielded no usable route shape points",
+        f"the empty geometry is no longer refused by name ({empty['last_download_error']!r})",
     )
     print()
 
@@ -614,29 +594,19 @@ async def amain() -> int:
     print("PHASE 4  CONTROL: shapes.txt ABSENT (the presence gate does fire)")
     print("-" * 78)
     age_cache(days=40)
-    restored2 = await publish_and_load(ARCHIVE_GOOD)
-    print(f"  good archive republished              : {restored2['route_entries']} route entries")
-    good_digest2 = restored2["cache_digest_after"]
-    verdict_missing, message_missing = validator_verdict(ARCHIVE_NO_SHAPES)
-    print(f"  validator verdict on the staged bytes : {verdict_missing} ({message_missing})")
-    age_cache(days=40)
     missing = await publish_and_load(ARCHIVE_NO_SHAPES)
     show("after the shapes-less archive was offered:", missing)
     check(
-        verdict_missing == "REJECTED" and "shapes.txt" in message_missing,
-        "an archive with no shapes.txt is no longer rejected",
-    )
-    check(
-        missing["cache_digest_after"] == good_digest2,
-        "a rejected publication no longer leaves the cached archive byte-untouched",
+        missing["cache_digest_after"] == good_digest,
+        "a refused publication no longer leaves the cached archive byte-untouched",
     )
     check(
         missing["route_entries"] == 1,
-        "a rejected publication no longer preserves the served route geometry",
+        "a refused publication no longer preserves the served route geometry",
     )
     check(
-        missing["failed_downloads"] == 1 and missing["last_download_error"] is not None,
-        "a rejected publication is no longer recorded in archive status",
+        missing["last_download_error"] is not None and not missing["promoted"],
+        "a refused publication is no longer recorded in archive status",
     )
     print()
 
@@ -644,45 +614,39 @@ async def amain() -> int:
     print("=" * 78)
     print("THE ARITHMETIC")
     print("=" * 78)
-    print(f"  routes before the bad publication     : {routes_before} "
-          f"({points_before} geometry points)")
-    print(f"  routes after the bad publication      : {routes_after} "
-          f"({points_after} geometry points)")
-    print(f"  change                                : {routes_after - routes_before} routes, "
-          f"{points_after - points_before} points "
-          f"({100.0 * (points_before - points_after) / max(points_before, 1):.0f} percent of the")
-    print("                                          drawable subway geometry gone)")
-    print(f"  validator verdict, invalid UTF-8      : {verdict_bad} (promoted)")
-    print(f"  validator verdict, header-only        : {verdict_empty} (promoted)")
-    print(f"  validator verdict, member absent      : {verdict_missing} (cache preserved)")
-    print(f"  archive status after the bad promote  : promoted=yes, "
-          f"download_error={bad['last_download_error']!r}, "
+    print(f"  routes before the bad publication     : {routes_before} ({points_before} points)")
+    print(f"  routes after the bad publication      : {routes_after} ({points_after} points)")
+    print("                                          BEFORE the repair: 0 (0 points)")
+    print(f"  validator, invalid UTF-8              : {verdicts['one 0xFF'][0]} (BEFORE: ACCEPTED)")
+    print(f"  validator, header only                : {verdicts['header only'][0]} (BEFORE: ACCEPTED)")
+    print(f"  validator, member absent              : {verdicts['absent'][0]} (unchanged)")
+    print(f"  archive status after the refusal      : promoted={bad['promoted']}, "
           f"failed_downloads={bad['failed_downloads']}")
-    print("  the loader's only complaint           : a WARNING from")
-    print("                                          load_subway_route_shapes, which returns []")
-    print("                                          because route lines are decorative")
+    print(f"                                          error={bad['last_download_error']!r}")
     print()
 
     shutil.rmtree(_TMP, ignore_errors=True)
 
     if FAILURES:
-        print("REALITY HAS CHANGED. These recorded behaviors no longer hold:")
+        print("THE REPAIR NO LONGER HOLDS. These checks moved:")
         for failure in FAILURES:
             print(f"  - {failure}")
         print()
         print("DISPOSITION: FAILED TO CONFIRM THE RECORD (see the list above)")
         return 1
 
-    print("DISPOSITION: VERIFIED  validate_subway_archive requires shapes.txt to exist "
-          f"(line {v['required_line']}) but parses only {v['parsed_members'][0]} "
-          f"(line {v['validator_line']}), so a replacement whose shapes.txt alone holds "
-          "invalid UTF-8 passed the real staged validator, was promoted over the "
-          f"known-good cache, and dropped the served subway geometry from "
-          f"{routes_before} route ({points_before} points) to {routes_after} "
-          f"({points_after} points) while archive_status reported a successful promotion, "
-          "last_download_error None and failed_downloads 0; a well formed but empty "
-          "shapes.txt is accepted and promoted identically, while an archive missing "
-          "shapes.txt outright is correctly rejected with the cache left byte-untouched.")
+    print(
+        f"DISPOSITION: FIXED ({BRANCH})  BEFORE: validate_subway_archive checked shapes.txt "
+        "for presence only, so a replacement whose shapes.txt alone held one 0xFF byte was "
+        "accepted, promoted over the known-good cache, and dropped the served subway "
+        "geometry from 1 route (5 points) to 0 while archive_status reported a promotion, "
+        "no error and 0 failed downloads, and a header-only shapes.txt was promoted the same "
+        "way. AFTER: the validator reads shapes.txt through the route loader's own parser, "
+        f"so both are refused at staging, the cache is byte-untouched and still draws "
+        f"{routes_after} route ({points_after} points), and archive_status records the "
+        f"refusal ({bad['failed_downloads']} failed download, not promoted, "
+        f"{bad['last_download_error']!r}); an archive without shapes.txt is still refused."
+    )
     return 0
 
 

@@ -37,6 +37,7 @@ import os
 import tempfile
 import time
 import zipfile
+import zlib
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import IO, TypeVar
@@ -118,16 +119,28 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     leave a gap exactly the width of "has rows, none of them usable", and a
     fresh-by-mtime archive sitting in that gap is the wedge R3 was written for.
 
-    The double parse costs one extra pass over stops.txt or routes.txt, the two
-    smallest tables in every feed (tens to low thousands of rows), never over
-    stop_times.txt.
+    The double parse is cheap for the tables most loaders gate here (stops.txt and
+    routes.txt, tens to low thousands of rows). It is not cheap for the subway, whose
+    validator parses every member its load reads, stop_times.txt included (A02).
+
+    THE MESSAGE NAMES THE MEMBER AND CARRIES THE READER'S OWN WORDS (A02, D7), because
+    it is what an operator reads on /api/status as last_download_error. The decode and
+    CSV errors say where and what ("'utf-8' codec can't decode byte 0xff in position
+    59"), and a damaged deflate stream or a CRC mismatch inside the member says which
+    member, which the archive-level catch in validate_archive cannot. All of it is
+    library text about the archive's bytes, never about our filesystem, so it is safe
+    to publish (describe_failure's rule).
     """
     try:
         parsed = parse()
     except KeyError as exc:
         raise StaticValidationError(f"missing required member(s): {member}") from exc
     except (UnicodeDecodeError, csv.Error) as exc:
-        raise StaticValidationError(f"{member} is not readable as CSV") from exc
+        raise StaticValidationError(f"{member} is not readable as CSV ({exc})") from exc
+    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__}: {exc})"
+        ) from exc
     if not parsed:
         raise StaticValidationError(f"{member} yielded no usable {what}")
 

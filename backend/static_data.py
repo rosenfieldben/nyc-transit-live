@@ -8,7 +8,10 @@ import logging
 import re
 import time
 import zipfile
+import zlib
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from typing import IO
 
 import env_seams
@@ -100,7 +103,19 @@ MAX_AGE_DAYS = 30
 # is required to prevent; so validate_subway_archive runs the loader's own transfer
 # parser over it and rejects an archive that yields no pair. The live table has 150
 # such rows; one is the floor, because the question is whether the table says
-# anything, not how much. stop_times.txt keeps PR 116's presence-only rule.
+# anything, not how much.
+#
+# EVERY MEMBER HERE IS PARSED AT VALIDATION, NOT ONLY PRESENT (audit 2026-10-12, A02,
+# with 2026-09-05's F08). Presence was the rule for trips.txt, stop_times.txt and
+# shapes.txt, and it let an archive the load cannot read replace one it can: one
+# undecodable byte in trips.txt or stop_times.txt was promoted and then failed every
+# warmup attempt for MAX_AGE_DAYS, because the cached-archive check runs this same
+# validator and so kept answering that the archive was fine; the same byte in
+# shapes.txt was promoted and drew 0 route lines. So each member is read at validation
+# through the loader's own parser (the one generator the load reads it with, drained
+# rather than kept) and must yield at least one row: "the validator passed" now means
+# "the load will read every member it opens". stop_times.txt is the costly one (565,093
+# rows in the live table, measured with backend/scripts/measure_subway_validation.py).
 _REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt", "transfers.txt")
 
 
@@ -137,6 +152,56 @@ def validate_subway_archive(zf: zipfile.ZipFile) -> None:
         "transfers.txt",
         "cross-stop transfers",
     )
+    # THE THREE MEMBERS THAT WERE ONLY PRESENT (A02, F08), each through the generator
+    # the load reads it with, drained to a count and kept nowhere. Cheapest first, so a
+    # publication bad in several places is refused without paying for stop_times.txt.
+    # The generators are looked up at call time, so the load and this gate cannot be
+    # handed different parsers.
+    require_parsed(lambda: _drained(zf, "trips.txt", _iter_trip_routes), "trips.txt", "trips")
+    require_parsed(
+        lambda: _drained(zf, "shapes.txt", _iter_shape_points),
+        "shapes.txt",
+        "route shape points",
+    )
+    require_parsed(
+        lambda: _drained(zf, "stop_times.txt", _iter_trip_stops), "stop_times.txt", "stop times"
+    )
+
+
+def _drained(zf: zipfile.ZipFile, member: str, rows: Callable[[IO[bytes]], Iterable]) -> int:
+    """The validator's consumer: read every row `rows` yields from `member`, keep a count.
+
+    The other consumer of the same generator is the loader's, which accumulates the
+    rows into the tables it serves. One reader per member, two consumers, so the gate
+    and the load cannot drift apart the way presence-only did (A02)."""
+    return parse_member(zf, member, lambda raw: sum(1 for _ in rows(raw)))
+
+
+# THE RESIDUAL ARM (A02, decision D3), the NJ Transit loader's, for the subway.
+#
+# The parse-class errors reading an archive can raise. One of them out of a load over
+# an archive the validator accepted means the two disagree about what is readable,
+# which they have done three times before (MR2's F1, F08, A02): the cache answers
+# "valid and fresh" at every attempt while every attempt fails, until MAX_AGE_DAYS.
+# Discarding is right in exactly this case: this file IS the cache, nothing better
+# sits behind it (a previous archive was replaced when this one was promoted), and
+# keeping it wedges every retry on the same bytes. With the file gone the next attempt
+# downloads. The validator parses every member the load reads, so nothing should reach
+# this arm; it is here because a backstop that is never reached costs less than a
+# month of a failed subway static group.
+_UNREADABLE = (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, KeyError, OSError)
+
+
+@contextmanager
+def _discarding_an_unreadable_cache() -> Iterator[None]:
+    """Run a read of the cached archive; on a parse-class error, unlink the cache and
+    re-raise, so the warmup fails this attempt and the next one downloads."""
+    try:
+        yield
+    except _UNREADABLE as exc:
+        logger.warning("Cached subway static GTFS is unparseable (%s); discarding it", exc)
+        SUBWAY_GTFS_ZIP.unlink(missing_ok=True)
+        raise
 
 
 async def _download_zip() -> None:
@@ -249,7 +314,8 @@ async def load_subway_stops() -> dict[str, dict]:
             # and /api/status publishes last_download_error, last_promoted_at
             # and the failure count beside this group's state.
             logger.warning("Static GTFS re-download failed (%s); using the cached copy", exc)
-    stops = _parse_stops()
+    with _discarding_an_unreadable_cache():
+        stops = _parse_stops()
     if not stops:
         # Backstop for finding 4. validate_subway_archive runs THIS parse over the
         # staged and the cached archive, so an empty result cannot get this far;
@@ -292,38 +358,57 @@ _MIN_NEW_GEOMETRY = 0.05
 _SHAPE_ID_RE = re.compile(r"^([A-Za-z0-9]+)\.\.?N")
 
 
+def _iter_shape_points(raw: IO[bytes]) -> Iterator[tuple[str, str, int, float, float]]:
+    """shapes.txt rows -> (route, shape_id, sequence, lat, lon) for every point the map
+    can draw, coordinates rounded to 5 decimals (~1 m).
+
+    THE ONE READER OF shapes.txt (A02, F08): load_subway_route_shapes accumulates these
+    rows into polylines and validate_subway_archive drains them to a count, so the gate
+    asks exactly what the load reads. A row is drawable when its shape_id names a route
+    (_SHAPE_ID_RE) and its sequence and coordinates are numbers; any other row is
+    skipped here, as the loader always skipped it, so the gate's floor of one row means
+    "at least one point of one route line", and a table of points for shapes no route
+    owns is refused rather than promoted to an empty map. A row the codec or the CSV
+    reader cannot read raises, which is the case the gate exists for.
+    """
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        shape_id = row.get("shape_id") or ""
+        match = _SHAPE_ID_RE.match(shape_id)
+        if not match:
+            continue
+        try:
+            sequence = int(row["shape_pt_sequence"])
+            lat = round(float(row["shape_pt_lat"]), 5)
+            lon = round(float(row["shape_pt_lon"]), 5)
+        except (KeyError, ValueError, TypeError):
+            continue  # malformed row
+        yield match.group(1), shape_id, sequence, lat, lon
+
+
 def load_subway_route_shapes() -> list[dict]:
     """Parse shapes.txt from the cached static GTFS into drawable polylines.
 
     Returns [{"route": "A", "polylines": [[[lat, lon], ...], ...]}, ...] with
     coordinates rounded to 5 decimals (~1 m). Assumes the zip exists (call
     after load_subway_stops succeeds). Route lines are decorative, so any
-    parse problem logs and returns [] rather than raising.
+    parse problem logs and returns [] rather than raising; the validator has
+    already read this member through the same generator, so that arm is for a
+    cache that changed after it was checked.
     """
     try:
         shapes: dict[str, list] = defaultdict(list)
+        route_of: dict[str, str] = {}
         with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
             with zf.open("shapes.txt") as raw:
-                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-                for row in reader:
-                    try:
-                        shapes[row["shape_id"]].append(
-                            (
-                                int(row["shape_pt_sequence"]),
-                                round(float(row["shape_pt_lat"]), 5),
-                                round(float(row["shape_pt_lon"]), 5),
-                            )
-                        )
-                    except (KeyError, ValueError, TypeError):
-                        continue  # malformed row
+                for route, shape_id, sequence, lat, lon in _iter_shape_points(raw):
+                    shapes[shape_id].append((sequence, lat, lon))
+                    route_of[shape_id] = route
 
         by_route: dict[str, list[list]] = defaultdict(list)
         for shape_id, points in shapes.items():
-            match = _SHAPE_ID_RE.match(shape_id)
-            if not match:
-                continue
             points.sort()
-            by_route[match.group(1)].append([[p[1], p[2]] for p in points])
+            by_route[route_of[shape_id]].append([[p[1], p[2]] for p in points])
 
         routes: list[dict] = []
         total = 0
@@ -349,40 +434,68 @@ def load_subway_route_shapes() -> list[dict]:
         return []
 
 
+def _iter_trip_routes(raw: IO[bytes]) -> Iterator[tuple[str, str | None]]:
+    """trips.txt rows -> (trip_id, route_id), route_id None when blank (that trip
+    contributes no route). Rows with no trip_id are skipped.
+
+    THE ONE READER OF trips.txt (A02): _parse_trip_routes accumulates these rows for
+    the routes-per-station index and validate_subway_archive drains them to a count, so
+    an archive whose trips.txt the index cannot read is refused before it is promoted.
+    """
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        trip_id = (row.get("trip_id") or "").strip()
+        if trip_id:
+            yield trip_id, (row.get("route_id") or "").strip() or None
+
+
+def _iter_trip_stops(raw: IO[bytes]) -> Iterator[tuple[str, str]]:
+    """stop_times.txt rows -> (trip_id, child platform stop_id). Rows with a blank
+    trip_id or stop_id are skipped.
+
+    THE ONE READER OF stop_times.txt (A02), the member the subway reads the most of
+    (565,093 rows in the live table): _parse_trip_stops accumulates these rows and
+    validate_subway_archive drains them to a count. Streamed row by row, so neither
+    consumer holds the raw rows.
+    """
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        trip_id = (row.get("trip_id") or "").strip()
+        stop_id = (row.get("stop_id") or "").strip()
+        if trip_id and stop_id:
+            yield trip_id, stop_id
+
+
 def _parse_trip_routes(zf: zipfile.ZipFile) -> dict[str, str | None]:
-    """trips.txt -> trip_id -> route_id. Subway needs only the route per trip for
-    the routes-per-station index (not direction/shape/headsign like the shape
-    builders), so this is a minimal parse. First-writer-wins on a duplicate
-    trip_id; a blank route_id is kept as None (contributes no route)."""
-    trip_routes: dict[str, str | None] = {}
-    with zf.open("trips.txt") as raw:
-        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-        for row in reader:
-            trip_id = (row.get("trip_id") or "").strip()
-            if not trip_id or trip_id in trip_routes:
-                continue
-            trip_routes[trip_id] = (row.get("route_id") or "").strip() or None
-    return trip_routes
+    """trips.txt -> trip_id -> route_id, through _iter_trip_routes. Subway needs only
+    the route per trip for the routes-per-station index (not direction/shape/headsign
+    like the shape builders), so this is a minimal parse. First-writer-wins on a
+    duplicate trip_id."""
+
+    def accumulate(raw: IO[bytes]) -> dict[str, str | None]:
+        trip_routes: dict[str, str | None] = {}
+        for trip_id, route_id in _iter_trip_routes(raw):
+            trip_routes.setdefault(trip_id, route_id)
+        return trip_routes
+
+    return parse_member(zf, "trips.txt", accumulate)
 
 
 def _parse_trip_stops(zf: zipfile.ZipFile) -> dict[str, list[str]]:
-    """stop_times.txt -> trip_id -> [child platform stop_id]. Order does not
-    matter for the routes-per-station index (only which stops a trip visits), so
-    rows are collected unsorted. The stop ids are platform ids (101N/101S) that
-    must fold up to a parent station (101) before indexing; that fold happens in
-    derive_subway_station_routes. Rows with a blank trip_id/stop_id are skipped.
-    Streamed row by row: the real stop_times.txt is tens of MB, but only the
-    compact per-trip stop lists are retained, not the raw rows."""
-    trip_stops: dict[str, list[str]] = defaultdict(list)
-    with zf.open("stop_times.txt") as raw:
-        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-        for row in reader:
-            trip_id = (row.get("trip_id") or "").strip()
-            stop_id = (row.get("stop_id") or "").strip()
-            if not trip_id or not stop_id:
-                continue
+    """stop_times.txt -> trip_id -> [child platform stop_id], through
+    _iter_trip_stops. Order does not matter for the routes-per-station index (only
+    which stops a trip visits), so rows are collected unsorted. The stop ids are
+    platform ids (101N/101S) that must fold up to a parent station (101) before
+    indexing; that fold happens in derive_subway_station_routes. Only the compact
+    per-trip stop lists are retained, never the raw rows."""
+
+    def accumulate(raw: IO[bytes]) -> dict[str, list[str]]:
+        trip_stops: dict[str, list[str]] = defaultdict(list)
+        for trip_id, stop_id in _iter_trip_stops(raw):
             trip_stops[trip_id].append(stop_id)
-    return dict(trip_stops)
+        return dict(trip_stops)
+
+    return parse_member(zf, "stop_times.txt", accumulate)
 
 
 def _parse_child_to_parent(zf: zipfile.ZipFile) -> dict[str, str]:
@@ -434,8 +547,11 @@ def load_subway_station_routes() -> dict[str, list[str]]:
     rather than failure: derive_subway_station_routes simply yields no entry for it,
     and a station absent from the index reads as no routes at every consumer. The
     difference is between an archive this loader cannot read and an archive that says
-    nothing calls at a stop."""
-    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+    nothing calls at a stop.
+
+    AN ARCHIVE THIS LOADER CANNOT READ IS DISCARDED as it fails (the residual arm, A02),
+    so the next attempt downloads instead of failing on the same bytes for a month."""
+    with _discarding_an_unreadable_cache(), zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
         trip_routes = _parse_trip_routes(zf)
         trip_stops = _parse_trip_stops(zf)
         child_to_parent = _parse_child_to_parent(zf)
@@ -537,8 +653,9 @@ def load_subway_station_complexes() -> dict[str, str]:
     RAISES rather than returning {}, for the reason load_subway_station_routes gives:
     transfers.txt is a required member because three rider-visible consumers read this
     index, so a problem reading it is a failed load of the archive, not a warning. The
-    warmup's `except Exception` catches it and the last-known-good index stays."""
-    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+    warmup's `except Exception` catches it and the last-known-good index stays, and the
+    residual arm discards an archive it cannot read, as load_subway_station_routes does."""
+    with _discarding_an_unreadable_cache(), zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
         stations = parse_member(zf, "stops.txt", _parse_stations_rows)
         child_to_parent = _parse_child_to_parent(zf)
         pairs = _parse_transfer_pairs(zf)

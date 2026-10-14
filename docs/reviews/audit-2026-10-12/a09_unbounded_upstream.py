@@ -75,21 +75,24 @@ FOUR CHECK GROUPS, each over the real static_shared staged path:
   ARM 3  No member-count or expanded-size limit at validation. A valid subway archive
          plus 70,000 empty members (past the 65,535 entries of a classic zip, so the
          archive is zip64), and a valid subway archive whose stop_times.txt declares
-         2 GiB expanded from about 2 MB on the wire: its usual header, then 2 GiB of
-         blank lines, so a CSV reader sees the same empty table the small publications
-         carry. The expansion sits on a member the subway code reads, never on an
-         extra one nothing reads, so that a ceiling over the members the code reads
-         turns 3.3 red: the validator requires stop_times.txt (3.0 measures that by
-         rejection) but checks it for presence only, and the routes-per-station loader
-         inflates it whole. Measured: both archives promoted, the member count, and
-         stop_times.txt's declared size and ratio.
-         Two limits of reach. A ceiling only on what validation itself parses
-         (stops.txt and transfers.txt) leaves 3.3 green: it bounds the validator's
-         work, while stop_times.txt is still promoted at 2 GiB, which is what 3.3
-         records; those members are not padded because parsing that much would add
-         seconds to every run. And a repair that made validation PARSE stop_times.txt
-         would spend minutes on its blank lines before 3.3 reports, which is the
-         unbounded work this finding describes, not a harness fault.
+         2 GiB expanded from about 2 MB on the wire: its usual header and one call,
+         then 2 GiB of lines of spaces, rows the subway's reader of the member skips
+         (no trip_id, no stop_id), so it reads the same one-call table the small
+         publications carry. The expansion sits on a member the subway code reads,
+         never on an extra one nothing reads, so that a ceiling over the members the
+         code reads turns 3.3 red: the validator requires stop_times.txt (3.0
+         measures that by rejection) and, since A02, reads all of it through the
+         loader's own generator, and the routes-per-station loader inflates it whole.
+         Measured: both archives promoted, the member count, and stop_times.txt's
+         declared size and ratio.
+         WHY LINES OF SPACES AND NOT BLANK LINES, which is what this padding was
+         until A02's repair made validation read the member. A CSV reader takes about
+         20 times longer over empty lines than over the same bytes as long ones: 2 GiB
+         of blank lines measured about 320 s to read, 2 GiB of 65,535-space lines
+         about 16 s, and the padding exists to declare an expanded size, not to cost
+         the run five minutes. Reading it whole at validation is now the unbounded
+         work this finding describes, so a ceiling on what validation parses (in
+         parse_member, say) reaches stop_times.txt and turns 3.3 red too.
   H      Hermetic and harness checks: the generated-archive builder reads back intact
          at small scale, and no socket was attempted.
 
@@ -124,9 +127,10 @@ WHAT IS INJECTED, and this is the whole of it:
        whose state starts "loading", as main.lifespan sets it.
     5. Archives built here: small ones with zipfile, the 512 MiB and 2 GiB ones by a
        short zip writer below that generates them as they are served (stored zeros,
-       and one MiB of blank lines deflated once and repeated after a table's header).
-       H.0 proves that writer's output reads back intact with zipfile.testzip, and
-       that a padded table reads as the unpadded one.
+       and one MiB of lines of spaces deflated once and repeated after a table's
+       header). H.0 proves that writer's output reads back intact with
+       zipfile.testzip, and that the subway's reader of a padded stop_times.txt
+       yields exactly the rows of the unpadded one.
 
 HERMETIC. _hermetic.contain() before the first backend import and verify() after
 it; no credentials; an audit hook refuses any socket connect or name resolution,
@@ -195,7 +199,11 @@ sys.addaudithook(_refuse_sockets)
 
 MiB = 1 << 20
 _ZERO_MIB = bytes(MiB)
-_BLANK_LINES_MIB = b"\n" * MiB  # one MiB of empty CSV lines
+# One MiB of lines of spaces: sixteen lines of 65,535 spaces and a newline. A row with
+# no trip_id or stop_id, which the subway's stop_times reader skips; see ARM 3 in the
+# docstring for why not blank lines (a CSV reader is about 20 times slower over them).
+_SPACE_LINES_MIB = (b" " * 65535 + b"\n") * 16
+assert len(_SPACE_LINES_MIB) == MiB
 
 
 def repeated_crc(block: bytes, count: int, crc: int = 0) -> int:
@@ -212,7 +220,7 @@ def deflated_block(data: bytes) -> bytes:
     return comp.compress(data) + comp.flush(zlib.Z_FULL_FLUSH)
 
 
-_DEFLATED_BLANK_LINES_MIB = deflated_block(_BLANK_LINES_MIB)  # about 1,010:1
+_DEFLATED_SPACE_LINES_MIB = deflated_block(_SPACE_LINES_MIB)  # about 1,000:1
 _DEFLATE_END = zlib.compressobj(9, zlib.DEFLATED, -15).flush(zlib.Z_FINISH)  # empty final block
 
 _DOS_DATE = ((2026 - 1980) << 9) | (10 << 5) | 12  # 2026-10-12, 00:00:00
@@ -241,12 +249,13 @@ def member_stored_zeros(name: str, mib: int) -> _Member:
 
 
 def member_padded_table(name: str, text: str, mib: int) -> _Member:
-    """A CSV table `text` followed by `mib` MiB of blank lines, deflated at about
-    1,010:1. A CSV reader skips blank lines, so to any reader this is the same table
-    as `text` alone; only its declared expanded size differs."""
+    """A CSV table `text` followed by `mib` MiB of lines of spaces, deflated at about
+    1,000:1. Those lines carry no trip_id and no stop_id, so the subway's reader of
+    stop_times.txt yields exactly the rows of `text` alone; only the member's declared
+    expanded size differs."""
     head = text.encode("utf-8")
-    body = deflated_block(head) + _DEFLATED_BLANK_LINES_MIB * mib + _DEFLATE_END
-    crc = repeated_crc(_BLANK_LINES_MIB, mib, zlib.crc32(head))
+    body = deflated_block(head) + _DEFLATED_SPACE_LINES_MIB * mib + _DEFLATE_END
+    crc = repeated_crc(_SPACE_LINES_MIB, mib, zlib.crc32(head))
     return _Member(name, zipfile.ZIP_DEFLATED, crc, len(body), len(head) + mib * MiB,
                    lambda: iter((body,)))
 
@@ -453,9 +462,15 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
          "min_transfer_time": "180"}
         for i in range(heavy_transfers)
     )
+    # One trip and one call: since A02 the validator reads trips.txt and stop_times.txt
+    # through the loader's own generators and wants a row from each, so a publication
+    # with headers only there is one it refuses, and every arm here needs one it accepts.
     return {
         "stops.txt": stops,
-        "trips.txt": csv_text(["route_id", "service_id", "trip_id", "shape_id"], []),
+        "trips.txt": csv_text(
+            ["route_id", "service_id", "trip_id", "shape_id"],
+            [{"route_id": "A", "service_id": "wk", "trip_id": "t1", "shape_id": "A..N01R"}],
+        ),
         "shapes.txt": csv_text(
             ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
             [
@@ -466,7 +481,8 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
             ],
         ),
         "stop_times.txt": csv_text(
-            ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], []
+            ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"],
+            [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}],
         ),
         "transfers.txt": csv_text(
             ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"], transfers
@@ -486,7 +502,7 @@ def built_archive(tag: str, *, extra_members: int = 0, heavy_transfers: int = 0)
 
 def streamed_archive(tag: str, *, pad_mib: dict[str, int] | None = None,
                      extra: tuple[_Member, ...] = ()) -> Publication:
-    """The subway members (each named in `pad_mib` followed by that many MiB of blank
+    """The subway members (each named in `pad_mib` followed by that many MiB of space
     lines), then the `extra` members, generated as served."""
     pad_mib = pad_mib or {}
     members = [
@@ -555,13 +571,13 @@ def builder_selfcheck() -> None:
         bad = zf.testzip()
         padded = zf.read(EXPANDED_MEMBER)
         contents_ok = (zf.read("stored.bin") == bytes(3 * MiB)
-                       and padded == plain[EXPANDED_MEMBER].encode() + b"\n" * (2 * MiB))
-    # The padded table, read the way a CSV loader reads it: the same header as the
-    # unpadded one, and the same (zero) rows.
-    padded_rows = csv.DictReader(io.StringIO(padded.decode("utf-8-sig")))
-    plain_rows = csv.DictReader(io.StringIO(plain[EXPANDED_MEMBER]))
-    as_csv = (padded_rows.fieldnames, list(padded_rows))
-    same_table = as_csv == (plain_rows.fieldnames, list(plain_rows))
+                       and padded == plain[EXPANDED_MEMBER].encode() + _SPACE_LINES_MIB * 2)
+    # The padded table, read the way the subway reads it: its own stop_times reader
+    # yields the same rows from the padded member as from the unpadded one.
+    padded_rows = list(static_data._iter_trip_stops(io.BytesIO(padded)))
+    plain_rows = list(static_data._iter_trip_stops(io.BytesIO(plain[EXPANDED_MEMBER].encode())))
+    as_csv = (["trip_id", "stop_id"], padded_rows)
+    same_table = bool(plain_rows) and padded_rows == plain_rows
     # The writer's own encoding of the subway members, unpadded, through the real
     # validator: proves the generated bytes are a publication it accepts. Unpadded so
     # that a size or ratio ceiling (a repair) fails 3.3, not this harness check.
@@ -574,7 +590,7 @@ def builder_selfcheck() -> None:
         verdict = f"REJECTED ({exc})"
     path.unlink()
     check(
-        f"H.0 a generated archive (a {EXPANDED_MEMBER} padded with deflated blank lines, a "
+        f"H.0 a generated archive (a {EXPANDED_MEMBER} padded with deflated lines of spaces, a "
         "stored member of zeros) passes zipfile.testzip, reads back exactly, matches its own "
         "central directory and reads as the unpadded table; unpadded, the real validator "
         "accepts the writer's output",

@@ -80,12 +80,22 @@ _STOP_ROWS = [
     },
 ]
 _ROUTE_ROWS = [{"route_id": "R1", "route_long_name": "Alpha Line", "route_color": "00839C"}]
+# The shape id is in the subway's own form (route, dots, direction), because the subway
+# validator reads shapes.txt through its loader's parser and counts only points of a
+# shape that names a route (A02). The other three loaders join trips to shapes by id
+# and care nothing for its form.
 _TRIP_ROWS = [
-    {"route_id": "R1", "service_id": "wk", "trip_id": "t1", "direction_id": "0", "shape_id": "s1"}
+    {
+        "route_id": "R1",
+        "service_id": "wk",
+        "trip_id": "t1",
+        "direction_id": "0",
+        "shape_id": "R1..N01R",
+    }
 ]
 _SHAPE_ROWS = [
     {
-        "shape_id": "s1",
+        "shape_id": "R1..N01R",
         "shape_pt_sequence": str(i),
         "shape_pt_lat": str(40.70 + i / 100),
         "shape_pt_lon": str(-74.00 - i / 100),
@@ -182,7 +192,8 @@ def undecodable_deep_member() -> bytes:
     the loader's residual arm when the real parse hit the bad byte: one bad
     publication and BOTH archives gone, which is precisely the bug C5 exists to
     prevent, surviving inside C5. staged_fetch now runs the publication validator,
-    which does the full parse before the rename.
+    which does the full parse before the rename. The subway met the same shape later,
+    as audit 2026-10-12's A02, and its validator now parses trips.txt too.
     """
     return good_archive(
         trips=b"route_id,service_id,trip_id,direction_id,shape_id\nR1,wk,t1,0,\xd1\xd1\n"
@@ -532,10 +543,12 @@ def _shapes_for(loader):
 LOADER_SHAPES = [(loader, shape) for loader in LOADERS for shape in _shapes_for(loader)]
 LOADER_SHAPE_IDS = [f"{loader.name}-{shape}" for loader, shape in LOADER_SHAPES]
 
-# The three lenient loaders parse every table in one pass and unlink a cache they
-# cannot parse; the subway's load reads only stops.txt, so it has no deeper table to
-# fail on and no residual arm. The deep-parse regression is about that arm.
-DEEP_PARSE_LOADERS = [loader for loader in LOADERS if loader.name != "subway"]
+# Every loader parses deeper tables than its light gate used to, and unlinks a cache it
+# cannot parse. The subway joined this list with A02: it read trips.txt and
+# stop_times.txt for the routes index all along, without a gate that parsed them or a
+# residual arm, which is how an undecodable trips.txt was promoted and then wedged
+# every attempt. The deep-parse regression is about that arm.
+DEEP_PARSE_LOADERS = LOADERS
 DEEP_PARSE_IDS = [loader.name for loader in DEEP_PARSE_LOADERS]
 
 
@@ -840,10 +853,13 @@ async def test_a_publication_that_fails_the_deep_parse_never_replaces_the_cache(
     both archives. staged_fetch runs the publication validator now, which parses
     everything the load parses before the rename.
 
-    The subway is excluded, and structurally so rather than by convenience: its
-    load reads only stops.txt, which the light validator already parses in full, so
-    it has no deeper table to fail on and no residual arm to destroy anything. An
-    archive with a damaged trips.txt is simply a VALID subway archive.
+    THE SUBWAY IS IN THIS TEST NOW, and this docstring used to say why it could not
+    be: that its load read only stops.txt, so an archive with a damaged trips.txt was
+    "simply a VALID subway archive". Its load had read trips.txt and stop_times.txt
+    for the routes-per-station index since H5, and audit 2026-10-12's A02 found that
+    exact archive promoted and then failing every warmup attempt for a month. Its
+    validator parses every member its load reads now, so the archive is refused
+    before the rename, which is what this test asks of every loader.
     """
     cache = loader.set_path(tmp_path, monkeypatch)
     cache.write_bytes(good_archive())

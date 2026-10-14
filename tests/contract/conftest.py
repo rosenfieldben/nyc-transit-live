@@ -52,6 +52,16 @@ CONTRACT_TIMING = {
     "STATIC_RETRY_SCHEDULE_S": "1,2,3",
 }
 
+# THE NJ TRANSIT BUDGET SEAMS, pinned at production's values (Audit 6, A01). Every
+# other seam is set above or by the simulator, so nothing in a developer's shell or
+# .env reaches a scenario; these two would, and a scenario that counts getToken
+# POSTs would then fail naming the wrong cause. One that needs other values passes
+# them to launch(), which applies its overrides last.
+CONTRACT_BUDGET = {
+    "NJT_DAILY_MINT_ALLOWANCE": "4",
+    "NJT_MINT_COOLDOWN_BASE_S": "600",
+}
+
 BOOT_DEADLINE_S = 60.0
 
 
@@ -249,6 +259,7 @@ class ContractHarness:
             **os.environ,
             **self.sim.env(self.base, self.data_dir),
             **CONTRACT_TIMING,
+            **CONTRACT_BUDGET,
             **env_overrides,
         }
         env.pop("PYTHONPATH", None)

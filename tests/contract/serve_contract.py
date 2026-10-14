@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import CONTRACT_TIMING  # noqa: E402
+from conftest import CONTRACT_BUDGET, CONTRACT_TIMING  # noqa: E402
 from upstream_sim import UpstreamSim  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -51,6 +51,7 @@ def main() -> int:
         **os.environ,
         **sim.env(base, data_dir),
         **CONTRACT_TIMING,
+        **CONTRACT_BUDGET,
         "FEED_RETENTION_MAX_S": "600",
     }
     env.pop("PYTHONPATH", None)

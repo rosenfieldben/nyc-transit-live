@@ -73,6 +73,12 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # has to be able to fail TRIP UPDATES while alerts keep flowing.
     "NJT_TU_URL": _NJT_RAILDATA + "/getTripUpdates",
     "NJT_ALERTS_URL": _NJT_RAILDATA + "/getAlerts",
+    # NJ Transit's mint budget (Audit 6, A01): getToken POSTs one process may send per
+    # Eastern day. Four is a budget line (njt_auth.DAILY_MINT_ALLOWANCE), not a taste.
+    "NJT_DAILY_MINT_ALLOWANCE": 4,
+    # The one base the mint cooldown ladder starts from, for a failed mint and a
+    # refused fresh token alike (njt_auth.MINT_COOLDOWN_BASE_S, arithmetic beside it).
+    "NJT_MINT_COOLDOWN_BASE_S": 600.0,
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -335,6 +341,91 @@ def test_a_trailing_slash_on_a_base_does_not_double_the_separator():
         {"ALERTS_RT_BASE": "http://127.0.0.1:9999/sim/"},
     )
     assert out == "http://127.0.0.1:9999/sim/camsys%2Flirr-alerts"
+
+
+def test_the_mint_allowance_seam_takes_a_positive_whole_number():
+    out = _resolve("__import__('njt_auth').DAILY_MINT_ALLOWANCE", {"NJT_DAILY_MINT_ALLOWANCE": "2"})
+    assert out == "2"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "2.5", "two", "", " ", "1e3", "\u0663"])
+def test_a_degenerate_mint_allowance_refuses_to_start(value):
+    """STRICTER THAN THE TIMINGS (env_seams.count). Zero would hold every mint
+    forever, a negative or a fraction means nothing, and a malformed value quietly
+    replaced by the default would hide an operator's override that never took. Each
+    one stops the process at import, which is when a deployment can still refuse to
+    come up."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, "NJT_DAILY_MINT_ALLOWANCE": value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{value!r} was accepted"
+    assert "NJT_DAILY_MINT_ALLOWANCE must be a positive whole number" in result.stderr
+
+
+def test_the_cooldown_base_seam_takes_a_positive_duration():
+    out = _resolve(
+        "__import__('njt_auth').MINT_COOLDOWN_BASE_S", {"NJT_MINT_COOLDOWN_BASE_S": "1.5"}
+    )
+    assert out == "1.5"
+
+
+def test_the_refused_token_base_seam_is_gone():
+    """One ladder, one base (Audit 6, A01): the refused-token base and its seam were
+    folded into MINT_COOLDOWN_BASE_S, so the name is no longer a seam at all."""
+    assert "NJT_MINT_REJECTED_COOLDOWN_BASE_S" not in env_seams.SEAM_NAMES
+    assert not hasattr(njt_auth, "MINT_REJECTED_COOLDOWN_BASE_S")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf", "2s", ""])
+def test_a_degenerate_cooldown_base_refuses_to_start(value):
+    name = "NJT_MINT_COOLDOWN_BASE_S"
+    """STRICTER THAN THE TIMINGS (env_seams.positive_seconds). Zero or a negative base
+    is a hold that has lapsed as it starts, nan one that never compares as running,
+    and inf one the cap quietly shortens: each switches the ladder off or misstates
+    it, on the path that spends the account's ten a day."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, name: value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{name}={value!r} was accepted"
+    assert f"{name} must be a positive, finite number of seconds" in result.stderr, (
+        "the refusal names the variable, malformed values included"
+    )
+
+
+@pytest.mark.parametrize("value", ["1801", "0.5", "1e-9"])
+def test_a_cooldown_base_outside_a_second_to_the_cap_refuses_to_start(value):
+    """The ladder takes min(step, 1800), so a base of 1801 would quietly be 1800, and
+    one below a second is a ladder in name only. Both refuse; the two ends, 1 and
+    1800, are accepted."""
+    name = "NJT_MINT_COOLDOWN_BASE_S"
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, '.'); import njt_auth"],
+        cwd=BACKEND,
+        env={**os.environ, name: value},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0, f"{name}={value} was accepted"
+    assert f"{name} must be between 1s and MINT_COOLDOWN_CAP_S (1800s)" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["1", "1800"])
+def test_a_cooldown_base_at_either_end_is_accepted(value):
+    out = _resolve(
+        "__import__('njt_auth').MINT_COOLDOWN_BASE_S", {"NJT_MINT_COOLDOWN_BASE_S": value}
+    )
+    assert out == f"{float(value)}"
 
 
 def test_a_malformed_timing_value_fails_loudly():

@@ -3160,6 +3160,30 @@ def test_the_quota_code_is_explained_in_words_and_the_others_are_not():
     assert detail == "degraded: feed-content-stale"
 
 
+def test_the_allowance_code_is_watched_and_explained_in_words():
+    """PRODUCTION HOLDING AT ITS OWN ALLOWANCE (Audit 6, A01) reads like an outage and
+    is not one, the quota code's case exactly, so it gets a sentence of its own in
+    the monitor's voice: the instance has spent its own share for the Eastern day, the
+    rest of the account's ten stay for the monitor and for operator work, and a
+    redeploy fixes nothing: it is a fresh process with a fresh allowance, so against
+    the same fault it spends up to four more, out of the monitor's own share. It is on
+    the monitor's own roster (which the equality test above holds to the probe's) and
+    never gating."""
+    import models
+
+    assert "njt-mint-allowance" in cm.PRODUCTION_HEALTH_CODES
+    assert "njt-mint-allowance" not in models.HEALTH_GATING_CODES
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["njt-mint-allowance"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "njt-mint-allowance" in health.detail
+    assert "own allowance" in health.detail and "Eastern day" in health.detail
+    assert "not an NJ Transit outage" in health.detail
+    assert "redeploy does not fix it" in health.detail
+    assert "fresh allowance" in health.detail and "up to 4 more" in health.detail
+
+
 @pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)
 def test_every_degraded_code_fails_the_run(code):
     """Each state the probe can report has to reach a nonzero exit. Parametrized

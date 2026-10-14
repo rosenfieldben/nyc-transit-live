@@ -797,8 +797,9 @@ def tracked_backend_modules() -> list[Path]:
     """Every backend .py file GIT TRACKS, outside tests. Not whatever is on disk.
 
     THE DIFFERENCE IS THE WHOLE MEASUREMENT. This scan asserts that the backend
-    contains NO math.isfinite / isnan / isinf call at all, which is the audit's
-    finding. BACKEND.rglob("*.py") walks the directory, and a developer checkout has
+    contains NO math.isfinite / isnan / isinf call at all outside one pinned
+    configuration parser (see FINITE_SITES_KNOWN), which is the audit's finding.
+    BACKEND.rglob("*.py") walks the directory, and a developer checkout has
     backend/.venv inside it: measured on this machine, 22 call sites, every one of
     them in a vendored package under .venv and none in this repository. So the scan
     reported the finding as refuted on any checkout with a virtualenv in the
@@ -852,11 +853,21 @@ for relative in REALTIME_MODULES:
     print(f"   {'backend/' + relative:<34}{n}   (realtime decoder)")
 print(f"   TOTAL static parsers: {static_total}     TOTAL realtime decoders: {realtime_total}")
 print()
-finite_calls = sum(
-    len(re.findall(r"math\.(isfinite|isnan|isinf)\(", path.read_text()))
+# AMENDED ON claude/a01-mint-allowance (Audit 6, A01). That branch added the backend's
+# first finite check, env_seams.positive_seconds, which refuses a nonfinite override of
+# an NJ Transit mint cooldown base at import. It parses one configuration value and
+# never sees a coordinate, so it is pinned here BY FILE: the check below now asserts
+# that it is the only call site, and a finite check anywhere else (the fix this
+# finding asks for, or anything else) still turns the record red.
+FINITE_SITES_KNOWN = {"backend/env_seams.py": 1}
+finite_sites = {
+    str(path.relative_to(REPO)): n
     for path in tracked_backend_modules()
-)
-print(f"math.isfinite / isnan / isinf call sites in backend production code: {finite_calls}")
+    if (n := len(re.findall(r"math\.(isfinite|isnan|isinf)\(", path.read_text())))
+}
+finite_calls = sum(finite_sites.values())
+print(f"math.isfinite / isnan / isinf call sites in backend production code: {finite_calls}"
+      f" {finite_sites}")
 print()
 print("what the predicates would have done with the injected values:")
 for label, lat, lon in (
@@ -877,9 +888,10 @@ check(
     f"static call sites={static_total}, realtime call sites={realtime_total}",
 )
 check(
-    finite_calls == 0,
-    "no finite check exists anywhere in the backend",
-    f"math.isfinite/isnan/isinf call sites={finite_calls}",
+    finite_sites == FINITE_SITES_KNOWN,
+    "no finite check exists anywhere in the backend but the configuration parser "
+    "env_seams.positive_seconds, which never sees a coordinate",
+    f"math.isfinite/isnan/isinf call sites={finite_sites}",
 )
 check(
     feeds._in_nyc(float("nan"), GOOD_LON) is False and feeds._in_nyc(float("inf"), GOOD_LON) is False,

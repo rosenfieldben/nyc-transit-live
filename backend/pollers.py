@@ -143,9 +143,10 @@ async def _bounded_refresh(entry: dict, coro, mark_degraded=None) -> None:
 
     NJ TRANSIT IS THE MOST EXPOSED SOURCE TO THIS PATH, which is why 15b is where
     it surfaced. njt_auth.njt_post's worst case is four requests at
-    REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST) = 120s, comfortably past
-    this 45s deadline, so a slow-but-alive RailData reliably arrives here rather
-    than at _refresh_njt's own handler.
+    REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST) = 120s, and since Audit 6
+    its ordinary worst case is three (POST, re-mint, POST) = 90s; either is
+    comfortably past this 45s deadline, so a slow-but-alive RailData reliably
+    arrives here rather than at _refresh_njt's own handler.
 
     _mark_all_systems_failed is generic (it walks whatever entry["systems"] holds
     and is a no-op when there is none), so it is safe for every source including
@@ -959,8 +960,17 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # publishes it whole rather than prefixing a diagnosis of its own. A quota
         # refusal reaches the app as NjtMintQuotaError once and as a cooldown
         # carrying MINT_QUOTA_MESSAGE for every poll after it, so the surface reads
-        # the same either way.
-        if isinstance(exc, (njt_auth.NjtMintCooldownError, njt_auth.NjtMintQuotaError)):
+        # the same either way. THE ALLOWANCE HOLD JOINS IT TOO (Audit 6, A01): the
+        # app spent its own daily allowance, nothing was sent, and its message says
+        # so and how long is left.
+        if isinstance(
+            exc,
+            (
+                njt_auth.NjtMintCooldownError,
+                njt_auth.NjtMintQuotaError,
+                njt_auth.NjtMintAllowanceError,
+            ),
+        ):
             fail(502, _sanitize_upstream(exc))
         else:
             fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")

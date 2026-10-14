@@ -19,6 +19,7 @@ from models import (
     HEALTH_BUS_INDEX_FAILED,
     HEALTH_FEED_CONTENT_STALE,
     HEALTH_GATING_CODES,
+    HEALTH_NJT_MINT_ALLOWANCE,
     HEALTH_NJT_MINT_QUOTA,
     HEALTH_NO_FEED_FRESH,
     HEALTH_OBSERVATIONS_QUALIFIED,
@@ -198,6 +199,10 @@ async def get_status(request: Request, response: Response) -> dict:
         # so the answer cannot be stale the way a flag somebody remembered to set
         # could be.
         "njt_mint_cooldown": _njt_mint_cooldown(),
+        # THE DAILY ALLOWANCE (Audit 6, A01): the Eastern day, the getToken POSTs this
+        # process has sent on it, the limit, and whether it is holding until the next
+        # Eastern midnight. Off the same cache, for the same reason as the cooldown.
+        "njt_mint_allowance": njt_auth.TOKEN_CACHE.allowance(),
         # Per-ARCHIVE download honesty (C5), beside the group states above rather
         # than inside them: a group state answers "can I serve this system", these
         # answer "how old is the archive I am serving it from, and why". Read
@@ -270,6 +275,7 @@ def _health_codes(
     njt_mint_quota: bool,
     now: float,
     observations_qualified: bool = False,
+    njt_mint_allowance: bool = False,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
 
@@ -375,6 +381,17 @@ def _health_codes(
     # with exactly the six keywords above. The handler always passes it.
     if observations_qualified:
         codes.append(HEALTH_OBSERVATIONS_QUALIFIED)
+
+    # THIS PROCESS'S OWN BUDGET, AND NOT A REASON TO 503 (Audit 6, A01). Where
+    # njt-mint-quota is NJ Transit refusing the account's eleventh mint, this is the
+    # instance holding at its own allowance (njt_auth.DAILY_MINT_ALLOWANCE) so that the
+    # rest of the ten stay for the monitor and for operator work. Not gating for the
+    # reason the quota code is not: a refused promotion is retried, each fresh process
+    # mints on its first NJ Transit request, and a probe that refused the build would
+    # spend the budget this code exists to protect. LAST, and defaulted, for the reason
+    # observations-qualified is.
+    if njt_mint_allowance:
+        codes.append(HEALTH_NJT_MINT_ALLOWANCE)
     return codes
 
 
@@ -654,6 +671,7 @@ async def healthz(request: Request) -> JSONResponse:
         observations_qualified=bool(
             _systems_serving_nothing_current(_served_arrival_systems(app.state), now)
         ),
+        njt_mint_allowance=njt_auth.TOKEN_CACHE.mint_allowance_spent,
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

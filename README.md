@@ -497,13 +497,33 @@ and each is a way a conventional poller gets this wrong:
    | Contract monitor | 4 | 6-hourly, one mint per run shared across `njt-static` and `njt-realtime` |
    | Production | 2 | `njt_auth.MAX_TOKEN_AGE_S` is a twelve-hour ceiling on holding an unproven token |
    | **Committed** | **6** | leaving four |
+   | Production, at most | 4 | `njt_auth.DAILY_MINT_ALLOWANCE`, a ceiling per process per Eastern day: with the monitor's 4 it leaves 2 for an operator |
 
    A deploy (cold token cache), a manual `workflow_dispatch` of the monitor, a
    fixture pull (`gen_njt_fixture.py` and `gen_njt_rt_fixture.py`, one each), or a
    genuine token expiry each spend one of the remaining four. So mints are conserved
    structurally rather than by convention: a single-flight cache turns concurrent
-   callers into one mint, a rejected token buys exactly one re-mint per attempt, and
-   **a failed mint puts the next one on a cooldown that every caller shares.**
+   callers into one mint, a token NJ Transit rejects after accepting it buys exactly
+   one re-mint per attempt (a fresh one, never accepted and minted moments ago, buys
+   none), and
+   **a failed mint, or a fresh token NJ Transit refuses, puts the next one on a
+   cooldown that every caller shares.**
+
+   Production's own failures cannot spend past its last row: since Audit 6 (A01) a
+   process stops at `njt_auth.DAILY_MINT_ALLOWANCE` (4) getToken POSTs per Eastern
+   day, counted as sent whether or not they yield a token, and holds until the next
+   Eastern midnight. `NJT_DAILY_MINT_ALLOWANCE` overrides it; anything but a positive
+   whole number refuses to start. The count lives in memory, and that is its limit: a
+   deploy is a fresh process with a fresh count and its cold mint is its own first,
+   so the allowance bounds what one process spends, not what a run of deploys does.
+   And it has a price: once it is spent with no token held, NJ Transit is dark until
+   that midnight however soon the fault clears. That price is why the ladder's base
+   is ten minutes: four failed mints fall at 0, 600, 1800 and 3600 seconds, so a
+   getToken outage at deploy time that ends inside the hour heals at the next probe,
+   and only one that outlasts the hour loses NJ Transit for the rest of the Eastern
+   day. A process that has already minted that day has fewer probes: with one mint
+   spent its last is at 1800 seconds, with two (the twelve-hour ceiling's second) at
+   600. A held token keeps serving through it.
 
    That last clause used to promise that nothing anywhere retried a failed mint,
    which was true of `njt_auth` and false of the repository (Audit 5, F05). The
@@ -517,20 +537,27 @@ and each is a way a conventional poller gets this wrong:
    | --- | --- | --- |
    | N concurrent callers, mint failing | N attempts | **1** |
    | first minute of unbroken failure | 4 | **1** |
-   | first hour | 240 | **6** |
-   | a full day, worst case | 5760 | **52** |
+   | first hour | 240 | **3** |
+   | a full day | 5760 | **8** |
    | a *known* daily-cap refusal | 240/hour until midnight | **1, then nothing until midnight** |
 
    The policy is two-armed, chosen by which failure arrived. A quota refusal holds
    until the next Eastern midnight, because that is when the answer changes.
    Everything else (transport, a non-200, an unrecognised body, and whatever bad
    credentials turn out to look like, which has never been probed) backs off from
-   `njt_auth.MINT_COOLDOWN_BASE_S` (60s, longer than a feed poll or the cooldown
-   would change nothing) doubling to `MINT_COOLDOWN_CAP_S` (1800s, short enough that
-   a real outage heals inside the hour it ends), and one working mint resets the
-   ladder. 52 a day is still more than ten, and honestly so: once those attempts do
-   spend the account's ten, NJ Transit answers with the quota refusal instead and the
-   hold latches until midnight at one attempt for the rest of the day.
+   `njt_auth.MINT_COOLDOWN_BASE_S` (600s since Audit 6, A01, where F05 set 60s: with
+   the allowance above, a short base spent the day's four in seven minutes) doubling
+   to `MINT_COOLDOWN_CAP_S` (1800s, short enough that a real outage heals inside the
+   hour it ends, while the allowance above lasts), and the first token NJ Transit
+   accepts resets the ladder, not a mint that merely returns one. A fresh token NJ
+   Transit refuses takes the same ladder from the same base (Audit 6, A01), and a
+   fresh token (one NJ Transit has never accepted, minted within the two minutes one
+   call can last, `njt_auth.FRESH_TOKEN_S`) buys no re-mint when it is refused, so
+   each probe of that fault is one getToken POST. The ladder spaces attempts but cannot bound them
+   (alone it still costs 49 a day, more than the account's ten), which is what the
+   allowance above is for. The day in the table runs noon to noon and so
+   spans two Eastern dates: eight is two dates' allowance, and NJ Transit's own
+   refusal is never drawn.
 
    During a cooldown, `get()` raises `NjtMintCooldownError` **without calling
    getToken**, and an over-age token keeps serving: `MAX_TOKEN_AGE_S` is a budget
@@ -538,7 +565,11 @@ and each is a way a conventional poller gets this wrong:
    re-mint must not take the layer dark. Only a *rejected* token (there is nothing
    left to serve) or a cooldown that began with no token at all does that.
    `/api/status` publishes `njt_mint_cooldown` with the seconds remaining and the
-   failure that started the window.
+   failure that started the window. The allowance hold serves the same way, raising
+   `NjtMintAllowanceError` when there is no token left: `/api/status` publishes
+   `njt_mint_allowance` (`day`, `spent`, `limit`, `spent_out`), and `/healthz`
+   carries `njt-mint-allowance` while it holds, degraded and never gating, for the
+   reason `njt-mint-quota` is not.
 
    When the cap itself is hit, `njt_auth` raises the fixed string `NJ Transit daily
    mint limit reached`, `/healthz` publishes `njt-mint-quota`, `/api/status` records

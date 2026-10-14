@@ -69,11 +69,15 @@ class StaticValidationError(Exception):
 def require_members(zf: zipfile.ZipFile, required: Iterable[str]) -> None:
     """Every named member must be present, or the archive cannot be served from.
 
-    Presence only. This is the gate for the members a loader READS but degrades
-    around (trips, shapes, stop_times): their absence is a broken publication, and
-    rejecting it keeps the last-known-good archive serving instead of promoting a
-    quietly diminished map. Emptiness is checked separately, and only for the two
-    tables whose emptiness voids the layer outright (see require_parsed).
+    Presence only, and so the FIRST gate, never the whole one. An absent member is a
+    broken publication, and rejecting it keeps the last-known-good archive serving
+    instead of promoting a quietly diminished map. Whether a present member can be
+    READ is require_parsed's question, asked with the loader's own parser, and a
+    member that passes here and is parsed by nothing can still fail the load: that is
+    how an undecodable trips.txt was promoted over a working subway cache while this
+    said it was there (audit 2026-10-12, A02). The subway's validator now parses every
+    member it names here; which members another loader parses, and why, is stated at
+    its own validator.
 
     Call this BEFORE any require_parsed, so an archive missing a member reports
     the missing member rather than whatever the parser makes of nothing.

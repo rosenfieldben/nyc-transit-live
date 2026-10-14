@@ -69,7 +69,7 @@ def test_a_scratch_directory_elsewhere_gets_a_plan_inside_it(tmp_path):
     module = _load()
     real = tmp_path / "repo" / "data" / "gtfs_static" / "gtfs_subway.zip"
     out = tmp_path / "scratch"
-    plan = module.scratch_plan(out, None, real)
+    plan = module.scratch_plan(out, None, (real,))
     assert plan["scratch_cache"] == out.resolve() / "data" / "gtfs_static" / "gtfs_subway.zip"
     for path in plan.values():
         assert path == out.resolve() or out.resolve() in path.parents
@@ -93,22 +93,78 @@ def test_the_plan_refuses_anything_that_reaches_the_real_cache(tmp_path, where):
         "the real data root itself": real_root,
     }[where]
     with pytest.raises(module.Refused):
-        module.scratch_plan(out, None, real)
+        module.scratch_plan(out, None, (real,))
 
 
 def test_the_plan_refuses_the_real_cache_as_the_archive_to_measure(tmp_path):
     module = _load()
     real = tmp_path / "repo" / "data" / "gtfs_static" / "gtfs_subway.zip"
     with pytest.raises(module.Refused):
-        module.scratch_plan(tmp_path / "scratch", real, real)
+        module.scratch_plan(tmp_path / "scratch", real, (real,))
 
 
 def test_main_refuses_this_checkouts_real_data_root_before_any_download(watched):
     """End to end through main(): the real data root as the scratch directory is
     refused with exit 2, before the environment changes and before any socket."""
     module = _load()
-    real_root = module.real_cache_path().parent.parent
+    real_root = module.real_cache_paths()[0].parent.parent
     before = os.environ.get("DATA_DIR")
-    assert module.main([str(real_root)]) == module.REFUSED
+    # An --archive that does not exist, so a regression in the rule fails on the copy
+    # instead of downloading the MTA archive into the checkout's data root.
+    absent = ["--archive", str(real_root / "absent.zip")]
+    assert module.main([str(real_root), *absent]) == module.REFUSED
     assert watched == []
     assert os.environ.get("DATA_DIR") == before
+
+
+def test_a_leftover_data_dir_does_not_unprotect_the_checkouts_default_data_root(
+    watched, tmp_path, monkeypatch
+):
+    """A DATA_DIR exported in the invoking shell (a contract-tier tmp root left behind,
+    say) is not what the served app uses, so it must not be the only root protected:
+    the checkout's default data/ as the scratch directory's data root is still refused,
+    exit 2, before any socket and before the environment changes."""
+    module = _load()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "leftover"))
+    caches = module.real_cache_paths()
+    default_root = caches[-1].parent.parent
+    assert caches[0].parent.parent == tmp_path / "leftover"
+    assert default_root != tmp_path / "leftover"
+    absent = ["--archive", str(tmp_path / "absent.zip")]  # never a download, as above
+    assert module.main([str(default_root.parent), *absent]) == module.REFUSED
+    assert watched == []
+    assert os.environ.get("DATA_DIR") == str(tmp_path / "leftover")
+
+
+def test_the_real_cache_it_protects_is_the_one_static_data_serves_from():
+    """THE COUPLING, independent of the function under test: whatever DATA_DIR this
+    process runs with, the cache static_data serves from is among the ones the plan
+    keeps clear of, so a wrong default in real_cache_paths cannot leave the served cache
+    unprotected."""
+    module = _load()
+    import static_data
+
+    assert static_data.SUBWAY_GTFS_ZIP.resolve() in [p.resolve() for p in module.real_cache_paths()]
+
+
+def test_a_scratch_directory_that_is_another_checkout_is_refused(tmp_path):
+    """A copy of this script in a worktree protects its own data roots, not the main
+    checkout's; pointed at the main checkout's root it would make that checkout's data/
+    its scratch data root. Any directory shaped like a checkout is refused."""
+    module = _load()
+    other = tmp_path / "other-checkout"
+    (other / "backend").mkdir(parents=True)
+    (other / "backend" / "env_seams.py").write_text("")
+    real = tmp_path / "repo" / "data" / "gtfs_static" / "gtfs_subway.zip"
+    with pytest.raises(module.Refused):
+        module.scratch_plan(other, None, (real,))
+
+
+def test_a_leftover_subway_url_refuses_the_download(watched, tmp_path, monkeypatch):
+    """SUBWAY_GTFS_URL is the contract tier's seam; left exported, it would make the one
+    download fetch a simulator's archive and report it as the MTA's. Refused, exit 2,
+    with no socket opened."""
+    module = _load()
+    monkeypatch.setenv("SUBWAY_GTFS_URL", "http://127.0.0.1:9/gtfs_subway.zip")
+    assert module.main([str(tmp_path / "scratch")]) == module.REFUSED
+    assert watched == []

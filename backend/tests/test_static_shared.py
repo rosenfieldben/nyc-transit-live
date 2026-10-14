@@ -19,6 +19,7 @@ import csv
 import hashlib
 import io
 import struct
+import threading
 import types
 import zipfile
 from pathlib import Path
@@ -671,6 +672,38 @@ async def test_a_valid_fresh_cache_is_served_without_any_download(tmp_path, monk
     assert loader.served(await loader.load())
     assert calls == []
     assert static_shared.archive_status() == {}
+
+
+@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
+async def test_every_loaders_cached_check_validates_off_the_serving_loop(
+    tmp_path, monkeypatch, loader
+):
+    """D5 AT EVERY CALL SITE (audit 2026-10-12, A02 and A09). Each loader asks
+    static_shared.cached_archive_is_usable whether its cache can be served, and that
+    runs the loader's own validator in a worker thread so the loop the pollers and
+    /healthz share keeps running. The subway's heartbeat test in test_static_data.py
+    pins what that buys; this pins WHERE it happens for every loader, by thread rather
+    than by timing: with a valid, fresh cache and no download, the validator must run
+    on a thread other than the one running this test's event loop. A loader put back
+    on the synchronous check runs it here, on the loop's thread, and fails.
+    NJ Transit's loader has the same test in test_njt_static.py."""
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive())
+    calls = []
+    _patch_download(monkeypatch, loader.module, good_archive(), calls=calls)
+    threads = []
+    real = loader.validate
+
+    def recording(zf):
+        threads.append(threading.get_ident())
+        real(zf)
+
+    monkeypatch.setattr(loader.module, real.__name__, recording)
+
+    assert loader.served(await loader.load())
+    assert calls == []
+    assert threads, "the cached check must have run the loader's validator"
+    assert threading.get_ident() not in threads
 
 
 # ---------------------------------------------------------------------------

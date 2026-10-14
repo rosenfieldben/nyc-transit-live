@@ -841,6 +841,15 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     below: the error escaped load_njt_static and took every station down for the
     cache's 30-day life, the exact trade this arm exists to refuse.
 
+    AND SO IS ONE THAT CANNOT EVEN BE OPENED, which the read's tuple does not see
+    because ZipFile.open raises before any byte is read: BadZipFile for a damaged
+    local header, NotImplementedError for a compression method this Python cannot
+    inflate, RuntimeError for a member flagged encrypted. Caught at the open with the
+    same consequence (found by the review of claude/a02-publication-validation: a
+    promoted publication whose shapes.txt could not be opened either took the whole
+    cache down through the residual arm or escaped it entirely). EOFError is the read's
+    truncated-member case.
+
     NOTHING BEFORE THIS PARSE OPENS shapes.txt. The publication gate
     (validate_njt_publication) parses every REQUIRED member and deliberately not this
     one, since a publication without usable geometry is still promoted (15c), so a
@@ -861,11 +870,23 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     except KeyError:
         logger.info("NJ Transit publication carries no shapes.txt; route lines will be empty")
         return {}
+    except (zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError) as exc:
+        logger.warning(
+            "NJ Transit shapes.txt cannot be opened (%s); serving without route lines", exc
+        )
+        return {}
     started = time.monotonic()
     try:
         with member as raw:
             shapes = _parse_shapes(raw, wanted)
-    except (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, OSError) as exc:
+    except (
+        UnicodeDecodeError,
+        csv.Error,
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        OSError,
+    ) as exc:
         logger.warning("NJ Transit shapes.txt is unreadable (%s); serving without route lines", exc)
         return {}
     logger.info(
@@ -1032,11 +1053,11 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. A freshly promoted archive
         # reaches here only through a member the publication gate does not parse:
         # validate_njt_publication parses every REQUIRED member, and shapes.txt,
-        # the one optional member, is never opened before the load. Its failures
-        # are caught in _parse_shapes_member and degrade to no route lines, so this
-        # arm sees the required members only, and only from a cache that changed
-        # after it was checked (the light validator a load runs does not open
-        # stop_times.txt).
+        # the one optional member, is never opened before the load. Its open and read
+        # failures (the classes _parse_shapes_member names) are caught there and
+        # degrade to no route lines, so this arm sees the required members only, and
+        # only from a cache that changed after it was checked (the light validator a
+        # load runs does not open stop_times.txt).
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

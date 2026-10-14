@@ -12,6 +12,7 @@ import json
 import os
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import httpx
@@ -470,8 +471,13 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
             static_data.validate_subway_archive(zf)
     assert str(err.value).startswith("stop_times.txt is not readable")
 
-    with pytest.raises(Exception):
+    # And with validation bypassed, the load's own read of the same bytes fails as a
+    # damaged member fails (zlib.error from inflate, or BadZipFile if the damage lands
+    # where the CRC sees it first), and the residual arm discards the cache: the
+    # classes A02b added to the subway's tuple, pinned for the subway.
+    with pytest.raises((zlib.error, zipfile.BadZipFile)):
         static_data.load_subway_station_routes()
+    assert not gtfs_zip.exists(), "an archive the load cannot read must not stay the cache"
 
 
 @pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt", "transfers.txt"])
@@ -1082,6 +1088,43 @@ async def test_an_archive_that_passes_validation_and_fails_the_load_is_discarded
     # Exactly one download, made after the failed attempt discarded the cache.
     assert seen_at_download == [(False, "failed")]
     assert app.state.subway_station_routes == {"101": ["1"]}
+
+
+RESIDUAL_SITES = {
+    # site: (the reader only that load path uses, the call that reaches it)
+    "stops": ("_parse_stops_rows", lambda: asyncio.run(static_data.load_subway_stops())),
+    "station routes": ("_parse_child_to_parent", lambda: static_data.load_subway_station_routes()),
+    "station complexes": (
+        "_parse_transfer_pairs",
+        lambda: static_data.load_subway_station_complexes(),
+    ),
+}
+
+
+@pytest.mark.parametrize("site", sorted(RESIDUAL_SITES))
+def test_every_cached_read_the_residual_arm_wraps_discards_an_unreadable_cache(
+    gtfs_zip, monkeypatch, site
+):
+    """D3 AT EACH SITE. The arm wraps three reads of the cached archive: the stops parse
+    in load_subway_stops, the routes-per-station index and the complex index. At each,
+    a reader the validator does not share is made to fail with a parse-class error on a
+    cache the validator accepts (valid and fresh, so no download), and the cache must be
+    gone afterwards, so the next attempt downloads instead of failing on the same bytes
+    for a month. The warmup-level test above drives one site end to end; this pins all
+    three, since removing the arm from any one of them left every other test green."""
+    write_loadable_gtfs_zip(gtfs_zip)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)  # the premise: the validator accepts it
+    reader, call = RESIDUAL_SITES[site]
+
+    def failing(*_args):
+        raise csv.Error(f"{reader}, a reader the validator does not share, failing")
+
+    monkeypatch.setattr(static_data, reader, failing)
+
+    with pytest.raises(csv.Error):
+        call()
+    assert not gtfs_zip.exists(), f"the {site} read must discard an archive it cannot read"
 
 
 GENERATORS = {

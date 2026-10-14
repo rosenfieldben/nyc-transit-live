@@ -157,6 +157,14 @@ def validate_subway_archive(zf: zipfile.ZipFile) -> None:
     # publication bad in several places is refused without paying for stop_times.txt.
     # The generators are looked up at call time, so the load and this gate cannot be
     # handed different parsers.
+    #
+    # WHAT THE FLOOR OF ONE ROW PROVES, AND WHAT IT DOES NOT. It proves each member
+    # reads and is not empty, which is A02's question. It does not prove the members
+    # JOIN: a trips.txt whose route_id column is renamed yields rows with no route, and
+    # stop_times.txt whose trip ids match no trip yields rows too, so either passes
+    # here and the routes-per-station index the load builds from them is empty, as it
+    # was before this gate. Refusing that is a floor on the join, not on the members,
+    # and is recorded as open rather than built here.
     require_parsed(lambda: _drained(zf, "trips.txt", _iter_trip_routes), "trips.txt", "trips")
     require_parsed(
         lambda: _drained(zf, "shapes.txt", _iter_shape_points),
@@ -438,7 +446,9 @@ def _iter_trip_routes(raw: IO[bytes]) -> Iterator[tuple[str, str | None]]:
 
     THE ONE READER OF trips.txt (A02): _parse_trip_routes accumulates these rows for
     the routes-per-station index and validate_subway_archive drains them to a count, so
-    an archive whose trips.txt the index cannot read is refused before it is promoted.
+    an archive whose trips.txt the index cannot read, or that holds no trip, is refused
+    before it is promoted. Rows that read but name no route still count (see the
+    validator on what its floor does not prove).
     """
     reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
     for row in reader:

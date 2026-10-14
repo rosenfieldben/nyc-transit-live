@@ -801,10 +801,13 @@ async def part_d() -> dict:
     # directories the app never imports are skipped: tests/, and scripts/, whose tools
     # run as their own processes (measure_subway_validation.py schedules the real subway
     # warmup in its own event loop to time it, as the audit scripts under docs/ do).
+    # Matched on the path BELOW backend/, never the absolute one: a checkout that sits
+    # under a directory named tests or scripts would otherwise skip every file and pass
+    # this check vacuously.
     other_sites: list[str] = []
     done_callbacks: list[str] = []
     for py in sorted(BACKEND.glob("*.py")) + sorted(BACKEND.glob("*/*.py")):
-        if "tests" in py.parts or "scripts" in py.parts:
+        if py.relative_to(BACKEND).parts[0] in ("tests", "scripts"):
             continue
         text = py.read_text(encoding="utf-8")
         for i, line in enumerate(text.splitlines(), start=1):

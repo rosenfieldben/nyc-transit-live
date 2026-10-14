@@ -129,9 +129,12 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
 
     THE MESSAGE NAMES THE MEMBER AND CARRIES THE READER'S OWN WORDS (A02, D7), because
     it is what an operator reads on /api/status as last_download_error. The decode and
-    CSV errors say where and what ("'utf-8' codec can't decode byte 0xff in position
-    59"), and a damaged deflate stream or a CRC mismatch inside the member says which
-    member, which the archive-level catch in validate_archive cannot. All of it is
+    CSV errors say what ("'utf-8' codec can't decode byte 0xff"), and a damaged deflate
+    stream or a CRC mismatch inside the member says which member, which the
+    archive-level catch in validate_archive cannot. Not where: a decode error's
+    "position" counts from the start of the chunk the text reader was decoding, not
+    from the start of the member, so in a large member it does not locate the byte,
+    and a csv.Error carries no line at all. All of it is
     library text about the archive's bytes, never about our filesystem, so it is safe
     to publish (describe_failure's rule).
     """
@@ -387,10 +390,13 @@ async def staged_fetch(
         if not isinstance(exc, asyncio.CancelledError):
             _record(key, promoted=False, error=describe_failure(exc))
             if isinstance(exc, StaticValidationError):
+                # Says which of the two it is, because a cold start has no cache to keep
+                # and an operator sent looking for one at `dest` finds nothing there.
                 logger.warning(
-                    "Rejected %s publication (%s); keeping the cached archive at %s",
+                    "Rejected %s publication (%s); %s %s",
                     label,
                     exc,
+                    "keeping the cached archive at" if dest.exists() else "no cached archive at",
                     dest,
                 )
         raise

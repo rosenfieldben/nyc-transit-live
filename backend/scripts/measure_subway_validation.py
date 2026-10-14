@@ -54,9 +54,13 @@ THE SCRATCH RULE, and why it is a refusal rather than a convention. The warmup d
 here writes, promotes and deletes the subway cache, so it must never run where the
 real cache lives. The data root is redirected to <dir>/data before any backend
 module that reads it is imported, and the run refuses (exit 2, before any download)
-when that scratch cache would be the real one, when the scratch data root overlaps
-the real data root, or when --archive names the real cache. Importing this module
-does nothing: every action, the environment change included, happens in main().
+when that scratch cache would be a real one, when the scratch data root overlaps a
+real data root, or when --archive names a real cache. "Real" means both the root
+DATA_DIR resolves to and the checkout's default data/, since the invoking shell's
+DATA_DIR may be a leftover the served app never sees; and a scratch directory that is
+any checkout's root (a worktree's copy of this script pointed at the main checkout) is
+refused too. Importing this module does nothing: every action, the environment change
+included, happens in main().
 
 RUN, from the repository root:
     backend/.venv/bin/python backend/scripts/measure_subway_validation.py [DIR]
@@ -80,7 +84,7 @@ import sys
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -105,43 +109,63 @@ def _overlaps(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
-def scratch_plan(out_dir: Path, archive: Path | None, real_cache: Path) -> dict[str, Path]:
-    """Where everything goes, or Refused when any of it would touch the real cache.
+def scratch_plan(
+    out_dir: Path, archive: Path | None, real_caches: Iterable[Path]
+) -> dict[str, Path]:
+    """Where everything goes, or Refused when any of it would touch a real cache.
 
     Pure, so the rule can be tested without a download or a backend import.
-    `real_cache` is the subway cache a normal run of this checkout would use.
+    `real_caches` is every subway cache a normal run of this checkout could be using
+    (real_cache_paths says which and why); the plan must stay clear of each. Paths are
+    compared resolved, so a symlink to a real root is caught; a bind mount, which
+    reaches one directory by two unrelated paths, is not.
     """
     out_dir = out_dir.resolve()
-    real_cache = real_cache.resolve()
-    real_root = real_cache.parent.parent  # <DATA_DIR>/gtfs_static/gtfs_subway.zip
+    caches = [cache.resolve() for cache in real_caches]
     data_root = out_dir / "data"
-    scratch_cache = data_root / "gtfs_static" / real_cache.name
-    if scratch_cache == real_cache:
-        raise Refused(f"the scratch cache {scratch_cache} is the real subway cache")
-    if _overlaps(data_root, real_root):
+    scratch_cache = data_root / "gtfs_static" / caches[0].name
+    # ANY CHECKOUT, not only this one: a copy of this script in a worktree knows its own
+    # data roots, not the main checkout's, so a scratch directory that is itself a
+    # checkout's root (its data/ is that checkout's default data root) is refused by
+    # shape rather than by a list of roots that cannot be complete.
+    if (out_dir / "backend" / "env_seams.py").exists():
         raise Refused(
-            f"the scratch data root {data_root} overlaps the real data root {real_root}; "
-            "the warmup this drives writes, promotes and deletes the cache there"
+            f"{out_dir} is a checkout of this repository, and {data_root} is the data root "
+            "its served app uses"
         )
-    if archive is not None and archive.resolve() == real_cache:
-        raise Refused(f"--archive {archive} is the real subway cache; measure a scratch copy")
+    for real_cache in caches:
+        real_root = real_cache.parent.parent  # <DATA_DIR>/gtfs_static/gtfs_subway.zip
+        if scratch_cache == real_cache:
+            raise Refused(f"the scratch cache {scratch_cache} is the real subway cache")
+        if _overlaps(data_root, real_root):
+            raise Refused(
+                f"the scratch data root {data_root} overlaps the real data root {real_root}; "
+                "the warmup this drives writes, promotes and deletes the cache there"
+            )
+        if archive is not None and archive.resolve() == real_cache:
+            raise Refused(f"--archive {archive} is the real subway cache; measure a scratch copy")
     return {
         "out": out_dir,
         "data_root": data_root,
         "scratch_cache": scratch_cache,
-        "download": out_dir / real_cache.name,
+        "download": out_dir / caches[0].name,
     }
 
 
-def real_cache_path() -> Path:
-    """The subway cache this checkout uses, read through env_seams as static_data reads
-    it, BEFORE the data root is redirected (env_seams loads .env on import, which is
-    where a developer's DATA_DIR may live)."""
+def real_cache_paths() -> tuple[Path, ...]:
+    """Every subway cache this checkout could be using, read BEFORE the data root is
+    redirected: the one env_seams resolves as static_data does (DATA_DIR from the
+    environment, or from backend/.env, which env_seams loads on import), and the
+    checkout's default data/ whatever DATA_DIR says. Both, because the shell that runs
+    this can carry a DATA_DIR the served app never sees (a contract-tier tmp root left
+    exported, say), and trusting it alone left the default cache unprotected."""
     if str(BACKEND) not in sys.path:
         sys.path.insert(0, str(BACKEND))
     import env_seams
 
-    return env_seams.directory("DATA_DIR", "data") / "gtfs_static" / "gtfs_subway.zip"
+    member = Path("gtfs_static") / "gtfs_subway.zip"
+    configured = env_seams.directory("DATA_DIR", "data") / member
+    return tuple(dict.fromkeys((configured, env_seams.PROJECT_ROOT / "data" / member)))
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +596,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     out = Path(args.dir) if args.dir else Path(tempfile.mkdtemp(prefix="measure-subway-"))
     try:
-        plan = scratch_plan(out, args.archive, real_cache_path())
+        plan = scratch_plan(out, args.archive, real_cache_paths())
+        # THE ONE DOWNLOAD IS THE MTA'S, or nothing. SUBWAY_GTFS_URL is the seam the
+        # contract tier points at its simulator, and a shell that kept it exported would
+        # send this run's download there under a header that says "the real MTA
+        # publication". Read after real_cache_paths, which loads backend/.env.
+        if args.archive is None and os.environ.get("SUBWAY_GTFS_URL"):
+            raise Refused(
+                f"SUBWAY_GTFS_URL is set ({os.environ['SUBWAY_GTFS_URL']}), so the download "
+                "would not be the MTA's publication; unset it or pass --archive"
+            )
         return asyncio.run(measure(plan, args.archive, max(1, args.runs), max(1, args.attempts)))
     except Refused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

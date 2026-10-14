@@ -31,6 +31,7 @@ from __future__ import annotations
 import io
 import re
 import struct
+import threading
 import zipfile
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -1769,6 +1770,71 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
     assert zip_path.read_bytes() == publication, "a servable publication is promoted"
 
 
+def _fixture_with_unopenable_shapes(kind: str) -> bytes:
+    """The committed fixture with shapes.txt damaged so that ZipFile.open itself raises,
+    before a byte of it is read: its compression method set to Deflate64 (9), which
+    this Python cannot inflate (NotImplementedError); its encrypted flag set
+    (RuntimeError); or its local header's signature broken (BadZipFile). The central
+    directory stays readable, so every other member opens as before."""
+    payload = bytearray(
+        _zip_bytes(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(FIXTURE_DIR.iterdir())
+                if path.suffix == ".txt"
+            }
+        )
+    )
+    with zipfile.ZipFile(io.BytesIO(bytes(payload))) as zf:
+        local = zf.getinfo("shapes.txt").header_offset
+        entry = zf.start_dir
+        while payload[entry + 46 : entry + 46 + len(b"shapes.txt")] != b"shapes.txt":
+            name_len, extra_len, comment_len = struct.unpack(
+                "<HHH", payload[entry + 28 : entry + 34]
+            )
+            entry += 46 + name_len + extra_len + comment_len
+    if kind == "unsupported compression":
+        struct.pack_into("<H", payload, local + 8, 9)
+        struct.pack_into("<H", payload, entry + 10, 9)
+    elif kind == "encrypted":
+        payload[local + 6] |= 0x01
+        payload[entry + 8] |= 0x01
+    else:  # damaged local header
+        payload[local : local + 4] = b"PK\x00\x00"
+    damaged = bytes(payload)
+    expected = {
+        "unsupported compression": NotImplementedError,
+        "encrypted": RuntimeError,
+        "damaged local header": zipfile.BadZipFile,
+    }[kind]
+    with zipfile.ZipFile(io.BytesIO(damaged)) as zf, pytest.raises(expected):
+        zf.open("shapes.txt")
+    return damaged
+
+
+@golden_shapes
+@pytest.mark.parametrize("kind", ["unsupported compression", "encrypted", "damaged local header"])
+async def test_a_shapes_txt_that_will_not_open_costs_the_lines_and_nothing_else(
+    monkeypatch, tmp_path, kind
+):
+    """THE SAME PROMISE AT THE OPEN, which the read's tuple cannot see (found by the
+    review of claude/a02-publication-validation): ZipFile.open raises before the parse
+    starts. The gate never opens shapes.txt, so such a publication is promoted; the
+    load must still serve every station with no route lines, and keep the cache."""
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    publication = _fixture_with_unopenable_shapes(kind)
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(publication))
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164
+    assert data["shapes"] == {}
+    assert zip_path.read_bytes() == publication, "a servable publication is promoted and kept"
+
+
 @golden
 async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discarded(
     monkeypatch, tmp_path
@@ -1790,3 +1856,32 @@ async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discar
 
     assert await njt_static.load_njt_static(now=_FIXTURE_NOW) == {}
     assert not zip_path.exists(), "an archive the load cannot read must not stay the cache"
+
+
+async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_path):
+    """D5 AT NJ TRANSIT'S CALL SITE (audit 2026-10-12, A02 and A09), the twin of
+    test_static_shared.py's test for the other four loaders: with a valid, fresh cache
+    and no network allowed, load_njt_static's cached check must run
+    validate_njt_archive on a thread other than the one running this event loop, as
+    static_shared.cached_archive_is_usable does. Put back on the synchronous check, it
+    runs here, on the loop's thread, and fails."""
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    zip_path.write_bytes(_zip_bytes(_members()))
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
+    threads = []
+    real = njt_static.validate_njt_archive
+
+    def recording(zf, *, now=None):
+        threads.append(threading.get_ident())
+        real(zf, now=now)
+
+    monkeypatch.setattr(njt_static, "validate_njt_archive", recording)
+
+    data = await njt_static.load_njt_static(now=NOW)
+
+    assert set(data["stops"]) == {"109", "112", "38", "125"}
+    assert threads, "the cached check must have run the validator"
+    assert threading.get_ident() not in threads

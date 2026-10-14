@@ -477,6 +477,70 @@ def test_a_rejected_publication_keeps_the_cached_archive_serving(harness):
     assert archive.read_bytes() == good_bytes
 
 
+def _stations_and_index(app) -> dict[str, list[str]]:
+    """Every served station id with the routes the routes-per-station index gives it:
+    the station count and the index together, the two things an unreadable trips.txt
+    used to take down (the index is built from trips.txt and stop_times.txt)."""
+    return {stop["id"]: stop["routes"] for stop in app.get("/api/subway-stops")}
+
+
+def test_an_unreadable_trips_publication_never_costs_a_station_and_the_next_one_lands(harness):
+    """A02 against a real download over a real socket, in three app lifetimes over one
+    data directory (the refresh path is reached by backdating the cache, as above).
+
+    1. A good publication warms the subway: the stations and their routes index.
+    2. The cache ages and upstream now publishes a trips.txt holding one byte that is
+       not UTF-8. The staged download is refused at validation, by member, and the
+       group serves the cache it had: the same stations, the same index, the same
+       bytes on disk. Before claude/a02-publication-validation the validator never
+       opened trips.txt, so this publication was promoted and every warmup attempt
+       after it failed reading trips.txt: no subway at all, for the cache's life.
+    3. Upstream publishes a healthy archive again and the next start promotes it,
+       still serving the same stations and index.
+
+    Hermetic counterpart: backend/tests/test_static_data.py::
+    test_a_bad_publication_between_good_ones_never_interrupts_the_subway.
+    """
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["subway_static"] == "ready", "a good publication to warm the subway"
+        )
+        served = _stations_and_index(app)
+    assert served and any(served.values()), "the good publication should give stations an index"
+    archive = harness.data_dir / "gtfs_static" / "gtfs_subway.zip"
+    good_bytes = archive.read_bytes()
+
+    harness.age_archives()
+    harness.sim.set_publication("subway", "unreadable-trips")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("subway", {}).get("failed_downloads", 0) >= 1,
+            "the staged download of the unreadable publication to be refused",
+        )
+        app.await_status(
+            lambda s: s["subway_static"] == "ready", "the cached archive to keep serving"
+        )
+        entry = app.status()["static_archives"]["subway"]
+        assert entry["last_promoted_at"] is None, "an unreadable publication must never be promoted"
+        error = entry["last_download_error"]
+        assert error.startswith("invalid archive: trips.txt is not readable"), error
+        assert _stations_and_index(app) == served, "no station and no index entry may drop"
+    assert archive.read_bytes() == good_bytes
+
+    harness.sim.set_publication("subway", "good")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("subway", {}).get("last_promoted_at") is not None,
+            "the healthy publication to be promoted at the next start",
+        )
+        app.await_status(lambda s: s["subway_static"] == "ready", "the subway to be ready on it")
+        assert app.status()["static_archives"]["subway"]["last_download_error"] is None
+        assert _stations_and_index(app) == served
+    # FRESH, which is how the landing shows on disk: the good publication's bytes are
+    # the cache's own, so only the age the second lifetime left behind can change.
+    assert time.time() - archive.stat().st_mtime < 3600
+
+
 def test_the_station_complexes_ride_the_real_warmup_to_the_stops_endpoint(contract_app):
     """claude/subway-hub-definition, end to end over a real socket: the simulator
     publishes an archive whose transfers.txt is the MTA's own table cut to the 1/7/S
@@ -866,6 +930,40 @@ def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
         # change nothing in this process and the wait would time out. The healing
         # path is the FAILED one, and test_njt_bad_publication_stays_failed_then_heals
         # is where it belongs, because only a failed group is still asking.
+
+
+def test_njt_publication_whose_shapes_will_not_inflate_costs_the_lines_and_nothing_else(harness):
+    """A02b, the variant of the test above where shapes.txt is PRESENT and unreadable:
+    its DEFLATE stream is damaged, so reading it raises zlib.error (not the BadZipFile a
+    CRC mismatch raises). shapes.txt is still outside the NJ Transit publication gate,
+    so the publication is promoted, and the promise is the one above: every station,
+    no route lines, status ready, nothing failed. Measured against the same app's good
+    publication first, so "every station" is a set compared rather than a nonempty
+    list. Before claude/a02-publication-validation the shapes parse did not catch
+    zlib.error: it escaped the load and NJ Transit served no station at all for the
+    cache's 30-day life.
+
+    Hermetic counterpart: backend/tests/test_njt_static.py::
+    test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_else.
+    """
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "ready", "a good publication to warm NJ Transit"
+        )
+        stations = sorted(stop["id"] for stop in app.get("/api/njt-stops"))
+        assert stations and app.get("/api/njt-routes"), "the good publication draws its lines"
+
+    harness.age_archives()
+    harness.sim.set_publication("njt", "damaged-shapes")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("njt", {}).get("last_promoted_at") is not None,
+            "the publication with damaged geometry to be promoted",
+        )
+        app.await_status(lambda s: s["njt_static"] == "ready", "NJ Transit to reach ready on it")
+        assert sorted(stop["id"] for stop in app.get("/api/njt-stops")) == stations
+        assert app.get("/api/njt-routes") == [], "the lines are what damaged geometry costs"
+        assert app.status()["static_archives"]["njt"]["last_download_error"] is None
 
 
 def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):

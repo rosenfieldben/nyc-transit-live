@@ -42,6 +42,7 @@ import pytest
 import njt_auth
 import njt_static
 import route_geometry
+import static_shared
 from conftest import golden_fixture_guard
 from feeds.shared import NYC_TZ
 from static_shared import StaticValidationError, validate_archive
@@ -1769,9 +1770,12 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
     monkeypatch, tmp_path
 ):
     """THE PROMISE, at the site the finding named: a publication whose optional
-    shapes.txt raises zlib.error passes the gate (15c: shapes.txt stays out of it),
-    is promoted, and loads every station with no route lines, rather than failing
-    the whole system. Through the real staged path and load_njt_static."""
+    shapes.txt raises zlib.error passes the publication gate (shapes.txt stays out of
+    it), is promoted on this cold start with shapes.txt degraded (the geometry gate's
+    second mode, claude/static-rule-siblings D3), and loads every station with no
+    route lines, rather than failing the whole system. Through the real staged path
+    and load_njt_static. Over a cache that draws, the same publication is refused
+    (test_a_shapes_txt_that_draws_nothing_is_refused_over_lines_that_draw)."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
@@ -1785,6 +1789,182 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
     assert data["shapes"] == {}
     assert njt_static.build_njt_route_shapes(data["trips"], data["shapes"], data["routes"]) == []
     assert zip_path.read_bytes() == publication, "a servable publication is promoted"
+
+
+# ---------------------------------------------------------------------------
+# shapes.txt: the two-mode rule (claude/static-rule-siblings, D3), refining 15c
+# ---------------------------------------------------------------------------
+#
+# 15c promoted every publication whose geometry could not be drawn, so a damaged
+# shapes.txt replaced lines that drew with none for the cache's life. The member's gate,
+# validate_njt_geometry, now refuses such a publication when a cache that serves is there
+# to keep, and otherwise (a cold start, every deploy) promotes it with shapes.txt named
+# degraded; a publication without the member is degraded in both modes, as 15c decided it
+# was legitimate. Driven through the real staged path and load_njt_static, with the token
+# door answered by the fake transport (no mint reaches NJ Transit).
+
+
+def _fixture_with_shapes(body: str) -> bytes:
+    members = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(FIXTURE_DIR.iterdir())
+        if path.suffix == ".txt"
+    }
+    return _zip_bytes({**members, "shapes.txt": body})
+
+
+def _fixture_shapes_rows() -> tuple[str, list[str]]:
+    header, *rows = (FIXTURE_DIR / "shapes.txt").read_text(encoding="utf-8").splitlines()
+    return header, rows
+
+
+def _one_point_per_shape() -> bytes:
+    header, rows = _fixture_shapes_rows()
+    first: dict[str, str] = {}
+    for row in rows:
+        first.setdefault(row.split(",", 1)[0], row)
+    return _fixture_with_shapes("\n".join([header, *first.values()]) + "\n")
+
+
+def _shapes_no_trip_references() -> bytes:
+    header, rows = _fixture_shapes_rows()
+    return _fixture_with_shapes("\n".join([header, *("X" + row for row in rows)]) + "\n")
+
+
+# Each publication's shapes.txt draws nothing, and the gate says why in the member's name.
+UNDRAWABLE = {
+    "deflate damaged": (
+        lambda: _fixture_with_damaged_deflate("shapes.txt"),
+        "shapes.txt is not readable (error: ",
+    ),
+    "lzma damaged": (
+        lambda: damaged_stream(_fixture_bytes(), "shapes.txt", zipfile.ZIP_LZMA),
+        "shapes.txt is not readable (LZMAError)",
+    ),
+    "header only": (
+        lambda: _fixture_with_shapes(_fixture_shapes_rows()[0] + "\n"),
+        "shapes.txt yielded no usable route lines",
+    ),
+    "one point per shape": (_one_point_per_shape, "shapes.txt yielded no usable route lines"),
+    "no shape a trip references": (
+        _shapes_no_trip_references,
+        "shapes.txt yielded no usable route lines",
+    ),
+}
+_ABSENT = "shapes.txt is absent from the publication, which is served without it"
+
+
+@pytest.fixture
+def njt_published(monkeypatch, tmp_path):
+    """NJ Transit configured, its cache in tmp_path, and every download answered by the
+    fake transport with the bytes in njt_published["bytes"], counted."""
+    static_shared.reset_archive_status()
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    state: dict = {"bytes": None, "calls": [], "cache": zip_path}
+
+    async def transport(url, form, timeout_s):
+        state["calls"].append(url.rsplit("/", 1)[-1])
+        if url.endswith("getToken"):
+            return 200, b'{"UserToken":"t1"}'
+        return 200, state["bytes"]
+
+    monkeypatch.setattr(njt_auth, "_httpx_post", transport)
+    yield state
+    static_shared.reset_archive_status()
+
+
+def _drawn(data: dict) -> list:
+    return njt_static.build_njt_route_shapes(data["trips"], data["shapes"], data["routes"])
+
+
+@golden_shapes
+@pytest.mark.parametrize("kind", sorted(UNDRAWABLE))
+async def test_a_shapes_txt_that_draws_nothing_is_refused_over_lines_that_draw(njt_published, kind):
+    """THE FIRST MODE, never worse than what riders have. A cache whose lines draw is
+    there (stale, so a download is genuinely attempted), so the publication is refused:
+    the cache byte-identical, its 11 lines still drawn, the refusal named, nothing
+    recorded degraded. Under 15c this publication was promoted, and the lines were gone
+    until the cache aged out."""
+    import os
+
+    good = _fixture_bytes()
+    cache = njt_published["cache"]
+    cache.write_bytes(good)
+    old = cache.stat().st_mtime - (njt_static.MAX_AGE_DAYS + 10) * 86400
+    os.utime(cache, (old, old))
+    damage, reason = UNDRAWABLE[kind]
+    njt_published["bytes"] = damage()
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164 and len(_drawn(data)) == 11
+    assert cache.read_bytes() == good
+    entry = static_shared.archive_status()["njt"]
+    assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+    assert entry["last_download_error"].startswith(f"invalid archive: {reason}")
+    assert entry["degraded_members"] == {}
+
+
+@golden_shapes
+@pytest.mark.parametrize("kind", sorted(UNDRAWABLE))
+async def test_a_shapes_txt_that_draws_nothing_is_promoted_and_named_on_a_cold_start(
+    njt_published, kind
+):
+    """THE SECOND MODE, never dark over decoration: what 15c did, now named. No cache, so
+    the publication is promoted, every one of the 164 stations served with no route
+    line, and /api/status names shapes.txt degraded with the gate's words. The next load
+    over that cache serves it again with nothing sent to NJ Transit and nothing
+    discarded: the load reads around the member on every class a read can raise (the
+    lzma case raised LZMAError out of the load before claude/static-rule-siblings)."""
+    damage, reason = UNDRAWABLE[kind]
+    publication = damage()
+    njt_published["bytes"] = publication
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164 and _drawn(data) == []
+    assert njt_published["cache"].read_bytes() == publication
+    entry = static_shared.archive_status()["njt"]
+    assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+    assert list(entry["degraded_members"]) == ["shapes.txt"]
+    assert entry["degraded_members"]["shapes.txt"].startswith(reason)
+
+    again = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(again["stops"]) == 164 and _drawn(again) == []
+    assert njt_published["cache"].read_bytes() == publication, "nothing discarded"
+    assert njt_published["calls"] == ["getToken", "getGTFS"], "one mint, one download"
+
+
+@golden
+@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
+async def test_a_publication_without_shapes_is_degraded_and_never_refused(njt_published, cache):
+    """15c's own decision, kept: a publication without shapes.txt is legitimate, so it is
+    promoted in BOTH modes, over a cache that draws too, with the member named."""
+    import os
+
+    if cache == "a cache that serves":
+        njt_published["cache"].write_bytes(_fixture_bytes())
+        old = njt_published["cache"].stat().st_mtime - (njt_static.MAX_AGE_DAYS + 10) * 86400
+        os.utime(njt_published["cache"], (old, old))
+    members = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(FIXTURE_DIR.iterdir())
+        if path.suffix == ".txt"
+    }
+    publication = _zip_bytes(members, drop=("shapes.txt",))
+    njt_published["bytes"] = publication
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164 and data["shapes"] == {}
+    assert njt_published["cache"].read_bytes() == publication
+    entry = static_shared.archive_status()["njt"]
+    assert entry["last_download_error"] is None
+    assert entry["degraded_members"] == {"shapes.txt": _ABSENT}
 
 
 def _fixture_with_unopenable_shapes(kind: str) -> bytes:
@@ -1834,10 +2014,11 @@ def _fixture_with_unopenable_shapes(kind: str) -> bytes:
 async def test_a_shapes_txt_that_will_not_open_costs_the_lines_and_nothing_else(
     monkeypatch, tmp_path, kind
 ):
-    """THE SAME PROMISE AT THE OPEN, which the read's tuple cannot see (found by the
+    """THE SAME PROMISE AT THE OPEN, which a read's arm cannot see (found by the
     review of claude/a02-publication-validation): ZipFile.open raises before the parse
-    starts. The gate never opens shapes.txt, so such a publication is promoted; the
-    load must still serve every station with no route lines, and keep the cache."""
+    starts. The publication gate never opens shapes.txt and the geometry gate refuses
+    it, so on this cold start such a publication is promoted with shapes.txt degraded;
+    the load must still serve every station with no route lines, and keep the cache."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"

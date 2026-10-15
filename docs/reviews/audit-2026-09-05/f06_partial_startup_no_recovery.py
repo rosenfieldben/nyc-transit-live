@@ -252,10 +252,12 @@ async def part_a(tmp: Path) -> dict:
             aggregate_calls["n"] += 1  # one per load_railroad_static gather
         return await real_load_one(system)
 
-    async def fake_download(system: str) -> None:
+    async def fake_download(system: str, **_kwargs: object) -> None:
         """The injected fault, and only here. Metro-North's FIRST download raises;
         every later call publishes a valid archive, so a second attempt would have
-        recovered the system."""
+        recovered the system. The keywords are the loader's own (since
+        claude/static-rule-siblings it hands _download_zip its cache verdict,
+        cache_serves) and are not this fake's business: it writes the archive itself."""
         download_calls[system] += 1
         if system == "MNR" and download_calls["MNR"] == 1:
             raise RuntimeError("injected first-call-only Metro-North download failure")
@@ -337,7 +339,7 @@ async def part_a(tmp: Path) -> dict:
         aggregate_calls["n"] = 0
         gate = {"open": False}
 
-        async def gated_download(system: str) -> None:
+        async def gated_download(system: str, **_kwargs: object) -> None:
             download_calls[system] += 1
             if not gate["open"]:
                 raise RuntimeError("injected outage for both systems")

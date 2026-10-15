@@ -339,6 +339,41 @@ async def test_a_decorative_failure_over_a_cache_that_serves_is_refused(tmp_path
     assert entry["degraded_members"] == {}
 
 
+@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
+async def test_an_absent_decorative_member_is_degraded_in_both_modes(tmp_path, cache):
+    """DecorationAbsent (claude/static-rule-siblings, D3): the railroad's stop_times.txt
+    and NJ Transit's shapes.txt are members their loaders document as legitimately
+    absent, so a publication without one is promoted whatever the cache, never refused,
+    and the member is named degraded with the gate's words. Over a cache that serves,
+    the ordinary failure (present and unreadable) is refused, the case above; absence
+    is not that case."""
+    dest = tmp_path / "gtfs.zip"
+    if cache == "a cache that serves":
+        dest.write_bytes(good_archive())
+
+    def decoration(zf):
+        static_shared.require_decoration(zf, "stop_times.txt")
+
+    payload = good_archive(drop=("stop_times.txt",))
+    await static_shared.staged_fetch(
+        "https://example.invalid/gtfs.zip",
+        dest,
+        accept_all,
+        key="k",
+        label="test archive",
+        download=publisher(payload),
+        validate_when_replacing=decoration,
+        cache_serves=cache == "a cache that serves",
+    )
+    assert dest.read_bytes() == payload
+    entry = static_shared.archive_status()["k"]
+    assert entry["last_download_error"] is None and entry["failed_downloads"] == 0
+    assert entry["degraded_members"] == {
+        "stop_times.txt": "stop_times.txt is absent from the publication, which is served "
+        "without it"
+    }
+
+
 async def test_a_cache_the_always_gate_refuses_is_no_cache_to_keep(tmp_path):
     """The rule asks whether the cache PASSES the always-gate, not whether a file exists:
     an unreadable one is nothing to keep serving, so the publication is promoted over it
@@ -1010,9 +1045,14 @@ async def _drive_to_ready(app, field):
 # Every (loader, member) whose load REQUIRES the member, so a rotted cache there used to
 # be "usable" at the light check and then fail every load: trips.txt and stop_times.txt,
 # the two the light checks only checked for presence (the subway's since A02, NJ
-# Transit's stop_times.txt the ledger's own aside).
+# Transit's stop_times.txt the ledger's own aside). Not the railroad's stop_times.txt,
+# which is DECORATIVE (D3): a cache whose index member rots is served without the index,
+# test_railroad_static.py's case.
 DEEP_REQUIRED = [
-    (loader, member) for loader in FIVE_LOADERS for member in ("trips.txt", "stop_times.txt")
+    (loader, member)
+    for loader in FIVE_LOADERS
+    for member in ("trips.txt", "stop_times.txt")
+    if (loader.name, member) != ("railroad", "stop_times.txt")
 ]
 DEEP_REQUIRED_IDS = [f"{loader.name}-{member}" for loader, member in DEEP_REQUIRED]
 

@@ -994,7 +994,12 @@ def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
     says nothing. What this asserts is empty ROUTES beside a ready STATUS and served
     STATIONS, which is the combination no other state produces.
 
-    Hermetic counterpart: backend/tests/test_njt_static.py's shapes-absent arm.
+    NAMED, since claude/static-rule-siblings (D3): the member's own gate records a
+    publication without it as degraded (in both modes; absence is never refused), so
+    /api/status says which member the archive serving was promoted without.
+
+    Hermetic counterpart: backend/tests/test_njt_static.py::
+    test_a_publication_without_shapes_is_degraded_and_never_refused.
     """
     harness.sim.set_publication("njt", "no-shapes")
     with harness.launch() as app:
@@ -1011,6 +1016,9 @@ def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
         # downstream is waiting for a retry that will fix it.
         assert app.status()["static_archives"]["njt"]["last_promoted_at"] is not None
         assert app.status()["static_archives"]["njt"]["last_download_error"] is None
+        assert app.status()["static_archives"]["njt"]["degraded_members"] == {
+            "shapes.txt": "shapes.txt is absent from the publication, which is served without it"
+        }
 
         # AND THE REST OF NJ TRANSIT IS UNTOUCHED, which is what "additive" has to
         # mean if it means anything: the realtime side keeps polling and serving
@@ -1032,38 +1040,132 @@ def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
         # is where it belongs, because only a failed group is still asking.
 
 
-def test_njt_publication_whose_shapes_will_not_inflate_costs_the_lines_and_nothing_else(harness):
-    """A02b, the variant of the test above where shapes.txt is PRESENT and unreadable:
-    its DEFLATE stream is damaged, so reading it raises zlib.error (not the BadZipFile a
-    CRC mismatch raises). shapes.txt is still outside the NJ Transit publication gate,
-    so the publication is promoted, and the promise is the one above: every station,
-    no route lines, status ready, nothing failed. Measured against the same app's good
-    publication first, so "every station" is a set compared rather than a nonempty
-    list. Before claude/a02-publication-validation the shapes parse did not catch
-    zlib.error: it escaped the load and NJ Transit served no station at all for the
-    cache's 30-day life.
+def test_damaged_njt_geometry_degrades_on_a_cold_start_and_is_refused_over_lines(harness):
+    """THE TWO-MODE RULE FOR NJ TRANSIT'S shapes.txt (claude/static-rule-siblings, D3),
+    end to end, in three app lifetimes over one data directory, the subway scenario's
+    shape. The publication's shapes.txt is PRESENT and unreadable: its DEFLATE stream is
+    damaged, so reading it raises zlib.error (A02b's shape).
 
-    Hermetic counterpart: backend/tests/test_njt_static.py::
-    test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_else.
+    1. A cold start (every deploy) on it: promoted, every station served, no route
+       line, and /api/status names shapes.txt degraded with the gate's words. Never
+       dark over decoration; this is what 15c did, now named.
+    2. A good publication at the next start brings the lines back and clears it.
+    3. The damaged one again, over that cache: refused, the lines keep drawing, the
+       refusal named. Never worse than what riders have; under 15c this publication
+       was promoted here too, and the lines were gone for the cache's life.
+
+    Hermetic counterparts: backend/tests/test_njt_static.py::
+    test_a_shapes_txt_that_draws_nothing_is_promoted_and_named_on_a_cold_start and
+    test_a_shapes_txt_that_draws_nothing_is_refused_over_lines_that_draw.
     """
+    harness.sim.set_publication("njt", "damaged-shapes")
+    with harness.launch() as app:
+        app.await_status(lambda s: s["njt_static"] == "ready", "NJ Transit on a cold start")
+        entry = app.status()["static_archives"]["njt"]
+        assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+        assert list(entry["degraded_members"]) == ["shapes.txt"]
+        assert entry["degraded_members"]["shapes.txt"].startswith("shapes.txt is not readable")
+        stations = sorted(stop["id"] for stop in app.get("/api/njt-stops"))
+        assert stations, "damaged geometry costs no station"
+        assert app.get("/api/njt-routes") == []
+
+    harness.age_archives()
+    harness.sim.set_publication("njt", "good")
     with harness.launch() as app:
         app.await_status(
-            lambda s: s["njt_static"] == "ready", "a good publication to warm NJ Transit"
+            lambda s: s["static_archives"].get("njt", {}).get("last_promoted_at") is not None,
+            "the good publication to be promoted at the next start",
         )
-        stations = sorted(stop["id"] for stop in app.get("/api/njt-stops"))
-        assert stations and app.get("/api/njt-routes"), "the good publication draws its lines"
+        app.await_status(lambda s: s["njt_static"] == "ready", "NJ Transit on it")
+        assert app.status()["static_archives"]["njt"]["degraded_members"] == {}
+        lines = app.get("/api/njt-routes")
+        assert lines, "a good publication draws its lines"
+        assert sorted(stop["id"] for stop in app.get("/api/njt-stops")) == stations
 
     harness.age_archives()
     harness.sim.set_publication("njt", "damaged-shapes")
     with harness.launch() as app:
         app.await_status(
-            lambda s: s["static_archives"].get("njt", {}).get("last_promoted_at") is not None,
-            "the publication with damaged geometry to be promoted",
+            lambda s: s["static_archives"].get("njt", {}).get("failed_downloads", 0) >= 1,
+            "the damaged publication to be refused over lines that draw",
         )
-        app.await_status(lambda s: s["njt_static"] == "ready", "NJ Transit to reach ready on it")
+        app.await_status(lambda s: s["njt_static"] == "ready", "the cache to keep serving")
+        entry = app.status()["static_archives"]["njt"]
+        assert entry["last_promoted_at"] is None
+        assert entry["last_download_error"].startswith(
+            "invalid archive: shapes.txt is not readable"
+        )
+        assert entry["degraded_members"] == {}
+        assert app.get("/api/njt-routes") == lines, "the lines riders had keep drawing"
         assert sorted(stop["id"] for stop in app.get("/api/njt-stops")) == stations
-        assert app.get("/api/njt-routes") == [], "the lines are what damaged geometry costs"
-        assert app.status()["static_archives"]["njt"]["last_download_error"] is None
+
+
+def _railroad_index(app, system: str) -> dict[str, list[str]]:
+    return {
+        stop["id"]: stop["routes"]
+        for stop in app.get("/api/railroad-stops")
+        if stop["system"] == system
+    }
+
+
+def test_a_damaged_railroad_index_degrades_on_a_cold_start_and_is_refused_over_one(harness):
+    """THE TWO-MODE RULE FOR THE RAILROADS' stop_times.txt (claude/static-rule-siblings,
+    D3), which feeds only the routes-per-station index, in the same three lifetimes. LIRR
+    publishes a stop_times.txt whose DEFLATE stream is damaged.
+
+    1. Cold: LIRR is promoted and serves every stop with an empty index, and /api/status
+       names stop_times.txt degraded. Before D3 the publication gate parsed the member
+       strictly, so this publication was refused and LIRR was off the map on a cold start.
+    2. A good publication at the next start builds the index and clears it.
+    3. The damaged one again, over that cache: refused, and the index keeps serving.
+
+    Hermetic counterparts: backend/tests/test_railroad_static.py::
+    test_a_stop_times_that_cannot_index_is_promoted_and_named_on_a_cold_start and
+    test_a_stop_times_that_cannot_index_is_refused_over_a_cache_that_serves.
+    """
+    harness.sim.set_publication("lirr", "damaged-stop-times")
+    with harness.launch() as app:
+        app.await_status(lambda s: s["railroad_static"] == "ready", "the railroads, cold")
+        entry = app.status()["static_archives"]["railroad_LIRR"]
+        assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+        assert list(entry["degraded_members"]) == ["stop_times.txt"]
+        assert entry["degraded_members"]["stop_times.txt"].startswith(
+            "stop_times.txt is not readable"
+        )
+        stops = _railroad_index(app, "LIRR")
+        assert stops, "a damaged index costs no stop"
+        assert not any(stops.values()), "and the index is what it costs"
+        assert any(_railroad_index(app, "MNR").values()), "Metro-North is untouched"
+
+    harness.age_archives()
+    harness.sim.set_publication("lirr", "good")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: (
+                s["static_archives"].get("railroad_LIRR", {}).get("last_promoted_at") is not None
+            ),
+            "the good LIRR publication to be promoted at the next start",
+        )
+        app.await_status(lambda s: s["railroad_static"] == "ready", "the railroads on it")
+        assert app.status()["static_archives"]["railroad_LIRR"]["degraded_members"] == {}
+        index = _railroad_index(app, "LIRR")
+        assert any(index.values()), "a good publication builds the index"
+
+    harness.age_archives()
+    harness.sim.set_publication("lirr", "damaged-stop-times")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["static_archives"].get("railroad_LIRR", {}).get("failed_downloads", 0) >= 1,
+            "the damaged publication to be refused over an index that serves",
+        )
+        app.await_status(lambda s: s["railroad_static"] == "ready", "the cache to keep serving")
+        entry = app.status()["static_archives"]["railroad_LIRR"]
+        assert entry["last_promoted_at"] is None
+        assert entry["last_download_error"].startswith(
+            "invalid archive: stop_times.txt is not readable"
+        )
+        assert entry["degraded_members"] == {}
+        assert _railroad_index(app, "LIRR") == index, "the index riders had keeps serving"
 
 
 def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):

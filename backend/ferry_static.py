@@ -119,7 +119,7 @@ def validate_ferry_publication(zf: zipfile.ZipFile) -> None:
     failed every load until MAX_AGE_DAYS.
 
     What it costs, measured by backend/scripts/measure_static_gates.py on the
-    publication of 2026-10-12: 12.6 ms (median of five), against 0.3 ms for the first
+    publication of 2026-10-12: 13.3 ms (median of five), against 0.3 ms for the first
     stage alone. It runs off the serving loop (static_shared.cached_archive_is_usable),
     at each process start and when the cache is re-checked.
     """

@@ -69,6 +69,29 @@ class StaticValidationError(Exception):
         self.member = member
 
 
+class DecorationAbsent(StaticValidationError):
+    """A DECORATIVE member the publication does not carry, raised by a loader's
+    `validate_when_replacing` gate through require_decoration.
+
+    staged_fetch records it as a degraded member in BOTH modes and never refuses over
+    it (claude/static-rule-siblings, D3): the loaders that raise it (the railroad's
+    stop_times.txt, NJ Transit's shapes.txt) document an archive without the member as
+    a legitimate publication, served without the layer the member draws, and a gate
+    that refused one over a cache would be calling legitimate what it then rejects.
+    A member that is present and unreadable, or reads to nothing, is the two-mode
+    rule's ordinary case and raises a plain StaticValidationError."""
+
+
+def require_decoration(zf: zipfile.ZipFile, member: str) -> None:
+    """The decorative member must be present, or the publication is served without it:
+    DecorationAbsent, which staged_fetch records as degraded in either mode."""
+    if member not in set(zf.namelist()):
+        raise DecorationAbsent(
+            f"{member} is absent from the publication, which is served without it",
+            member=member,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Validator helpers. Loaders compose these; the pipeline never calls them itself.
 # ---------------------------------------------------------------------------
@@ -156,6 +179,17 @@ UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
     KeyError,
     EOFError,
 )
+
+# EVERYTHING READING ONE MEMBER CAN RAISE, the classes read_or_refuse maps to a refusal
+# by name: the archive's own (above) and the rest (_OTHER_READ_ERRORS: bzip2's plain
+# OSError, LZMAError, a method this build lacks, an encrypted member, EINVAL, and the
+# environment's OSError). It is what a DECORATIVE member's read at load degrades on
+# (the railroad's stop_times.txt, NJ Transit's shapes.txt): such a read discards
+# nothing, so the environment's faults may degrade it too, and a class missing here is
+# a class that raises out of the load on every attempt. NJ Transit's shapes arm named
+# its own list and lacked LZMAError, so a damaged lzma shapes.txt did exactly that (the
+# review's walk on claude/static-rule-siblings).
+UNREADABLE_MEMBER: tuple[type[BaseException], ...] = UNREADABLE_AT_LOAD + _OTHER_READ_ERRORS
 
 
 def read_or_refuse(parse: Callable[[], _Parsed], member: str) -> _Parsed:
@@ -496,8 +530,13 @@ async def staged_fetch(
         reason, published on /api/status. Refusing it would trade every station for
         the lines, and the loader of the decorative layer degrades to nothing as it
         always has.
-    NJ Transit passes nothing here: its shapes.txt is outside every gate and degrades
-    in its loader (15c).
+    THE SIBLINGS' DECORATIVE MEMBERS take the same rule since claude/static-rule-siblings
+    (D3): the railroad's stop_times.txt (the routes-per-station index) and NJ Transit's
+    shapes.txt (its route lines, where 15c had promoted any publication without usable
+    geometry). One difference from the subway's gate, decided for those two: a member
+    the publication does not carry at all raises DecorationAbsent, which is degraded in
+    BOTH modes and never refused, because both loaders document its absence as a
+    legitimate publication.
 
     WHOSE VERDICT DECIDES THE MODE: the caller's, when it has one. `cache_serves` is
     what the loader concluded about `dest` with `validate` at the start of this attempt
@@ -536,6 +575,11 @@ async def staged_fetch(
         if validate_when_replacing is not None:
             try:
                 await asyncio.to_thread(validate_archive, stage, validate_when_replacing)
+            except DecorationAbsent as exc:
+                # Legitimate without it (see DecorationAbsent): degraded, whatever the
+                # cache, and named on the status like any other degraded member.
+                degraded[exc.member or "archive"] = str(exc)
+                logger.info("Promoting %s publication without a decorative member (%s)", label, exc)
             except StaticValidationError as exc:
                 if cache_serves is None:
                     cache_serves = await cached_archive_is_usable(dest, validate)

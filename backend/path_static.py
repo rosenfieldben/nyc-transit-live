@@ -125,8 +125,8 @@ def validate_path_publication(zf: zipfile.ZipFile) -> None:
     failed every load until MAX_AGE_DAYS.
 
     What it costs, measured by backend/scripts/measure_static_gates.py on the
-    publication Trillium has served since 2025-06-06: 808 ms (median of five; 153,927
-    stop_times rows), against 0.5 ms for the first stage alone. It runs off the serving
+    publication Trillium has served since 2025-06-06: 874 ms (median of five; 153,927
+    stop_times rows), against 0.4 ms for the first stage alone. It runs off the serving
     loop (static_shared.cached_archive_is_usable), at each process start and when the
     cache is re-checked.
     """

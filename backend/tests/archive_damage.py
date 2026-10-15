@@ -104,9 +104,15 @@ def bad_central_directory_offset(archive: bytes) -> bytes:
     bit flipped). zipfile still opens and lists it, since it finds the directory by its
     size from the end, and then every member read seeks to the rotted offset: on a file
     on disk that is OSError(EINVAL), errno and all, so no test on OSError's errno tells
-    it from the environment's faults (the A02 branch's second review round measured it)."""
+    it from the environment's faults (the A02 branch's second review round measured it).
+
+    The flip has to ADD to the offset, which makes zipfile's correction for data before
+    the archive negative and every seek invalid; one that cleared a set bit would seek
+    past the end instead and read as BadZipFile. Every fixture here is far below the
+    4 MiB the bit is worth, and the assertion keeps it that way."""
     raw = bytearray(archive)
     eocd = raw.rfind(b"PK\x05\x06")
     offset = int.from_bytes(raw[eocd + 16 : eocd + 20], "little")
+    assert not offset & 0x00400000, "the rot must add to the offset, so the archive under 4 MiB"
     raw[eocd + 16 : eocd + 20] = (offset ^ 0x00400000).to_bytes(4, "little")
     return bytes(raw)

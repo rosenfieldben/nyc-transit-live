@@ -24,7 +24,8 @@ from pathlib import Path
 import pytest
 
 import railroad_static
-from tests.archive_damage import damaged_stream, rot_after_the_check
+import static_shared
+from tests.archive_damage import damaged_stream, rot_after_the_check, undecodable_deep_in
 
 pytestmark = pytest.mark.anyio
 
@@ -502,7 +503,7 @@ def test_parse_system_shapes_ordered_and_rounded(tmp_path):
 async def test_fresh_cache_parsed_without_downloading(rail_paths, monkeypatch):
     write_railroad_zip(rail_paths["LIRR"])
 
-    async def fail(system):  # any download attempt is a test failure
+    async def fail(system, **_kwargs):  # any download attempt is a test failure
         raise AssertionError("should not download with a fresh cache")
 
     monkeypatch.setattr(railroad_static, "_download_zip", fail)
@@ -544,7 +545,7 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(
     make_bad_cache(rail_paths["LIRR"])  # fresh mtime; only the recovery download should fire
     calls = []
 
-    async def fake_download(system):
+    async def fake_download(system, **_kwargs):
         calls.append(system)
         write_railroad_zip(rail_paths[system])
 
@@ -599,6 +600,169 @@ async def test_one_systems_unreadable_cache_leaves_the_other_serving(rail_paths,
     assert downloads == ["MNR"]
     assert result["MNR"] is not None and "8" in result["MNR"]["stops"]
     assert result["LIRR"] is not None
+
+
+# ---------------- stop_times.txt: the two-mode rule (claude/static-rule-siblings, D3) ----------
+#
+# The member feeds only the routes-per-station index, so it is DECORATIVE: its gate
+# (validate_railroad_stop_times) refuses a publication whose stop_times.txt cannot build
+# the index when a cache that serves is there to keep, and otherwise promotes it with the
+# member named degraded; an absent one is degraded in both modes. Driven through the real
+# staged_fetch, the real gates and the real _load_one, with only the transfer injected.
+
+INDEX_STOP_TIME_ROWS = [
+    {"trip_id": "GO5_1", "stop_id": "8", "stop_sequence": "1"},
+    {"trip_id": "GO5_1", "stop_id": "12", "stop_sequence": "2"},
+]
+
+
+def railroad_archive(*, stop_times=True) -> bytes:
+    """A railroad archive both gates pass, as bytes: write_railroad_zip's members plus a
+    stop_times.txt that builds an index, or none."""
+    members = {
+        "stops.txt": csv_text(STOPS_COLS, STOP_ROWS),
+        "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, DEFAULT_SHAPE_ROWS),
+        "routes.txt": csv_text(ROUTES_COLS, ROUTE_ROWS),
+    }
+    if stop_times:
+        members["stop_times.txt"] = csv_text(STOP_TIMES_COLS, INDEX_STOP_TIME_ROWS)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _header_only_stop_times(archive: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(buf, "w") as target:
+        for info in source.infolist():
+            body = source.read(info.filename)
+            if info.filename == "stop_times.txt":
+                body = body.split(b"\n", 1)[0] + b"\n"
+            target.writestr(info.filename, body)
+    return buf.getvalue()
+
+
+# Each publication's stop_times.txt cannot build the index, and the gate says why in the
+# member's own name.
+UNINDEXABLE = {
+    "deflate damaged": (
+        lambda good: damaged_stream(good, "stop_times.txt"),
+        "stop_times.txt is not readable (error: ",
+    ),
+    "lzma damaged": (
+        lambda good: damaged_stream(good, "stop_times.txt", zipfile.ZIP_LZMA),
+        "stop_times.txt is not readable (LZMAError)",
+    ),
+    "undecodable": (
+        lambda good: undecodable_deep_in(good, "stop_times.txt"),
+        "stop_times.txt is not readable as CSV (",
+    ),
+    "header only": (_header_only_stop_times, "stop_times.txt yielded no usable stop times"),
+}
+
+
+@pytest.fixture
+def published(monkeypatch):
+    """Every railroad download publishes the bytes in published["bytes"] through the real
+    staged_fetch (its gates, its promotion, its record), counted per system."""
+    static_shared.reset_archive_status()
+    state = {"bytes": None, "downloads": []}
+    real = static_shared.staged_fetch
+
+    async def fetch(url, dest, validate, **kwargs):
+        state["downloads"].append(dest.stem)
+
+        async def transfer(_url, stage, _deadline_s):
+            stage.write_bytes(state["bytes"])
+
+        await real(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(railroad_static, "staged_fetch", fetch)
+    yield state
+    static_shared.reset_archive_status()
+
+
+@pytest.mark.parametrize("kind", sorted(UNINDEXABLE))
+async def test_a_stop_times_that_cannot_index_is_refused_over_a_cache_that_serves(
+    rail_paths, published, kind
+):
+    """The first mode: never worse than what riders already have. A cache whose index
+    builds is there, so the publication is refused, the cache byte-identical and its
+    index still served, the refusal named, and nothing recorded degraded about the
+    archive still serving. Before D3 the same publication was refused too, by the
+    publication gate's strict parse; now it is the decorative gate's refusal."""
+    good = railroad_archive()
+    rail_paths["LIRR"].write_bytes(good)
+    age_file(rail_paths["LIRR"], days=40)  # stale, so the download is genuinely attempted
+    damage, reason = UNINDEXABLE[kind]
+    published["bytes"] = damage(good)
+
+    data = await railroad_static._load_one("LIRR")
+
+    assert data is not None and data["stop_times"] == {"GO5_1": ["8", "12"]}
+    assert rail_paths["LIRR"].read_bytes() == good
+    entry = static_shared.archive_status()["railroad_LIRR"]
+    assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+    assert entry["last_download_error"].startswith(f"invalid archive: {reason}")
+    assert entry["degraded_members"] == {}
+
+
+@pytest.mark.parametrize("kind", sorted(UNINDEXABLE))
+async def test_a_stop_times_that_cannot_index_is_promoted_and_named_on_a_cold_start(
+    rail_paths, published, kind
+):
+    """The second mode: never dark over decoration. No cache (every deploy), so the
+    publication is promoted, the system serves every stop and train with an empty
+    routes-per-station index, and /api/status names stop_times.txt degraded with the
+    gate's words. Before D3 it was refused, and the system was absent from the map until
+    upstream republished. The next load reads the promoted archive again (the cached
+    check does not open the member, and the load reads around it) with no download and
+    nothing discarded: a damaged index member never reaches the residual arm."""
+    damage, reason = UNINDEXABLE[kind]
+    publication = damage(railroad_archive())
+    published["bytes"] = publication
+
+    data = await railroad_static._load_one("LIRR")
+
+    assert data is not None and set(data["stops"]) == {"8", "12"}
+    assert data["stop_times"] == {}
+    assert rail_paths["LIRR"].read_bytes() == publication
+    entry = static_shared.archive_status()["railroad_LIRR"]
+    assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+    assert list(entry["degraded_members"]) == ["stop_times.txt"]
+    assert entry["degraded_members"]["stop_times.txt"].startswith(reason)
+
+    again = await railroad_static._load_one("LIRR")
+
+    assert again is not None and set(again["stops"]) == {"8", "12"}
+    assert rail_paths["LIRR"].read_bytes() == publication, "nothing discarded"
+    assert published["downloads"] == ["gtfs_lirr"]
+
+
+@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
+async def test_an_absent_stop_times_is_degraded_and_never_refused(rail_paths, published, cache):
+    """Absence is a legitimate publication for this loader (it always served one without
+    the index), so it is degraded in BOTH modes: promoted over a cache that serves, too,
+    with the member named."""
+    if cache == "a cache that serves":
+        rail_paths["LIRR"].write_bytes(railroad_archive())
+        age_file(rail_paths["LIRR"], days=40)
+    publication = railroad_archive(stop_times=False)
+    published["bytes"] = publication
+
+    data = await railroad_static._load_one("LIRR")
+
+    assert data is not None and data["stop_times"] == {}
+    assert rail_paths["LIRR"].read_bytes() == publication
+    entry = static_shared.archive_status()["railroad_LIRR"]
+    assert entry["last_download_error"] is None
+    assert entry["degraded_members"] == {
+        "stop_times.txt": "stop_times.txt is absent from the publication, which is served "
+        "without it"
+    }
 
 
 # ---------------- build_railroad_route_shapes (synthetic parsed tables) ----------------

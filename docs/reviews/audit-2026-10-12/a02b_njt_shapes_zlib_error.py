@@ -38,16 +38,22 @@ of load_njt_static with 0 repair downloads, and so did all 30 attempts sampled a
 the cache's 30-day life; NJ Transit was 'failed' with 0 of 164 stations served. The
 CRC-caught control (BadZipFile) degraded as promised, to 164 stations and 0 lines.
 
-AFTER, asserted: the same publication passes the gate and is promoted (unchanged, by
-the 15c decision), and the warmup reaches ready on attempt 1 with 1 download, 164 of
-164 stations and 0 route lines. WHAT REMAINS, measured and recorded rather than fixed:
+AFTER, asserted: the same publication passes the gate and is promoted on a cold start,
+and the warmup reaches ready on attempt 1 with 1 download, 164 of 164 stations and 0
+route lines. SINCE claude/static-rule-siblings (D3) THE TWO-MODE RULE REFINES 15c: a
+second gate, validate_njt_geometry, asks whether shapes.txt draws a line, and its
+verdict depends on the cache. With no cache that serves (this cold start) the
+publication is promoted as before and /api/status names shapes.txt in the archive's
+degraded_members, so the lost lines are reported rather than silent; over a cache that
+draws, the same publication is refused and the lines riders have keep drawing (section
+6). WHAT REMAINS, measured and recorded rather than fixed:
 the lines stay gone for the cache's life, because the age policy, not the parse,
 decides when the archive is fetched again (a start 29 days later downloads nothing and
 draws no lines; one 30 days and an hour later re-fetches and the lines return). A CACHE
 WHOSE REQUIRED stop_times.txt CARRIES THE SAME DAMAGE: since claude/static-rule-siblings
 (D2) the cached check runs the publication gate, which parses that member, so such a
 cache is refused at the check, named by member, and attempt 1 downloads and reaches
-ready (section 6). On claude/a02-publication-validation the check was the light
+ready (section 7). On claude/a02-publication-validation the check was the light
 validator, which never opened the member: the cache was called usable, the residual arm
 discarded it on attempt 1, and attempt 2 downloaded. The arm itself is pinned since then
 by the unit tests (backend/tests/test_njt_static.py), on a cache that rots after its
@@ -61,8 +67,9 @@ WHAT IS PRODUCTION CODE HERE (unmodified, called as the app calls it):
     _download_zip, _parse_zip and the residual arm under the parse.
   * The staged publication path: njt_static._download_zip ->
     static_shared.staged_fetch -> njt_static._download_via_token (real) ->
-    static_shared.validate_archive -> njt_static.validate_njt_publication -> promote,
-    with static_shared's real per-archive record.
+    static_shared.validate_archive -> njt_static.validate_njt_publication, then
+    njt_static.validate_njt_geometry in the mode the loader's verdict on the cache
+    sets -> promote or refuse, with static_shared's real per-archive record.
   * njt_static._parse_open and its shapes.txt parse, reached through the load.
   * The served surfaces, through the real ASGI app (httpx.ASGITransport, no
     lifespan): GET /api/njt-stops, GET /api/njt-routes and GET /api/status (its
@@ -472,7 +479,7 @@ DAMAGED_OFFSET = 0
 
 # DAMAGED_STOP_TIMES: the same block-type damage in stop_times.txt, a REQUIRED member
 # the light validator never opens and the publication gate parses: since D2 the cached
-# check is the gate, so a cache carrying it is refused before any load (section 6).
+# check is the gate, so a cache carrying it is refused before any load (section 7).
 STOP_TIMES = "stop_times.txt"
 STOP_TIMES_START, _ = stream_span(GOOD, STOP_TIMES)
 _damaged_st = bytearray(GOOD)
@@ -703,7 +710,8 @@ def show(result: dict) -> None:
     print(f"    GET /api/status static_archives.njt: "
           f"last_promoted_at={'set' if result['archive'].get('last_promoted_at') else None}"
           f"  last_download_error={result['archive'].get('last_download_error')!r}"
-          f"  failed_downloads={result['archive'].get('failed_downloads')}")
+          f"  failed_downloads={result['archive'].get('failed_downloads')}"
+          f"  degraded_members={sorted(result['archive'].get('degraded_members') or {})}")
     print(f"    GET /api/njt-stops                : HTTP {result['stops_status']}, "
           f"{result['stations']} stations")
     print(f"    GET /api/njt-routes               : HTTP {result['routes_status']}, "
@@ -826,6 +834,25 @@ async def amain() -> int:
           "the DAMAGED publication still passes NJT publication validation (by the 15c "
           "decision: shapes.txt is optional and stays out of the gate)",
           verdicts["DAMAGED"], "passes NJT publication validation (unchanged by the repair)")
+    # The two-mode rule's own gate (claude/static-rule-siblings, D3), which staged_fetch
+    # runs after the publication gate; what its verdict costs depends on the cache
+    # (sections 4 and 6).
+    geometry = {}
+    for label, archive in (("GOOD", GOOD), ("DAMAGED", DAMAGED)):
+        verdict, message, _ = validator_verdict(
+            archive, lambda zf, now: njt_static.validate_njt_geometry(zf)
+        )
+        geometry[label] = (verdict, message)
+        print(f"  {label:<11} through validate_njt_geometry: {verdict} {message}")
+    check(
+        geometry["GOOD"][0] == "ACCEPTED" and geometry["DAMAGED"][0] == "REJECTED"
+        and geometry["DAMAGED"][1].startswith("shapes.txt is not readable (error: "),
+        "the geometry gate accepts the GOOD publication and refuses the DAMAGED one by "
+        "member",
+        f"GOOD {geometry['GOOD'][0]}; DAMAGED {geometry['DAMAGED'][0]} "
+        f"{geometry['DAMAGED'][1]!r}",
+        "not stated (the two-mode rule postdates the audit)",
+    )
 
     # ---- 3. baseline -------------------------------------------------------
     rule("3  BASELINE: the GOOD publication through the real warmup, cold start")
@@ -876,6 +903,15 @@ async def amain() -> int:
         f"cache {bad['cache']}",
         "BEFORE: promoted as a clean success too, then unservable",
     )
+    named = bad["archive"].get("degraded_members") or {}
+    check(
+        list(named) == [SHAPES]
+        and named[SHAPES].startswith("shapes.txt is not readable (error: "),
+        "and /api/status names shapes.txt as the archive's degraded member, in the gate's "
+        "words (the two-mode rule's cold mode)",
+        f"degraded_members={named!r}",
+        "BEFORE: a clean success, nothing named (on claude/a02-publication-validation too)",
+    )
 
     # ---- 5. what remains: the age policy -----------------------------------
     rule("5  WHAT REMAINS: the degraded archive serves without lines for its cache life")
@@ -904,8 +940,49 @@ async def amain() -> int:
         "not stated",
     )
 
-    # ---- 6. a cache the check refuses ---------------------------------------
-    rule("6  A CACHE WHOSE REQUIRED stop_times.txt HAS THE SAME DAMAGE: refused at the check")
+    # ---- 6. the two-mode rule's other mode -----------------------------------
+    rule("6  OVER A CACHE THAT SERVES: the DAMAGED publication is refused")
+    print("  Restarts past the age window, so each downloads, with DAMAGED upstream: one")
+    print("  over a GOOD cache (lines drawn), one over a DAMAGED cache (stations, no lines).")
+    over = await drive(DAMAGED, cache=GOOD, start_at=AGED_OUT_AT)
+    show(over)
+    over_error = over["archive"].get("last_download_error") or ""
+    check(
+        len(over["attempts"]) == 1 and over["downloads"] == 1 and over["njt_static"] == "ready"
+        and over["stations"] == good_stations and over["route_lines"] == good_lines
+        and over["cache"] == digest(GOOD)
+        and over["archive"].get("last_promoted_at") is None
+        and over["archive"].get("failed_downloads") == 1
+        and over_error.startswith("invalid archive: shapes.txt is not readable (error: ")
+        and not over["archive"].get("degraded_members"),
+        "over a cache that draws, the DAMAGED publication is refused by member and the "
+        "lines riders have keep drawing (never worse than what is served)",
+        f"{over['downloads']} download(s), status {over['njt_static']!r}, "
+        f"{over['stations']} stations, {over['route_lines']} of {good_lines} route lines, "
+        f"cache {over['cache']}, last_download_error={over_error!r}",
+        "BEFORE (15c, claude/a02-publication-validation): promoted here too, and the lines "
+        "were gone for the cache's life",
+    )
+    same = await drive(DAMAGED, cache=DAMAGED, start_at=AGED_OUT_AT)
+    show(same)
+    same_error = same["archive"].get("last_download_error") or ""
+    check(
+        len(same["attempts"]) == 1 and same["downloads"] == 1 and same["njt_static"] == "ready"
+        and same["stations"] == good_stations and same["route_lines"] == 0
+        and same["cache"] == digest(DAMAGED)
+        and same["archive"].get("last_promoted_at") is None
+        and same_error.startswith("invalid archive: shapes.txt is not readable (error: "),
+        "over a cache already without lines the same damage is refused too, since that cache "
+        "serves by the loader's verdict: nothing riders see changes, and each start past "
+        "the window downloads once more until the publication draws",
+        f"{same['downloads']} download(s), status {same['njt_static']!r}, "
+        f"{same['stations']} stations, {same['route_lines']} route lines, "
+        f"cache {same['cache']}, last_download_error={same_error!r}",
+        "not stated (what the rule does, recorded)",
+    )
+
+    # ---- 7. a cache the check refuses ---------------------------------------
+    rule("7  A CACHE WHOSE REQUIRED stop_times.txt HAS THE SAME DAMAGE: refused at the check")
     st_exc = read_outcome(DAMAGED_STOP_TIMES, STOP_TIMES)
     print(f"  reading stop_times.txt from that archive: {describe(st_exc)}")
     light = validator_verdict(DAMAGED_STOP_TIMES, njt_static.validate_njt_archive)
@@ -938,8 +1015,8 @@ async def amain() -> int:
         "zlib.error escaped the arm and the cache was kept",
     )
 
-    # ---- 5. the control ----------------------------------------------------
-    rule("7  CONTROL: the same member damaged so the CRC catches it (BadZipFile)")
+    # ---- 8. the control ----------------------------------------------------
+    rule("8  CONTROL: the same member damaged so the CRC catches it (BadZipFile)")
     ctl = await drive(CRC_CAUGHT)
     show(ctl)
     check(
@@ -974,11 +1051,14 @@ async def amain() -> int:
         "DEFLATE stream inflate rejects passed validate_njt_publication and was promoted, "
         "then all 3 warmup attempts raised zlib.error out of load_njt_static with 0 repair "
         "downloads, as did all 30 sampled across the cache's 30-day life, leaving NJ Transit "
-        "'failed' with 0 of 164 stations. AFTER: the same publication is promoted and "
-        f"reaches ready on attempt 1 with {bad['stations']} of {good_stations} stations and "
-        f"{bad['route_lines']} route lines, the degradation the module promises; the lines "
-        "stay gone for the cache's life by the age policy (a start 29 days on downloads "
-        "nothing, one past 30 days re-fetches); and a cache whose required stop_times.txt "
+        "'failed' with 0 of 164 stations. AFTER: on a cold start the same publication is "
+        f"promoted and reaches ready on attempt 1 with {bad['stations']} of {good_stations} "
+        f"stations and {bad['route_lines']} route lines, the degradation the module "
+        "promises, with shapes.txt named degraded on /api/status; over a cache that draws it "
+        "is refused and the lines keep drawing (the two-mode rule, claude/static-rule-"
+        "siblings, which refines 15c); the lines of a degraded cache stay gone for its life "
+        "by the age policy (a start 29 days on downloads nothing, one past 30 days "
+        "re-fetches); and a cache whose required stop_times.txt "
         "carries the same damage is refused at the cached check, which is the publication "
         "gate since claude/static-rule-siblings, and re-fetched on attempt 1. The "
         "CRC-caught control degrades as before, to "

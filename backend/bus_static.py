@@ -29,6 +29,7 @@ from pathlib import Path
 import httpx
 
 import env_seams
+from static_shared import cache_is_fresh
 
 logger = logging.getLogger(__name__)
 
@@ -269,10 +270,7 @@ async def ensure_index() -> None:
     global _status, _partial
     have_partial = False
     try:
-        if (
-            MANIFEST_PATH.exists()
-            and time.time() - MANIFEST_PATH.stat().st_mtime < MAX_AGE_DAYS * 86400
-        ):
+        if cache_is_fresh(MANIFEST_PATH, usable=MANIFEST_PATH.exists(), max_age_days=MAX_AGE_DAYS):
             cached = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
             routes = {r for r in cached.get("routes", []) if isinstance(r, str)}
             failed = cached.get("failed") or []

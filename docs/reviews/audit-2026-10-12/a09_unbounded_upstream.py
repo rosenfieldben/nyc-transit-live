@@ -79,6 +79,21 @@ FOUR CHECK GROUPS, each over the real static_shared staged path:
          This is the check that sees a repair made ABOVE staged_fetch (in the subway
          loader or in the warmup), which 1a cannot, because 1a calls staged_fetch on
          the script's own loop.
+         1d: the route-shapes loader, the arm the A02 measurement left (CLOSED on
+         claude/static-rule-siblings, D5, which runs it behind asyncio.to_thread as
+         the station-route index already was). The real subway warmup, its attempt
+         deadline as shipped, three times over a valid publication whose shapes.txt
+         carries 150,000 drawable points, about the live table's size; each attempt
+         reaches ready and draws. Measured: the 1 ms heartbeat's longest gap across
+         the attempt, against the real load_subway_route_shapes timed alone over the
+         same archive. BEFORE (this arm run on 66b188a, the branch before D5): the
+         loader ran inline after validation, so the gap was the whole parse, 1,063 ms
+         against 980 ms alone (on the live publication 623 to 692 ms, measured with
+         backend/scripts/measure_subway_validation.py). AFTER, asserted: the shortest
+         of the three attempts' longest gaps is under a quarter of the loader alone
+         (89 ms against 1,170 ms when this arm was written; a garbage collection on
+         the worker thread stops the loop too, which is what the quarter leaves room
+         for, as in 1c).
   ARM 2  No byte ceiling on a transfer. A valid subway publication padded to 512 MiB
          with one stored member, generated as it is served (no upstream file), through
          the real default transfer, the real subway loader and the real validator.
@@ -118,8 +133,8 @@ WHAT IS PRODUCTION CODE HERE, unmodified and called directly:
     static_shared.validate_archive      the zip-open boundary (every arm)
     static_data.validate_subway_archive the real subway publication validator
     static_data.load_subway_stops       the loader the subway warmup awaits (arms 2, 3)
-    warmups._warm_subway_static         the subway warmup main.lifespan schedules (1c),
-                                        with the inline loaders it calls after the stops
+    warmups._warm_subway_static         the subway warmup main.lifespan schedules (1c,
+                                        1d), with the loaders it calls after the stops
     static_shared.archive_status        the operator surface /api/status reads
 
 WHAT IS INJECTED, and this is the whole of it:
@@ -158,15 +173,17 @@ construction: 1a's validator itself spends the 80 ms (1a.2 is an ordering, the b
 ending while the validator still runs; 1a.4 bounds the heartbeat's gap at half of it,
 against 4 to 16 ms measured off the loop), and 1c compares the stall, the shortest of
 three attempts' (inline, every attempt's is the whole validation), with the same
-validation timed standalone in the same run.
+validation timed standalone in the same run; 1d does the same with the route-shapes
+loader.
 
 RUN IT, from the repository root:
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py
 
 RECORDED DISPOSITION: VERIFIED, for arms 2 and 3 (no byte ceiling, no member or
 expanded-size ceiling). Arm 1 is closed on claude/a02-publication-validation and pins
-the repair. Exits 0 while A09 behaves as recorded; exits 1, naming the failed checks,
-the moment the code stops matching.
+the repair; its route-shapes arm (1d) is closed on claude/static-rule-siblings.
+Exits 0 while A09 behaves as recorded; exits 1, naming the failed checks, the moment
+the code stops matching.
 """
 
 from __future__ import annotations
@@ -460,12 +477,16 @@ def csv_text(columns: list[str], rows) -> str:
     return buf.getvalue()
 
 
-def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
+def subway_members(
+    tag: str, *, heavy_transfers: int = 0, heavy_shapes: int = 0
+) -> dict[str, str]:
     """The members the real subway validator requires, minimal and valid.
 
     `tag` goes into a station name so each publication has its own bytes and a
     promotion is observable as a change of cache contents. `heavy_transfers` adds
-    that many valid cross-stop rows to transfers.txt, which the validator parses.
+    that many valid cross-stop rows to transfers.txt, which the validator parses;
+    `heavy_shapes` adds that many drawable points to shapes.txt, spread over forty
+    shapes of route A, which the geometry gate and the route-shapes loader parse.
     """
     stops = csv_text(
         ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station"],
@@ -486,6 +507,17 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
     # One trip and one call: since A02 the validator reads trips.txt and stop_times.txt
     # through the loader's own generators and wants a row from each, so a publication
     # with headers only there is one it refuses, and every arm here needs one it accepts.
+    shape_points = [
+        {"shape_id": "A..N01R", "shape_pt_sequence": "1",
+         "shape_pt_lat": "40.70000", "shape_pt_lon": "-74.00000"},
+        {"shape_id": "A..N01R", "shape_pt_sequence": "2",
+         "shape_pt_lat": "40.71000", "shape_pt_lon": "-74.00100"},
+    ]
+    shape_points += (
+        {"shape_id": f"A..N{i % 40:02d}H", "shape_pt_sequence": str(3 + i),
+         "shape_pt_lat": f"{40.5 + i * 1e-5:.5f}", "shape_pt_lon": f"{-74.2 + i * 1e-5:.5f}"}
+        for i in range(heavy_shapes)
+    )
     return {
         "stops.txt": stops,
         "trips.txt": csv_text(
@@ -493,13 +525,7 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
             [{"route_id": "A", "service_id": "wk", "trip_id": "t1", "shape_id": "A..N01R"}],
         ),
         "shapes.txt": csv_text(
-            ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
-            [
-                {"shape_id": "A..N01R", "shape_pt_sequence": "1",
-                 "shape_pt_lat": "40.70000", "shape_pt_lon": "-74.00000"},
-                {"shape_id": "A..N01R", "shape_pt_sequence": "2",
-                 "shape_pt_lat": "40.71000", "shape_pt_lon": "-74.00100"},
-            ],
+            ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"], shape_points
         ),
         "stop_times.txt": csv_text(
             ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"],
@@ -511,10 +537,13 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
     }
 
 
-def built_archive(tag: str, *, extra_members: int = 0, heavy_transfers: int = 0) -> Publication:
+def built_archive(
+    tag: str, *, extra_members: int = 0, heavy_transfers: int = 0, heavy_shapes: int = 0
+) -> Publication:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for member, text in subway_members(tag, heavy_transfers=heavy_transfers).items():
+        members = subway_members(tag, heavy_transfers=heavy_transfers, heavy_shapes=heavy_shapes)
+        for member, text in members.items():
             zf.writestr(member, text)
         for i in range(extra_members):
             zf.writestr(f"extra/{i:05d}.txt", b"")
@@ -651,6 +680,7 @@ ATTEMPT_DEADLINE_FLOOR_S = 0.002
 VALIDATOR_S = 0.080  # the audit's 80 ms validator
 TRANSFER_RETRIES = 5
 HEAVY_TRANSFERS = 150_000  # 1c's transfers.txt rows; the live table has 613
+HEAVY_SHAPES = 150_000  # 1d's shapes.txt points; the live table had 150,744 on 2026-10-15
 
 _VALIDATOR = {"started": None, "finished": None}
 
@@ -833,6 +863,10 @@ async def run_warmup_attempt(pub: Publication, deadline_s: float) -> dict:
                 "status": status,
                 "cache_at_end": at_end,
                 "max_gap_ms": longest_gap_ms(stamps),
+                "route_lines": sum(
+                    len(route["polylines"])
+                    for route in getattr(app.state, "subway_routes", None) or []
+                ),
                 "transfer_done": transfer_done,
                 "log": [line for line in tap.lines if "subway_static_status" in line],
             }
@@ -1012,8 +1046,55 @@ async def arm1() -> dict:
         f"({c['max_gap_ms'] / max(v_ms, 1e-9):.2f}x)",
         "BEFORE: 220 to 280 ms, the whole validation",
     )
+
+    # 1d: the route-shapes loader, the stall A02's measurement left after validation
+    # moved off the loop (closed on claude/static-rule-siblings, D5). The production
+    # attempt again, under its own deadline, so it reaches ready and the loader runs.
+    shaped = built_archive("shapes", heavy_shapes=HEAVY_SHAPES)
+    shaped_runs = [
+        await run_warmup_attempt(shaped, main.STATIC_ATTEMPT_DEADLINE_S) for _ in range(3)
+    ]
+    # The yardstick: the real loader, alone and synchronously, over the archive the last
+    # attempt promoted; the shortest of three runs.
+    yardstick: list[float] = []
+    lines_standalone = 0
+    for _ in range(3):
+        t0 = time.perf_counter()
+        lines_standalone = sum(len(r["polylines"]) for r in static_data.load_subway_route_shapes())
+        yardstick.append((time.perf_counter() - t0) * 1000)
+    s_ms = min(yardstick)
+    d = {
+        "gaps_ms": [run["max_gap_ms"] for run in shaped_runs],
+        "statuses": [run["status"] for run in shaped_runs],
+        "lines": [run["route_lines"] for run in shaped_runs],
+        "s_ms": s_ms,
+    }
+    d["max_gap_ms"] = min(d["gaps_ms"])
+    print(f"  run 1d: the real subway warmup, its own attempt deadline, a publication of "
+          f"{shaped.size:,} bytes with {HEAVY_SHAPES + 2:,} shapes.txt points; statuses "
+          f"{d['statuses']}, route lines served {d['lines']}")
+    check(
+        "1d.0 the publication reaches ready and draws, and its route-shapes parse is heavy: "
+        "the real loader, timed alone, takes at least 100 ms",
+        d["statuses"] == ["ready"] * 3 and min(d["lines"]) > 1 and lines_standalone > 1
+        and s_ms >= 100,
+        f"loader alone {s_ms:.1f} ms (runs {', '.join(f'{x:.1f}' for x in yardstick)} ms), "
+        f"{lines_standalone} route lines",
+        "not stated (precondition for 1d)",
+    )
+    check(
+        "1d.1 the warmup kept the loop it shares running through the route-shapes parse: "
+        "the 1 ms heartbeat's longest gap across the attempt, the shortest of three, is "
+        "under a quarter of the loader timed alone",
+        d["max_gap_ms"] < s_ms / 4,
+        f"longest heartbeat gap {d['max_gap_ms']:.1f} ms (attempts "
+        f"{', '.join(f'{g:.1f}' for g in d['gaps_ms'])} ms) against {s_ms:.1f} ms alone "
+        f"({d['max_gap_ms'] / max(s_ms, 1e-9):.2f}x)",
+        "BEFORE (this arm run on 66b188a, the branch before D5): 1,063 ms (attempts 1,212, "
+        "1,211, 1,063 ms) against 980 ms alone (1.09x), the whole parse, inline",
+    )
     print()
-    return {"a": a, "b": b, "c": c, "v_ms": v_ms}
+    return {"a": a, "b": b, "c": c, "d": d, "v_ms": v_ms}
 
 
 # ---------------------------------------------------------------------------
@@ -1215,7 +1296,7 @@ async def amain() -> int:
             print(f"  - {name}")
         print("DISPOSITION: NOT AS RECORDED, see the failed checks above")
         return 1
-    a, c = one["a"], one["c"]
+    a, c, d = one["a"], one["c"], one["d"]
     print(
         "DISPOSITION: VERIFIED  Arm 1 closed on claude/a02-publication-validation: an 80 ms "
         "validator inside asyncio.timeout(10 ms) now raises TimeoutError out of the real "
@@ -1223,7 +1304,10 @@ async def amain() -> int:
         f"after 81.5 ms, no TimeoutError), and the production subway warmup under a "
         f"{c['deadline_ms']:.0f} ms attempt deadline failed at it with nothing promoted while "
         f"its loop's longest stall was {c['max_gap_ms']:.0f} ms (BEFORE: 220 to 280 ms, then "
-        "promoted). Arms 2 and 3 still stand: the real transfer and "
+        "promoted). Its route-shapes arm closed on claude/static-rule-siblings: through the "
+        f"real warmup over {HEAVY_SHAPES:,} shapes.txt points the loop's longest stall was "
+        f"{d['max_gap_ms']:.0f} ms against the loader's {d['s_ms']:.0f} ms alone (BEFORE: "
+        "the whole parse, inline). Arms 2 and 3 still stand: the real transfer and "
         f"subway validator accepted and promoted a {two['size']:,}-byte publication, an archive "
         f"of {three['members']:,} members and one whose required {EXPANDED_MEMBER} declares "
         f"{three['expanded']:,} expanded bytes ({three['ratio']:,.0f}:1), so no byte or "

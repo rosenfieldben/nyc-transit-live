@@ -35,7 +35,6 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import time
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -45,6 +44,7 @@ import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     UNREADABLE_AT_LOAD,
+    cache_is_fresh,
     cached_archive_is_usable,
     parse_member,
     read_as_loaded,
@@ -518,7 +518,7 @@ async def load_path_static() -> dict:
     # read every member it opens, and a cache that rotted anywhere the load reads is
     # treated as absent and re-downloaded rather than failing every attempt.
     usable = await cached_archive_is_usable(zip_path, validate_path_publication)
-    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    fresh = cache_is_fresh(zip_path, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
             await _download_zip()

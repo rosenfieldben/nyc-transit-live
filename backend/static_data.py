@@ -6,7 +6,6 @@ import csv
 import io
 import logging
 import re
-import time
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
@@ -18,6 +17,7 @@ from static_routes import fold_stop_routes
 from static_shared import (
     UNREADABLE_AT_LOAD,
     StaticValidationError,
+    cache_is_fresh,
     cached_archive_is_usable,
     parse_member,
     require_members,
@@ -389,7 +389,7 @@ async def load_subway_stops() -> dict[str, dict]:
     # This replaces the old parse-then-recover arm below it: nothing can reach the
     # parse except an archive that already passed the same gates.
     usable = await cached_archive_is_usable(SUBWAY_GTFS_ZIP, validate_subway_archive)
-    fresh = usable and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
+    fresh = cache_is_fresh(SUBWAY_GTFS_ZIP, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
             # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache

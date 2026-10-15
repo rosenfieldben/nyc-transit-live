@@ -19,8 +19,10 @@ import csv
 import errno
 import hashlib
 import io
+import os
 import struct
 import threading
+import time
 import types
 import zipfile
 from pathlib import Path
@@ -995,6 +997,76 @@ async def test_a_valid_fresh_cache_is_served_without_any_download(tmp_path, monk
     assert loader.served(await loader.load())
     assert calls == []
     assert static_shared.archive_status() == {}
+
+
+# THE FRESHNESS FLOOR (claude/static-rule-siblings, D4). Whole seconds, so the mtime
+# set and the clock read compare exactly.
+_MTIME = 1_800_000_000
+_MAX_AGE_S = 30 * 86400
+
+
+@pytest.mark.parametrize(
+    ("age_s", "fresh"),
+    [
+        (-30 * 86400, False),
+        (-1, False),
+        (0, True),
+        (_MAX_AGE_S - 1, True),
+        (_MAX_AGE_S, False),
+    ],
+    ids=["a month ahead", "a second ahead", "written now", "a second inside", "at the max"],
+)
+def test_freshness_has_a_floor_at_zero_age_and_a_ceiling_at_the_max(
+    tmp_path, monkeypatch, age_s, fresh
+):
+    """0 <= age < max_age_days, with age read from time.time at the call. Before D4 a
+    negative age passed `age < max`, so a cache dated ahead of the clock was fresh until
+    the clock caught up with it, a month here."""
+    cache = tmp_path / "gtfs.zip"
+    cache.write_bytes(b"")
+    os.utime(cache, (_MTIME, _MTIME))
+    monkeypatch.setattr(time, "time", lambda: _MTIME + age_s)
+
+    assert static_shared.cache_is_fresh(cache, usable=True, max_age_days=30) is fresh
+
+
+def test_a_cache_the_check_refused_is_never_fresh_and_never_stated(tmp_path):
+    # `usable` short-circuits: a path that is not there would raise on its stat.
+    absent = tmp_path / "gtfs.zip"
+    assert static_shared.cache_is_fresh(absent, usable=False, max_age_days=30) is False
+
+
+@pytest.mark.parametrize(
+    ("offset_s", "downloads"),
+    [(86400, 1), (60, 1), (-86400, 0)],
+    ids=["a day ahead of the clock", "a minute ahead", "a day old"],
+)
+@pytest.mark.parametrize("loader", FIVE_LOADERS, ids=FIVE_IDS)
+async def test_a_cache_dated_ahead_of_the_clock_is_stale_in_every_loader(
+    tmp_path, monkeypatch, loader, offset_s, downloads
+):
+    """Every loader asks static_shared.cache_is_fresh, so the floor holds in each: a
+    valid cache dated ahead of the clock (the host clock stepped back after the
+    promotion) is stale, the publication is downloaded once and promoted, and it lands
+    dated now, so the next load downloads nothing. A cache a day old is fresh and is
+    served without a download, as before."""
+    cache = loader.set_path(tmp_path, monkeypatch)
+    old = good_archive(routes=[{"route_id": "OLD", "route_long_name": "Old"}])
+    cache.write_bytes(old)
+    dated = time.time() + offset_s
+    os.utime(cache, (dated, dated))
+    published = good_archive()
+    calls: list[Path] = []
+    _patch_download(monkeypatch, loader.module, published, calls=calls)
+
+    assert loader.served(await loader.load())
+    assert calls == [cache] * downloads
+    assert cache.read_bytes() == (published if downloads else old)
+    if downloads:
+        assert cache.stat().st_mtime <= time.time()
+        calls.clear()
+        assert loader.served(await loader.load())
+        assert calls == [], "the promoted archive is dated now, so it is fresh"
 
 
 @pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)

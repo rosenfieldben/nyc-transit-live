@@ -367,6 +367,29 @@ async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFi
     return await asyncio.to_thread(cached_archive_is_valid, path, validate)
 
 
+def cache_is_fresh(path: Path, *, usable: bool, max_age_days: float) -> bool:
+    """Is the cache at `path` fresh: usable, and written no more than `max_age_days` ago
+    and not in the future? The one freshness test every static loader and the bus route
+    index run (claude/static-rule-siblings, D4), so a loader added later cannot drift.
+
+    THE FLOOR AT ZERO AGE. Age is now minus the file's mtime. An mtime ahead of the
+    clock (the host clock stepped back after a promotion, a file restored with its
+    times) gives a negative age, which `age < MAX_AGE_DAYS` alone called fresh, so such
+    a cache was never re-fetched until real time caught up with it. Here it is stale,
+    and the download that replaces it is stamped with the clock as it now reads.
+
+    THE CLOCK IS READ HERE, AT THE CALL, through time.time: never captured in a default
+    or passed in, so whatever moves time.time (a test, an audit script's virtual clock)
+    moves this. NJ Transit's `now` is its service-date guard's clock, not this one.
+
+    `usable` comes first and short-circuits, so a cache the check refused, or one that
+    is not there, is never stat'ed."""
+    if not usable:
+        return False
+    age = time.time() - path.stat().st_mtime
+    return 0 <= age < max_age_days * 86400
+
+
 # ---------------------------------------------------------------------------
 # Per-archive status, for the operator surface
 # ---------------------------------------------------------------------------

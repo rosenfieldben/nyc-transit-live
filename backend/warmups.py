@@ -164,19 +164,25 @@ async def _warm_subway_static(app: FastAPI) -> None:
     while True:
         try:
             # Whole-attempt deadline (see main.STATIC_ATTEMPT_DEADLINE_S). It bounds
-            # the download and the inline parses; the to_thread parse below can outlive
+            # the download and the inline parses; the to_thread parses below can outlive
             # it (a Python thread cannot be force-cancelled), which is fine because a
             # CPU-bound parse finishes on its own, unlike a network transfer that can
             # trickle forever. A timeout raises TimeoutError, caught by `except
             # Exception` below and driven down the same failed-then-retry path.
             async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
                 stops = await main.load_subway_stops()
-                routes = main.load_subway_route_shapes()  # reuse the zip the stops load ensured
+                # Off the event loop as well (claude/static-rule-siblings, D5). shapes.txt
+                # is 150,744 rows on the live publication, and once validation moved off
+                # the loop this parse was the longest stall left on it, about half a
+                # second at every start (A09's next arm, measured by
+                # backend/scripts/measure_subway_validation.py). It reuses the zip the
+                # stops load ensured.
+                routes = await asyncio.to_thread(main.load_subway_route_shapes)
                 stations = main.load_subway_stations()
                 # Off the event loop: this one parses the full stop_times.txt (~36 MB,
                 # millions of rows), so running it inline would block every other warmup,
                 # the pollers, and /healthz for the length of the parse. The lighter
-                # sibling loaders (stops/shapes/stations) stay inline as before.
+                # sibling loaders (stations, complexes) stay inline as before.
                 station_routes = await asyncio.to_thread(main.load_subway_station_routes)
                 # Inline: transfers.txt is about 8 KB and 613 rows, so this is one of the
                 # light loaders, and it raises on a problem like the index above.

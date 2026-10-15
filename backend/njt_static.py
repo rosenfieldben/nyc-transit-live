@@ -115,6 +115,7 @@ from static_shared import (
     UNREADABLE_AT_LOAD,
     UNREADABLE_MEMBER,
     StaticValidationError,
+    cache_is_fresh,
     cached_archive_is_usable,
     parse_member,
     read_or_refuse,
@@ -1093,7 +1094,7 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     # IS THE PUBLICATION GATE (D2), so "usable" also means the load will read every
     # required member it opens.
     usable = await cached_archive_is_usable(zip_path, validate)
-    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    fresh = cache_is_fresh(zip_path, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
             # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache this

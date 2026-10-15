@@ -43,10 +43,15 @@ the 15c decision), and the warmup reaches ready on attempt 1 with 1 download, 16
 164 stations and 0 route lines. WHAT REMAINS, measured and recorded rather than fixed:
 the lines stay gone for the cache's life, because the age policy, not the parse,
 decides when the archive is fetched again (a start 29 days later downloads nothing and
-draws no lines; one 30 days and an hour later re-fetches and the lines return). THE
-RESIDUAL ARM: a cache whose stop_times.txt carries the same damage (it passes the light
-cached-archive validator, which never opens that member) is discarded by the attempt
-that fails on it, and the next attempt downloads and reaches ready.
+draws no lines; one 30 days and an hour later re-fetches and the lines return). A CACHE
+WHOSE REQUIRED stop_times.txt CARRIES THE SAME DAMAGE: since claude/static-rule-siblings
+(D2) the cached check runs the publication gate, which parses that member, so such a
+cache is refused at the check, named by member, and attempt 1 downloads and reaches
+ready (section 6). On claude/a02-publication-validation the check was the light
+validator, which never opened the member: the cache was called usable, the residual arm
+discarded it on attempt 1, and attempt 2 downloaded. The arm itself is pinned since then
+by the unit tests (backend/tests/test_njt_static.py), on a cache that rots after its
+check, the one way a load can still meet bytes its check did not see.
 
 WHAT IS PRODUCTION CODE HERE (unmodified, called as the app calls it):
   * warmups._warm_njt_static: the real retry loop, its `except Exception` arm,
@@ -466,8 +471,8 @@ DAMAGED = bytes(_damaged)
 DAMAGED_OFFSET = 0
 
 # DAMAGED_STOP_TIMES: the same block-type damage in stop_times.txt, a REQUIRED member
-# the light cached-archive validator never opens, so a cache carrying it is accepted as
-# usable and fails the load: the residual arm's case (section 6).
+# the light validator never opens and the publication gate parses: since D2 the cached
+# check is the gate, so a cache carrying it is refused before any load (section 6).
 STOP_TIMES = "stop_times.txt"
 STOP_TIMES_START, _ = stream_span(GOOD, STOP_TIMES)
 _damaged_st = bytearray(GOOD)
@@ -899,38 +904,38 @@ async def amain() -> int:
         "not stated",
     )
 
-    # ---- 6. the residual arm -----------------------------------------------
-    rule("6  THE RESIDUAL ARM: a cache whose REQUIRED stop_times.txt has the same damage")
+    # ---- 6. a cache the check refuses ---------------------------------------
+    rule("6  A CACHE WHOSE REQUIRED stop_times.txt HAS THE SAME DAMAGE: refused at the check")
     st_exc = read_outcome(DAMAGED_STOP_TIMES, STOP_TIMES)
     print(f"  reading stop_times.txt from that archive: {describe(st_exc)}")
     light = validator_verdict(DAMAGED_STOP_TIMES, njt_static.validate_njt_archive)
-    print(f"  the light cached-archive validator on it: {light[0]} {light[1]}")
+    print(f"  the light validator (the first stage) on it: {light[0]} {light[1]}")
+    gate = validator_verdict(DAMAGED_STOP_TIMES, njt_static.validate_njt_publication)
+    print(f"  the publication gate (the cached check) on it: {gate[0]} {gate[1]}")
     arm = await drive(GOOD, cache=DAMAGED_STOP_TIMES)
     show(arm)
     arm_first = arm["attempts"][0] if arm["attempts"] else None
     check(
-        isinstance(st_exc, zlib.error) and light[0] == "ACCEPTED",
-        "the premise: stop_times.txt raises zlib.error on read, and the light validator "
-        "accepts the archive as a cache",
-        f"{describe(st_exc)}; light validator {light[0]}",
+        isinstance(st_exc, zlib.error) and light[0] == "ACCEPTED" and gate[0] == "REJECTED"
+        and gate[1].startswith("stop_times.txt is not readable (error: "),
+        "the premise: stop_times.txt raises zlib.error on read, the light validator "
+        "accepts the archive, and the publication gate refuses it by member",
+        f"{describe(st_exc)}; light validator {light[0]}; gate {gate[0]} {gate[1]!r}",
         "not stated",
     )
     check(
-        arm_first is not None and arm_first["raised"] is None and arm_first["stops"] == 0
-        and arm_first["downloads"] == 0,
-        "the attempt over that cache fails without raising: the residual arm discards it "
-        "and the load returns empty",
-        outcome(arm_first) if arm_first else "no attempt",
-        "BEFORE: zlib.error was outside the residual arm's tuple too, so it escaped and the "
-        "cache was kept",
-    )
-    check(
-        len(arm["attempts"]) == 2 and arm["downloads"] == 1 and arm["njt_static"] == "ready"
-        and arm["cache"] == digest(GOOD) and arm["route_lines"] == good_lines,
-        "the next attempt downloads and reaches ready with the lines",
-        f"{len(arm['attempts'])} attempts, {arm['downloads']} download(s), status "
-        f"{arm['njt_static']!r}, cache {arm['cache']}, {arm['route_lines']} route lines",
-        "not stated",
+        len(arm["attempts"]) == 1 and arm_first is not None and arm_first["raised"] is None
+        and arm_first["downloads"] == 1 and arm["downloads"] == 1
+        and arm["njt_static"] == "ready" and arm["cache"] == digest(GOOD)
+        and arm["route_lines"] == good_lines,
+        "the cached check refuses that cache, treats it as absent, and attempt 1 downloads "
+        "and reaches ready with the lines: the load never meets the damage",
+        f"{len(arm['attempts'])} attempt(s), {arm['downloads']} download(s), first "
+        f"{outcome(arm_first) if arm_first else 'none'}, status {arm['njt_static']!r}, "
+        f"cache {arm['cache']}, {arm['route_lines']} route lines",
+        "BEFORE (claude/a02-publication-validation): the light check called it usable, the "
+        "residual arm discarded it on attempt 1, and attempt 2 downloaded; at d5f6d70 "
+        "zlib.error escaped the arm and the cache was kept",
     )
 
     # ---- 5. the control ----------------------------------------------------
@@ -974,8 +979,9 @@ async def amain() -> int:
         f"{bad['route_lines']} route lines, the degradation the module promises; the lines "
         "stay gone for the cache's life by the age policy (a start 29 days on downloads "
         "nothing, one past 30 days re-fetches); and a cache whose required stop_times.txt "
-        "carries the same damage is discarded by the residual arm and re-fetched on the "
-        "next attempt. The CRC-caught control degrades as before, to "
+        "carries the same damage is refused at the cached check, which is the publication "
+        "gate since claude/static-rule-siblings, and re-fetched on attempt 1. The "
+        "CRC-caught control degrades as before, to "
         f"{ctl['stations']} stations and 0 route lines."
     )
     return 0

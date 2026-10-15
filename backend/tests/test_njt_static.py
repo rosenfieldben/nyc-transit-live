@@ -44,8 +44,12 @@ import njt_static
 import route_geometry
 from conftest import golden_fixture_guard
 from feeds.shared import NYC_TZ
-from static_shared import StaticValidationError
-from tests.archive_damage import rot_after_the_check
+from static_shared import StaticValidationError, validate_archive
+from tests.archive_damage import (
+    bad_central_directory_offset,
+    damaged_stream,
+    rot_after_the_check,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -450,12 +454,12 @@ def test_a_missing_required_member_fails_validation(member):
 def test_headers_only_table_fails_the_light_validator(member, what):
     """FINDING 4, FROM BIRTH. A headers-only table is structurally perfect and
     parses cleanly to nothing; promoting one reaches "ready" with an empty map and
-    nothing retrying. Three tables are gated on every load, not just stops: a feed
+    nothing retrying. Three tables are gated in the first stage, not just stops: a feed
     with stops and no trips places markers that can never carry a train, which is
     the same silent lie one table over.
 
     stop_times.txt is deliberately NOT in this list; it is the expensive table and
-    the publication gate owns it. See the pair of tests below, which pin both halves
+    the second stage owns it. See the pair of tests below, which pin both halves
     of that split."""
     headers_only = _members()[member].splitlines()[0] + "\n"
     with _open(_members(**{member: headers_only})) as zf:
@@ -466,11 +470,12 @@ def test_headers_only_table_fails_the_light_validator(member, what):
 def test_a_headers_only_stop_times_passes_the_light_validator():
     """THE FIRST HALF OF THE SPLIT, and it is an ACCEPTANCE test on purpose.
 
-    validate_njt_archive runs on every load of the cached archive, so it pays only
-    for the three cheap tables; stop_times.txt is the one table it does not open.
-    Asserting that it passes here is what makes the next test's rejection mean
-    something: without this, the two validators could be identical again and nobody
-    would notice.
+    validate_njt_archive is the publication gate's first stage, and stop_times.txt is
+    the one table it does not open. It used to be the cached check on its own, which is
+    why a cache that rotted in stop_times.txt was "usable"; since
+    claude/static-rule-siblings (D2) the check runs the whole gate. Asserting that the
+    first stage passes here is what makes the next test's rejection mean something:
+    without this, the two validators could be identical again and nobody would notice.
     """
     headers_only = STOP_TIMES.splitlines()[0] + "\n"
     with _open(_members(**{"stop_times.txt": headers_only})) as zf:
@@ -484,7 +489,7 @@ def test_a_headers_only_stop_times_fails_the_publication_gate():
     validate_njt_publication and this is what goes red."""
     headers_only = STOP_TIMES.splitlines()[0] + "\n"
     with _open(_members(**{"stop_times.txt": headers_only})) as zf:
-        njt_static.validate_njt_archive(zf, now=NOW)  # the light gate still passes
+        njt_static.validate_njt_archive(zf, now=NOW)  # the first stage still passes
         with pytest.raises(StaticValidationError):
             njt_static.validate_njt_publication(zf, now=NOW)
 
@@ -1879,13 +1884,70 @@ async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discar
     assert len(data["stops"]) == 164
 
 
+# THE CACHES THE LIGHT CHECK CALLED USABLE (the ledger's live-list aside on the A02
+# branch, closed by D2 on claude/static-rule-siblings). Each raises, at the first read of
+# the member it damages, a class the residual arm does not name: bzip2's plain OSError,
+# lzma's LZMAError, and a bit-rotted central-directory offset's OSError(EINVAL) on every
+# member read. The first two sit in stop_times.txt, the required member the light check
+# never opened, so such a cache was "usable" and raised at every load for its 30 days.
+UNREADABLE_CACHES = {
+    "bzip2 stop_times.txt": (
+        lambda good: damaged_stream(good, "stop_times.txt", zipfile.ZIP_BZIP2),
+        "stop_times.txt is not readable (OSError)",
+    ),
+    "lzma stop_times.txt": (
+        lambda good: damaged_stream(good, "stop_times.txt", zipfile.ZIP_LZMA),
+        "stop_times.txt is not readable (LZMAError)",
+    ),
+    # Every member read fails, so the first member the gate reads is the one named; the
+    # light check read stops.txt too and refused this one, but the class is the
+    # environment's and the arm could never have told it from a fault.
+    "central-directory offset": (
+        bad_central_directory_offset,
+        "stops.txt is not readable (OSError)",
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(UNREADABLE_CACHES))
+async def test_a_cache_the_residual_arm_cannot_name_is_refused_at_the_check(
+    monkeypatch, tmp_path, kind
+):
+    """D2 FOR NJ TRANSIT. Each damaged cache is refused at the cached check (the
+    publication gate), named by member through require_parsed's classes, treated as
+    absent and re-downloaded: one mint and one fetch through the fake transport, and the
+    good archive served. Before D2 the first two were called usable and every load
+    raised past the residual arm."""
+    damage, refusal = UNREADABLE_CACHES[kind]
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    good = _zip_bytes(_members())
+    zip_path.write_bytes(damage(good))
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    with pytest.raises(StaticValidationError) as refused:
+        validate_archive(zip_path, lambda zf: njt_static.validate_njt_publication(zf, now=NOW))
+    assert str(refused.value) == refusal
+    assert refused.value.member == refusal.split(" ", 1)[0]
+    calls: list = []
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(good, calls))
+
+    data = await njt_static.load_njt_static(now=NOW)
+
+    assert set(data["stops"]) == {"109", "112", "38", "125"}
+    assert [url.rsplit("/", 1)[-1] for url, _form in calls] == ["getToken", "getGTFS"]
+    assert zip_path.read_bytes() == good
+
+
 async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_path):
     """D5 AT NJ TRANSIT'S CALL SITE (audit 2026-10-12, A02 and A09), the twin of
     test_static_shared.py's test for the other four loaders: with a valid, fresh cache
     and no network allowed, load_njt_static's cached check must run
-    validate_njt_archive on a thread other than the one running this event loop, as
+    validate_njt_publication (the publication gate, since claude/static-rule-siblings,
+    D2) on a thread other than the one running this event loop, as
     static_shared.cached_archive_is_usable does. Put back on the synchronous check, it
-    runs here, on the loop's thread, and fails."""
+    runs here, on the loop's thread, and fails; put back on the first stage alone,
+    validate_njt_archive, it never runs the gate, and fails too."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
@@ -1893,13 +1955,13 @@ async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_
     monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
     monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
     threads = []
-    real = njt_static.validate_njt_archive
+    real = njt_static.validate_njt_publication
 
     def recording(zf, *, now=None):
         threads.append(threading.get_ident())
         real(zf, now=now)
 
-    monkeypatch.setattr(njt_static, "validate_njt_archive", recording)
+    monkeypatch.setattr(njt_static, "validate_njt_publication", recording)
 
     data = await njt_static.load_njt_static(now=NOW)
 

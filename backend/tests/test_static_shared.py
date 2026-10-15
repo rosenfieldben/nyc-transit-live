@@ -38,6 +38,7 @@ import static_data
 import static_shared
 import warmups
 from conftest import configure_njt
+from tests.archive_damage import undecodable_deep_in
 
 pytestmark = pytest.mark.anyio
 
@@ -700,6 +701,8 @@ class Loader:
         self.validate = validate
         self.required = required
         self.raises_on_cold_failure = raises_on_cold_failure
+        # `validate` is the gate the loader's CACHED CHECK runs, which since
+        # claude/static-rule-siblings (D2) is its publication gate in every loader.
         # The warmup that drives this loader, the app.state field it flips, and the
         # module function its LOAD reads the cache through and its validator does not
         # (so a fault injected there is met by the load, never by the cached check).
@@ -733,7 +736,7 @@ LOADERS = [
         _railroad_paths,
         _load_railroad,
         lambda data: bool(data) and "101" in data["stops"],
-        railroad_static.validate_railroad_archive,
+        railroad_static.validate_railroad_publication,
         railroad_static._REQUIRED_MEMBERS,
         warm=warmups._warm_railroad_static,
         status="railroad_static_status",
@@ -746,7 +749,7 @@ LOADERS = [
         _path_paths,
         _load_path,
         lambda data: "101" in data.get("stops", {}),
-        path_static.validate_path_archive,
+        path_static.validate_path_publication,
         path_static._REQUIRED_MEMBERS,
         warm=warmups._warm_path_static,
         status="path_static_status",
@@ -759,7 +762,7 @@ LOADERS = [
         _ferry_paths,
         _load_ferry,
         lambda data: "101" in data.get("stops", {}),
-        ferry_static.validate_ferry_archive,
+        ferry_static.validate_ferry_publication,
         ferry_static._REQUIRED_MEMBERS,
         warm=warmups._warm_ferry_static,
         status="ferry_static_status",
@@ -800,7 +803,7 @@ NJT_LOADER = Loader(
     _load_njt,
     # Flat stops: the location_type=1 parent is not a boardable stop, its platform is.
     lambda data: "101N" in data.get("stops", {}),
-    njt_static.validate_njt_archive,
+    njt_static.validate_njt_publication,
     njt_static._REQUIRED_MEMBERS,
     warm=warmups._warm_njt_static,
     status="njt_static_status",
@@ -1002,6 +1005,44 @@ async def _drive_to_ready(app, field):
             break
         await asyncio.sleep(0.001)
     return seen
+
+
+# Every (loader, member) whose load REQUIRES the member, so a rotted cache there used to
+# be "usable" at the light check and then fail every load: trips.txt and stop_times.txt,
+# the two the light checks only checked for presence (the subway's since A02, NJ
+# Transit's stop_times.txt the ledger's own aside).
+DEEP_REQUIRED = [
+    (loader, member) for loader in FIVE_LOADERS for member in ("trips.txt", "stop_times.txt")
+]
+DEEP_REQUIRED_IDS = [f"{loader.name}-{member}" for loader, member in DEEP_REQUIRED]
+
+
+@pytest.mark.parametrize(("loader", "member"), DEEP_REQUIRED, ids=DEEP_REQUIRED_IDS)
+async def test_a_cache_unreadable_deep_in_a_required_member_is_refused_at_the_check(
+    tmp_path, monkeypatch, loader, member
+):
+    """THE CACHED CHECK IS THE PUBLICATION GATE (claude/static-rule-siblings, D2). A cache
+    with one 0xFF byte far into a member the load requires, past the first chunk a text
+    reader decodes and past any read that stops early, is refused at the check, named by
+    member in the reader's own words, treated as absent and re-downloaded: one download,
+    the new archive promoted and served. Under the light check it was called usable, and
+    the load raised at the byte on every attempt until MAX_AGE_DAYS (or, after D1, was
+    discarded by the residual arm, which costs the attempt and leaves the group failed)."""
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(undecodable_deep_in(good_archive(), member))
+    with pytest.raises(static_shared.StaticValidationError) as refused:
+        static_shared.validate_archive(cache, loader.validate)
+    assert refused.value.member == member
+    assert str(refused.value).startswith(f"{member} is not readable as CSV ('utf-8' codec")
+    published = good_archive()
+    calls: list = []
+    _patch_download(monkeypatch, loader.module, published, calls=calls)
+
+    data = await loader.load()
+
+    assert loader.served(data)
+    assert calls == [cache], "refused at the check: one download, nothing failed first"
+    assert cache.read_bytes() == published
 
 
 @pytest.mark.parametrize("loader", FIVE_LOADERS, ids=FIVE_IDS)

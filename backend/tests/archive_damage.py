@@ -97,3 +97,16 @@ def undecodable_deep_in(archive: bytes, member: str, *, filler: int = 4000) -> b
                 assert len(body) - body.index(b"\xff") < 64 and body.index(b"\xff") > 8192
             target.writestr(info.filename, body, compress_type=info.compress_type)
     return buf.getvalue()
+
+
+def bad_central_directory_offset(archive: bytes) -> bytes:
+    """The archive with its end-of-central-directory record's offset bit-rotted (one high
+    bit flipped). zipfile still opens and lists it, since it finds the directory by its
+    size from the end, and then every member read seeks to the rotted offset: on a file
+    on disk that is OSError(EINVAL), errno and all, so no test on OSError's errno tells
+    it from the environment's faults (the A02 branch's second review round measured it)."""
+    raw = bytearray(archive)
+    eocd = raw.rfind(b"PK\x05\x06")
+    offset = int.from_bytes(raw[eocd + 16 : eocd + 20], "little")
+    raw[eocd + 16 : eocd + 20] = (offset ^ 0x00400000).to_bytes(4, "little")
+    return bytes(raw)

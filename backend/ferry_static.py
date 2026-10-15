@@ -39,6 +39,8 @@ from static_shared import (
     UNREADABLE_AT_LOAD,
     cached_archive_is_usable,
     parse_member,
+    read_as_loaded,
+    read_or_refuse,
     require_members,
     require_parsed,
     staged_fetch,
@@ -79,12 +81,19 @@ _REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt", "stop
 
 
 def validate_ferry_archive(zf: zipfile.ZipFile) -> None:
-    """Can we serve NYC Ferry from this archive? Raises StaticValidationError if not.
+    """The first stage of validate_ferry_publication: the members, and the two tables
+    whose emptiness is the failure (docks and routes). Raises StaticValidationError.
+
+    It used to be the cached check on its own (the "light" validator), which left every
+    other member the load reads checked for presence only; since
+    claude/static-rule-siblings (D2) the cached check runs the whole publication gate,
+    and this is only its cheap first half, run first so a missing member or an empty
+    stops table is reported before the expensive parse.
 
     Deliberately STRICTER than _parse_zip, which tolerates a missing routes.txt or
-    stop_times.txt at parse time. That leniency is about surviving an archive
-    already on disk; this decides whether to ACCEPT a new publication, and one
-    missing a member it should have is worth rejecting while the previous archive
+    stop_times.txt at parse time. That leniency is about the parser's own tests and
+    hand-built zips; this decides whether an archive may be served from at all, and
+    one missing a member it should have is worth rejecting while the previous archive
     still serves.
     """
     require_members(zf, _REQUIRED_MEMBERS)
@@ -97,25 +106,25 @@ def validate_ferry_archive(zf: zipfile.ZipFile) -> None:
 
 
 def validate_ferry_publication(zf: zipfile.ZipFile) -> None:
-    """The gate a NEW archive must pass before it may replace the cached one.
+    """THE GATE: a new archive must pass it before it may replace the cached one, and
+    the cached one must pass it to be served (claude/static-rule-siblings, D2).
 
-    Strictly stronger than validate_ferry_archive, and the difference is the whole
-    point: it runs the REAL parse of every table the load reads, so an archive that
-    would fail the load can never be promoted over a working one.
+    It runs the REAL parse of every table the load reads, so "the gate passed" means
+    "the load will read every member it opens". A publication with clean stops.txt
+    and routes.txt but an undecodable byte in a table the first stage only checks for
+    presence used to pass validation, be renamed over the last-known-good, and then be
+    deleted by the residual arm: one bad publication, both archives gone. The cached
+    check had the same hole from the other side until D2: it ran the first stage
+    alone, so a cache that rotted in trips.txt or stop_times.txt was "usable" and
+    failed every load until MAX_AGE_DAYS.
 
-    Without this the pipeline had a hole exactly the shape of the bug it exists to
-    fix. A publication with clean stops.txt and routes.txt but an undecodable byte
-    in a table the light validator only checks for PRESENCE passed validation, was
-    renamed over the last-known-good, and was then deleted by the residual arm in
-    the loader below: one bad publication, and both the new archive and the good one
-    it replaced were gone.
-
-    The cost lands where it belongs. This runs once per download attempt, while the
-    light validator runs on every load, so the expensive tables (stop_times.txt
-    among them) are parsed twice only when something is actually being published.
+    What it costs, measured by backend/scripts/measure_static_gates.py on the
+    publication of 2026-10-12: 12.6 ms (median of five), against 0.3 ms for the first
+    stage alone. It runs off the serving loop (static_shared.cached_archive_is_usable),
+    at each process start and when the cache is re-checked.
     """
     validate_ferry_archive(zf)
-    _parse_open(zf)
+    _parse_open(zf, read=read_or_refuse)
 
 
 async def _download_zip() -> None:
@@ -297,29 +306,23 @@ def _parse_zip(zip_path: Path) -> dict:
         return _parse_open(zf)
 
 
-def _parse_open(zf: zipfile.ZipFile) -> dict:
+def _parse_open(zf: zipfile.ZipFile, read=read_as_loaded) -> dict:
     """The parse itself, over an already-open archive, so validate_ferry_publication
-    can run the REAL load against a staged file that has no cache path yet."""
-    with zf.open("stops.txt") as raw:
-        stops = _parse_stops(raw)
-    with zf.open("trips.txt") as raw:
-        trips = _parse_trips(raw)
-    with zf.open("shapes.txt") as raw:
-        shapes = _parse_shapes(raw)
-    try:
-        member = zf.open("routes.txt")
-    except KeyError:
-        routes: dict[str, dict] = {}
-    else:
-        with member as raw:
-            routes = _parse_routes(raw)
-    try:
-        member = zf.open("stop_times.txt")
-    except KeyError:
-        stop_times: dict[str, list[str]] = {}
-    else:
-        with member as raw:
-            stop_times = _parse_stop_times(raw)
+    can run the REAL load against a staged file that has no cache path yet.
+
+    `read` takes each member's read: the load's default lets a parser's error through
+    to the residual arm, and the gate passes static_shared.read_or_refuse, which refuses
+    it under the member's name. One sequence of reads for both (D2)."""
+    present = set(zf.namelist())
+
+    def table(member: str, parse):
+        return read(lambda: parse_member(zf, member, parse), member)
+
+    stops = table("stops.txt", _parse_stops)
+    trips = table("trips.txt", _parse_trips)
+    shapes = table("shapes.txt", _parse_shapes)
+    routes = table("routes.txt", _parse_routes) if "routes.txt" in present else {}
+    stop_times = table("stop_times.txt", _parse_stop_times) if "stop_times.txt" in present else {}
     return {
         "stops": stops,
         "trips": trips,
@@ -424,7 +427,10 @@ async def load_ferry_static() -> dict:
     # directions: validate_ferry_archive refuses to promote such a publication,
     # and cached_archive_is_valid rejects one already on disk before it is
     # parsed, so the retry re-fetches by itself.
-    usable = await cached_archive_is_usable(zip_path, validate_ferry_archive)
+    # THE CACHED CHECK IS THE PUBLICATION GATE (D2), so "usable" means the load will
+    # read every member it opens, and a cache that rotted anywhere the load reads is
+    # treated as absent and re-downloaded rather than failing every attempt.
+    usable = await cached_archive_is_usable(zip_path, validate_ferry_publication)
     fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
@@ -443,17 +449,13 @@ async def load_ferry_static() -> dict:
     try:
         data = _parse_zip(zip_path)
     except UNREADABLE_AT_LOAD as exc:
-        # The residual below the CACHED-archive validator, which is lighter than
-        # the one every publication passes. Reaching here means the bytes on disk
-        # were fully parseable when they were promoted and are not now (rot, a
-        # truncated write), or predate C5 entirely. Unlink is right in exactly that
-        # case and only that case: this file IS the cache, nothing better sits
-        # behind it, and keeping it would wedge every retry on the same bytes. A
-        # freshly promoted archive cannot land here, because
-        # validate_ferry_publication ran this same parse before the rename. The
-        # classes are the ones every loader shares (static_shared.UNREADABLE_AT_LOAD,
-        # which says why OSError is not one); this arm's own tuple lacked zlib.error,
-        # so a damaged DEFLATE stream in a cached member raised past it every attempt.
+        # THE RESIDUAL ARM, the backstop below a check that already parsed this same
+        # archive with this same parse (validate_ferry_publication, at the cached check
+        # and before any promotion). Reaching here means the bytes changed after the
+        # check (rot, a torn write). Unlink is right in exactly that case: this file IS
+        # the cache, nothing better sits behind it, and keeping it would wedge every
+        # retry on the same bytes. The classes are the ones every loader shares
+        # (static_shared.UNREADABLE_AT_LOAD, which says why OSError is not one).
         logger.warning("Cached NYC Ferry static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

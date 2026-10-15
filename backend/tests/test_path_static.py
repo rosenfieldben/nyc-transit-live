@@ -178,7 +178,7 @@ DEFAULT_STOP_TIME_ROWS = [{"trip_id": "t1", "stop_id": "781718", "stop_sequence"
 
 
 def write_loadable_path_zip(path, **kwargs):
-    """Write a zip that passes validate_path_archive (C5 seam).
+    """Write a zip that passes validate_path_publication, the gate the cached check runs.
 
     The validator requires stop_times.txt, which 13d's advance matching walks, so
     every archive a cache-lifecycle test hands load_path_static carries one. The

@@ -171,7 +171,7 @@ DEFAULT_STOP_TIME_ROWS = [
 
 
 def write_loadable_ferry_zip(path, **kwargs):
-    """Write a zip that passes validate_ferry_archive (C5 seam).
+    """Write a zip that passes validate_ferry_publication, the gate the cached check runs.
 
     The validator requires stop_times.txt, which H5's routes-per-dock index needs
     to route a route-scoped alert to a dock, so every archive a cache-lifecycle

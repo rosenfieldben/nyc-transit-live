@@ -668,6 +668,44 @@ def test_finding_4_cold_start_stays_failed_then_heals(harness):
         assert app.get("/api/subway-stops"), "healing must actually place stations"
 
 
+def test_a_rotted_railroad_cache_is_refused_at_the_check_and_both_systems_serve(harness):
+    """THE CACHED CHECK IS THE PUBLICATION GATE (claude/static-rule-siblings, D2), with a
+    cache placed on disk before the process starts, which is what rot looks like to the
+    next boot: LIRR's cache is the unreadable-trips publication's bytes (a byte that is
+    not UTF-8 in trips.txt), with a fresh mtime. The check runs the gate, refuses it by
+    member, treats it as absent, and the warmup downloads the good publication: one
+    LIRR download, and LIRR and Metro-North both serve.
+
+    Before D2 the check was the light validator, which never opened trips.txt, so the
+    cache was "usable" with no download, the load raised reading it, and LIRR went down
+    for the cache's life: through the gather with Metro-North beside it before D1, alone
+    after D1 (its residual arm discards the cache, and a partial ready is never retried,
+    F06/A05).
+
+    Hermetic counterpart: backend/tests/test_static_shared.py::
+    test_a_cache_unreadable_deep_in_a_required_member_is_refused_at_the_check.
+    """
+    static = harness.data_dir / "gtfs_static"
+    static.mkdir(parents=True, exist_ok=True)
+    cache = static / "gtfs_lirr.zip"
+    cache.write_bytes(harness.sim.archives["lirr"].bodies["unreadable-trips"])
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: (
+                s["static_archives"].get("railroad_LIRR", {}).get("last_promoted_at") is not None
+            ),
+            "the good LIRR publication to replace the refused cache",
+        )
+        app.await_status(lambda s: s["railroad_static"] == "ready", "the railroad group")
+        assert harness.sim.fetches("lirr") == 1, "refused at the check: exactly one download"
+        assert {stop["system"] for stop in app.get("/api/railroad-stops")} == {"LIRR", "MNR"}
+        assert app.status()["static_archives"]["railroad_LIRR"]["last_download_error"] is None
+        assert "gtfs_lirr.zip is unusable (trips.txt is not readable as CSV" in app.log(
+            limit=200_000
+        )
+    assert cache.read_bytes() == harness.sim.archives["lirr"].bodies["good"]
+
+
 # ---------------------------------------------------------------------------
 # 15a: NJ Transit, the first credentialed upstream
 # ---------------------------------------------------------------------------
@@ -1289,6 +1327,11 @@ def test_njt_a_redirected_mint_never_delivers_the_credentials(harness):
         assert "getToken returned HTTP 307" in log, log[-2000:]
         assert "not-a-real-password" not in log and "TooManyRedirects" not in log, log[-2000:]
         assert app.status()["static_archives"]["njt"]["last_promoted_at"] is None
+        # Waited for, not assumed: the NJ Transit attempt fails within a second, and on
+        # a loaded machine the subway's own cold start can still be under way then, so
+        # the stops endpoint answered 503 "still loading" and failed this scenario for
+        # a reason that is not its claim (seen once in a full run of this tier).
+        app.await_status(lambda s: s["subway_static"] == "ready", "the subway to warm")
         assert app.get("/api/subway-stops"), "one refused mint must not take the app down"
 
 

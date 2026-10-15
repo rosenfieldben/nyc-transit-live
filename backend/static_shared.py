@@ -138,6 +138,16 @@ except ImportError:  # a build without liblzma, where zipfile cannot read such a
 # the archive, so such an error fails the attempt with the cache kept, and the warmup's
 # next rung reads it again. Five loaders kept five copies of this list and they drifted
 # apart (four of them in three different shapes); one tuple is what keeps them equal.
+#
+# NOT QUITE EVERY ARCHIVE ERROR, and why that no longer wedges anything: a member
+# compressed with bzip2 whose stream is damaged raises a plain OSError, one with lzma
+# raises LZMAError, and a bit-rotted central-directory offset raises OSError(EINVAL) on
+# every member read, errno and all, so no test on the class or the errno tells them from
+# the environment. They are caught one step earlier instead. Every loader's cached check
+# runs its PUBLICATION gate (D2 on the same branch), which reads every member the load
+# requires through read_or_refuse and under validate_archive's broad catch, so such a
+# cache is refused at the check, named by member, treated as absent and re-downloaded;
+# it never reaches a load. What reaches this arm is a cache that changed after its check.
 UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
     UnicodeDecodeError,
     csv.Error,
@@ -146,6 +156,64 @@ UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
     KeyError,
     EOFError,
 )
+
+
+def read_or_refuse(parse: Callable[[], _Parsed], member: str) -> _Parsed:
+    """Run `parse`, a read of `member`, and return what it yields; whatever reading the
+    member raises becomes a StaticValidationError that NAMES it.
+
+    require_parsed is this plus a floor, and a gate that needs the parsed value rather
+    than a floor (NJ Transit's service calendar) calls this directly, so every member a
+    gate reads is refused under its own name with the same classes, never as "archive".
+
+    THE MESSAGE CARRIES THE READER'S OWN WORDS (A02, D7), because it is what an operator
+    reads on /api/status as last_download_error. The decode and CSV errors say what
+    ("'utf-8' codec can't decode byte 0xff"), and a damaged deflate stream or a CRC
+    mismatch inside the member says which member, which the archive-level catch in
+    validate_archive cannot. Not where: a decode error's "position" counts from the start
+    of the chunk the text reader was decoding, not from the start of the member, so in a
+    large member it does not locate the byte, and a csv.Error carries no line at all. All
+    of it is library text about the archive's bytes, never about our filesystem, so it is
+    safe to publish (describe_failure's rule).
+    """
+    try:
+        return parse()
+    except KeyError as exc:
+        raise StaticValidationError(f"missing required member(s): {member}", member=member) from exc
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise StaticValidationError(
+            f"{member} is not readable as CSV ({exc})", member=member
+        ) from exc
+    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__}: {exc})", member=member
+        ) from exc
+    except _OTHER_READ_ERRORS as exc:
+        # THE REST OF WHAT READING A MEMBER CAN RAISE, named by member so a degraded
+        # member is keyed by its name and not as "archive" (the A02 branch's review, F4):
+        # a bz2 stream the decompressor refuses (a plain OSError with no errno), an
+        # lzma one (LZMAError), a compression method this build lacks, an encrypted
+        # member, a bit-rotted central-directory offset (OSError(EINVAL) on every member
+        # read), and the environment (an OSError with an errno). The TYPE only, as
+        # validate_archive's broad catch does, because an OSError's text can carry a
+        # path of ours and this message is published.
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__})", member=member
+        ) from exc
+
+
+def read_as_loaded(parse: Callable[[], _Parsed], member: str) -> _Parsed:
+    """read_or_refuse's twin for the LOAD: the same call shape, and the parser's own
+    errors let through, so the residual arm sees the classes it names.
+
+    A loader whose gate runs its whole parse (_parse_open) takes one of the two as its
+    `read`: the load passes this one, the gate passes read_or_refuse. So the gate and
+    the load run ONE sequence of reads through the loader's own parsers, and a failure
+    at the gate is refused under the member's own name rather than as "unreadable
+    archive (UnicodeDecodeError)", which named no member and was what the ferry's, the
+    PATH's and the railroad's gates said before claude/static-rule-siblings (D2)."""
+    del member  # the load's errors name nothing; the arm logs the exception itself
+    return parse()
 
 
 def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
@@ -169,45 +237,15 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     leave a gap exactly the width of "has rows, none of them usable", and a
     fresh-by-mtime archive sitting in that gap is the wedge R3 was written for.
 
-    The double parse is cheap for the tables most loaders gate here (stops.txt and
-    routes.txt, tens to low thousands of rows). It is not cheap for the subway, whose
-    validator parses every member its load reads, stop_times.txt included (A02).
+    The double parse is cheap for the small tables. It is not cheap for stop_times.txt,
+    which every loader's gate parses now that the gate is also the cached check
+    (claude/static-rule-siblings, D2): the subway's since A02, the others' since D2, and
+    what that costs is measured per loader in the 2026-10-12 ledger.
 
-    THE MESSAGE NAMES THE MEMBER AND CARRIES THE READER'S OWN WORDS (A02, D7), because
-    it is what an operator reads on /api/status as last_download_error. The decode and
-    CSV errors say what ("'utf-8' codec can't decode byte 0xff"), and a damaged deflate
-    stream or a CRC mismatch inside the member says which member, which the
-    archive-level catch in validate_archive cannot. Not where: a decode error's
-    "position" counts from the start of the chunk the text reader was decoding, not
-    from the start of the member, so in a large member it does not locate the byte,
-    and a csv.Error carries no line at all. All of it is
-    library text about the archive's bytes, never about our filesystem, so it is safe
-    to publish (describe_failure's rule).
+    A read that fails is refused through read_or_refuse, by member and in the reader's
+    own words.
     """
-    try:
-        parsed = parse()
-    except KeyError as exc:
-        raise StaticValidationError(f"missing required member(s): {member}", member=member) from exc
-    except (UnicodeDecodeError, csv.Error) as exc:
-        raise StaticValidationError(
-            f"{member} is not readable as CSV ({exc})", member=member
-        ) from exc
-    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
-        raise StaticValidationError(
-            f"{member} is not readable ({type(exc).__name__}: {exc})", member=member
-        ) from exc
-    except _OTHER_READ_ERRORS as exc:
-        # THE REST OF WHAT READING A MEMBER CAN RAISE, named by member so a degraded
-        # member is keyed by its name and not as "archive" (the branch's review, F4):
-        # a bz2 stream the decompressor refuses (a plain OSError with no errno), an
-        # lzma one (LZMAError), a compression method this build lacks, an encrypted
-        # member, and the environment (an OSError with an errno). The TYPE only, as
-        # validate_archive's broad catch does, because an OSError's text can carry a
-        # path of ours and this message is published.
-        raise StaticValidationError(
-            f"{member} is not readable ({type(exc).__name__})", member=member
-        ) from exc
-    if not parsed:
+    if not read_or_refuse(parse, member):
         raise StaticValidationError(f"{member} yielded no usable {what}", member=member)
 
 

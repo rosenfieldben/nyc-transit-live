@@ -105,6 +105,7 @@ from static_shared import (
     StaticValidationError,
     cached_archive_is_usable,
     parse_member,
+    read_or_refuse,
     require_members,
     require_parsed,
     staged_fetch,
@@ -507,9 +508,12 @@ def _today(now: float | None = None) -> str:
 
 
 def validate_njt_archive(zf: zipfile.ZipFile, *, now: float | None = None) -> None:
-    """Can we serve NJ Transit from this archive? Raises StaticValidationError if not.
+    """The first stage of validate_njt_publication. Raises StaticValidationError.
 
-    Three gates, in the order a failure is most useful to read:
+    It used to be the cached check on its own (the "light" validator); since
+    claude/static-rule-siblings (D2) the cached check runs the whole publication gate,
+    and this is its first half: three gates, in the order a failure is most useful to
+    read.
 
     1. REQUIRED MEMBERS. Presence only, and the LIST is the interesting part:
        calendar.txt and feed_info.txt are not on it, because this feed ships
@@ -528,15 +532,14 @@ def validate_njt_archive(zf: zipfile.ZipFile, *, now: float | None = None) -> No
        stops and no trips places markers that can never carry a train, which is the
        same silent lie one table over.
 
-       stop_times.txt IS NOT GATED HERE, and its absence from this list is what
-       makes the split with validate_njt_publication real. It is the one expensive
-       table, this validator runs on EVERY load, and the publication gate below
-       parses it in full before any archive may be promoted. So a cached archive
-       cannot contain a stop_times that never passed that gate, and a load pays for
-       the three cheap tables rather than for all four. (An earlier draft gated all
-       four here, which quietly made the two validators equivalent: the publication
-       gate's extra parse became unreachable, and the test that claimed to pin it
-       could not fail.)
+       stop_times.txt IS GATED IN THE SECOND HALF, validate_njt_publication, which
+       parses it in full. That split used to be the point: this half alone was the
+       cached check, run on every load, and the expensive table was paid for once per
+       download. It is why a cache that rotted in stop_times.txt was "usable" and then
+       failed every load, the case the ledger's live list carried until D2 made the
+       cached check the whole gate. (An earlier draft gated all four tables here,
+       which quietly made the two validators equivalent: the publication gate's extra
+       parse became unreachable, and the test that claimed to pin it could not fail.)
 
     3. THE SERVICE-DATE GUARD, this feed's staleness truth. Every other loader in
        this app can defer staleness to the contract monitor's feed_info reader;
@@ -584,23 +587,22 @@ def _service_span(zf: zipfile.ZipFile) -> str | None:
     ordinary GTFS shape from being confidently misdiagnosed rather than merely
     unsupported (see _parse_calendar for the three measured variants).
     """
-    try:
-        calendar_dates = parse_member(zf, "calendar_dates.txt", _parse_calendar_dates)
-        # Present-or-absent rather than required: this feed ships no calendar.txt,
-        # and _REQUIRED_MEMBERS deliberately does not ask for one.
-        try:
-            member = zf.open("calendar.txt")
-        except KeyError:
-            calendar_end = None
-        else:
-            with member as raw:
-                calendar_end = _parse_calendar(raw)
-    except (UnicodeDecodeError, csv.Error) as exc:
-        # The same shape-naming message require_parsed produces for the tables it
-        # gates. Checked by hand rather than through require_parsed because
-        # emptiness is not the only question asked here: the guard needs the parsed
-        # value, and parsing twice to reuse a helper would buy nothing.
-        raise StaticValidationError("the service calendar is not readable as CSV") from exc
+    # Through read_or_refuse rather than require_parsed: emptiness is not the question
+    # here (the guard below needs the parsed value), but a read that fails is refused
+    # with the same classes, under the member's own name. It used to catch the decode
+    # and CSV errors only, as "the service calendar is not readable as CSV", and leave
+    # a damaged stream to validate_archive's broad catch, which names no member.
+    calendar_dates = read_or_refuse(
+        lambda: parse_member(zf, "calendar_dates.txt", _parse_calendar_dates),
+        "calendar_dates.txt",
+    )
+    # Present-or-absent rather than required: this feed ships no calendar.txt, and
+    # _REQUIRED_MEMBERS deliberately does not ask for one.
+    calendar_end = None
+    if "calendar.txt" in zf.namelist():
+        calendar_end = read_or_refuse(
+            lambda: parse_member(zf, "calendar.txt", _parse_calendar), "calendar.txt"
+        )
     latest = latest_service_date(calendar_dates)
     if calendar_end is not None and (latest is None or calendar_end > latest):
         return calendar_end
@@ -608,20 +610,30 @@ def _service_span(zf: zipfile.ZipFile) -> str | None:
 
 
 def validate_njt_publication(zf: zipfile.ZipFile, *, now: float | None = None) -> None:
-    """The gate a NEW archive must pass before it may replace the cached one.
+    """THE GATE: a new archive must pass it before it may replace the cached one, and
+    the cached one must pass it to be served (claude/static-rule-siblings, D2).
 
-    Strictly stronger than validate_njt_archive, the same split every other loader
-    keeps and for the same reason: this runs the REAL parse of every table the load
-    reads, so an archive that would fail the load can never be promoted over a
-    working one. A publication with clean stops, routes and trips but an undecodable
-    byte in stop_times.txt (which the light validator does not open at all) would
-    otherwise pass, be renamed over the last-known-good, and then be discarded by
-    the residual arm in the loader: one bad publication, both archives gone.
+    This runs the REAL parse of every table the load reads and requires, so an archive
+    that would fail the load can never be promoted over a working one, and a cache that
+    rotted where the load reads is treated as absent and re-downloaded rather than
+    failing every load until MAX_AGE_DAYS. A publication with clean stops, routes and
+    trips but an undecodable byte in stop_times.txt (which the first stage does not
+    open at all) would otherwise pass, be renamed over the last-known-good, and then be
+    discarded by the residual arm in the loader: one bad publication, both archives
+    gone. Until D2 the cached check ran the first stage alone, and a cache whose
+    stop_times.txt rotted, or held a bzip2 or lzma stream its decompressor refuses
+    (a plain OSError, an LZMAError: classes outside the residual arm), was "usable"
+    and then raised at every load for the cache's life.
 
     stop_times.txt IS THE DIFFERENCE, and it is the whole difference: one table, one
-    added gate. Between the two validators every table the load reads is parsed for
-    real before an archive may be promoted, and the expensive one is paid for once
-    per download attempt rather than on every load.
+    added gate. Between the two stages every required table the load reads is parsed
+    for real. What it costs, measured by backend/scripts/measure_static_gates.py on
+    the COMMITTED FIXTURE (the publication is behind a token, and a token is a mint):
+    60 ms (median of five) against 52 ms for the first stage alone, whose
+    calendar_dates.txt parse is most of both. The fixture is a trim of 1,722 stop_times
+    rows; the publication's table is larger in proportion to its 172 stations. It runs
+    off the serving loop (static_shared.cached_archive_is_usable), at each process
+    start and when the cache is re-checked.
 
     DELIBERATELY NOT a blanket `_parse_open(zf)` on top. That is what this used to
     be, and it made the two validators equivalent: every table _parse_open touches
@@ -1004,11 +1016,13 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     zip_path = NJT_STATIC_ZIP
 
     def validate(zf: zipfile.ZipFile) -> None:
-        validate_njt_archive(zf, now=now)
+        validate_njt_publication(zf, now=now)
 
     # FRESH MEANS VALID AND RECENT (C5), and for this feed "valid" carries the
     # service-date guard, so a cached archive whose schedule expired overnight is
-    # rejected here and re-downloaded rather than served for another 30 days.
+    # rejected here and re-downloaded rather than served for another 30 days. THE CHECK
+    # IS THE PUBLICATION GATE (D2), so "usable" also means the load will read every
+    # required member it opens.
     usable = await cached_archive_is_usable(zip_path, validate)
     fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
@@ -1047,32 +1061,28 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         # why OSError is not one: the environment's faults fail the attempt and keep
         # the cache, as the operator ruled on the A02 branch's review).
         #
-        # NOT QUITE EVERY ARCHIVE ERROR (the branch's review, recorded on the ledger's
-        # live list for the operator): a member compressed with bzip2 whose stream is
+        # NOT QUITE EVERY ARCHIVE ERROR: a member compressed with bzip2 whose stream is
         # damaged raises a plain OSError, lzma's raises LZMAError, and a bit-rotted
         # central-directory offset raises OSError(EINVAL) on every member read, errno
-        # and all, so no errno test separates them from the environment. stop_times.txt
-        # is the required member the light cached check never opens, so a cache that
-        # rots there escapes this arm and is kept until MAX_AGE_DAYS. The ruling named
-        # this tuple, so it is reported, not widened; the subway's answer, a cached
-        # check that opens what the load reads, is the one that closes it.
+        # and all, so no errno test separates them from the environment. The ruling
+        # named this tuple, so it was not widened; the closing move was the subway's,
+        # a cached check that opens what the load reads (D2 on
+        # claude/static-rule-siblings): such a cache is refused at the check by
+        # member and re-downloaded, and never reaches this arm.
         #
-        # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. A freshly promoted archive
-        # reaches here only through a member the publication gate does not parse:
-        # validate_njt_publication parses every REQUIRED member, and shapes.txt,
-        # the one optional member, is never opened before the load. Its open and read
-        # failures (the classes _parse_shapes_member names) are caught there and
-        # degrade to no route lines, so this arm sees the required members only, and
-        # only from a cache that changed after it was checked (the light validator a
-        # load runs does not open stop_times.txt).
+        # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. validate_njt_publication parses
+        # every REQUIRED member, at the cached check and before any promotion, so this
+        # arm sees a required member only from a cache that changed after it was
+        # checked. shapes.txt, the one optional member, is never opened by the gate;
+        # its open and read failures (the classes _parse_shapes_member names) are
+        # caught there and degrade to no route lines.
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}
     if not data["stop_times"]:
-        # The member is required (so it is present) and every PUBLICATION is gated
-        # on it parsing to something, but the light cached-archive validator does
-        # not open it (see validate_njt_archive), so a cache that rotted since it
-        # was promoted can still reach here empty. The group stays ready because
+        # The member is required (so it is present) and the gate, at the cached check
+        # as at a promotion, requires it to parse to something, so this is a backstop
+        # for a cache that changed after its check. The group stays ready because
         # stops still place markers; what degrades is the routes-per-station index
         # and the scheduled stop schedule, both of which come up empty. Worth one
         # line so an operator can tell a degraded index from a code bug. Same

@@ -1170,9 +1170,10 @@ async def test_an_environment_error_at_load_keeps_every_loaders_cache(
     at the same moment. The fault is injected where the load reads and the cached check
     does not, so the check passes and the load meets it.
 
-    The railroad's arm turns its archive's errors into None for that system; this one is
-    the environment's, so it fails the attempt for both systems (the warmup retries),
-    which is _load_one's contract on purpose (see its docstring)."""
+    The railroad runs here as one system (see _railroad_paths), where failing the attempt
+    and returning None for it look the same; that an environment fault fails the attempt
+    for BOTH systems, _load_one's contract on purpose, is
+    test_railroad_static.py::test_an_environment_fault_in_one_system_fails_the_attempt_for_both."""
     monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
     cache = loader.set_path(tmp_path, monkeypatch)
     cache.write_bytes(good_archive())

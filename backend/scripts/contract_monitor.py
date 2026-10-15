@@ -444,6 +444,10 @@ SUBWAY_WATCHED_MEMBERS = ("shapes.txt",)
 # it for a long while (its _REQUIRED_MEMBERS) and the monitor's lists had not followed,
 # which the roster test in test_contract_monitor now holds equal for all five.
 RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt")
+# The railroads' routes-per-station index is DECORATIVE since claude/static-rule-siblings
+# (D3): a publication without a stop_times.txt that builds it is served without the
+# index, so its absence is a WARN, as the subway's and NJ Transit's shapes.txt are.
+RAILROAD_WATCHED_MEMBERS = ("stop_times.txt",)
 PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt", "routes.txt")
 FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt", "routes.txt")
 # NJ Transit ships NO calendar.txt and NO feed_info.txt, by design, so neither can
@@ -463,13 +467,13 @@ NJT_REQUIRED_MEMBERS = (
 # separate band, because the two answer different questions and conflating them
 # gets the severity wrong in the direction that matters.
 #
-# shapes.txt is the case. njt_static deliberately does not parse it (15a defers
-# geometry to 15c) and does not require it, and a hermetic test pins that a
-# publication without it still serves. So upstream dropping it is worth a HUMAN
-# LOOK, which is what WARN means in this file, and is emphatically not "this is
-# really broken", which is what FAIL means and what exits the run non-zero. Listing
-# it as required turned the 6-hourly schedule red over a member the app was
-# designed to survive losing.
+# shapes.txt is the case. njt_static draws its route lines from it (15c) and does not
+# require it, and a hermetic test pins that a publication without it still serves. So
+# upstream dropping it is worth a HUMAN LOOK, which is what WARN means in this file,
+# and is emphatically not "this is really broken", which is what FAIL means and what
+# exits the run non-zero. Listing it as required turned the 6-hourly schedule red over
+# a member the app was designed to survive losing. Present and drawing nothing is the
+# same WARN, asked of the app's geometry gate (DECORATIVE_GATES).
 NJT_WATCHED_MEMBERS = ("shapes.txt",)
 
 # THE APP'S OWN PUBLICATION GATES, one per static check (claude/static-rule-siblings,
@@ -488,12 +492,28 @@ STATIC_GATES: dict[str, Callable[..., None]] = {
     "njt-static": njt_static.validate_njt_publication,
 }
 
+# THE APP'S DECORATIVE GATES (claude/static-rule-siblings, D3), the members a deploy
+# serves without: each decides, on a cold start, whether the publication's lines (the
+# subway's and NJ Transit's shapes.txt) or index (the railroads' stop_times.txt) come
+# with it. A refusal here is a WARN in the gate's words, never a FAIL: the deploy would
+# serve every station without that member, and upstream's republication is the fix.
+# test_contract_monitor pins this map by hand, beside STATIC_GATES.
+DECORATIVE_GATES: dict[str, Callable[[zipfile.ZipFile], None]] = {
+    "subway-static": static_data.validate_subway_geometry,
+    "railroad-static": railroad_static.validate_railroad_stop_times,
+    "njt-static": njt_static.validate_njt_geometry,
+}
+
 # What reading a publication with the app's own parsers can raise, from the app
 # (static_shared): the archive's classes and the other read errors. The checks caught
 # three of them (BadZipFile, KeyError, UnicodeDecodeError), so a parse that raised
 # zlib.error or csv.Error, which the gate above now refuses by name, ended the run
-# before the check's FAIL was reported.
-_UNREADABLE = static_shared.UNREADABLE_MEMBER
+# before the check's FAIL was reported. ValueError and OverflowError are the monitor's
+# own addition: it reads members from the fetched bytes (BytesIO), where a bit-rotted
+# central-directory offset raises ValueError rather than the file's OSError(EINVAL), and
+# a zip64 offset past 2**63 raises OverflowError (ValueError on a file); the review of
+# claude/static-rule-siblings found both ending the run.
+_UNREADABLE = (*static_shared.UNREADABLE_MEMBER, ValueError, OverflowError)
 
 # stops.txt columns njt_static._parse_stops READS to build a marker: the id, the
 # name the identity spot check compares, and the two coordinates a row without
@@ -1406,7 +1426,7 @@ def _parse_subway_bytes(raw: bytes) -> dict:
             stations = static_data.load_subway_stations()
             shapes = static_data.load_subway_route_shapes()
             try:
-                static_shared.validate_archive(zpath, static_data.validate_subway_geometry)
+                static_shared.validate_archive(zpath, DECORATIVE_GATES["subway-static"])
                 geometry = None
             except static_shared.StaticValidationError as exc:
                 geometry = str(exc)
@@ -1622,9 +1642,23 @@ def check_railroad_static(
             continue
         parsed[system] = stops
         _check_members(statuses, details, members, RAILROAD_REQUIRED_MEMBERS, prefix=f"{system} ")
+        _check_members(
+            statuses, details, members, RAILROAD_WATCHED_MEMBERS, prefix=f"{system} ", status=WARN
+        )
         if refusal is not None:
             statuses.append(FAIL)
             details.append(_refused(refusal, system, prefix=f"{system} "))
+        # PRESENT AND INDEXING NOTHING, asked of the app's own index gate (DECORATIVE_GATES).
+        if "stop_times.txt" in members:
+            index = _app_gate(
+                res.content, f"gtfs_{system.lower()}.zip", DECORATIVE_GATES["railroad-static"]
+            )
+            if index is not None:
+                statuses.append(WARN)
+                details.append(
+                    f"{system} stop_times.txt builds no routes-per-station index (a deploy now "
+                    f"would serve {system} without it: {index})"
+                )
         if len(stops) < RAILROAD_STATIC_MIN_STOPS:
             statuses.append(FAIL)
             details.append(f"{system} only {len(stops)} stops (< {RAILROAD_STATIC_MIN_STOPS})")
@@ -1952,6 +1986,16 @@ def check_njt_static(
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
+            # THE SPAN THE GATE GUARDS, read by the gate's own code: the later of
+            # calendar.txt's end_date and the last added calendar_dates day. A span of
+            # the monitor's own, from calendar_dates alone, would FAIL a publication that
+            # adopts calendar.txt while the app served it. Unreadable, the gate's refusal
+            # above already says so, and the band is not asked.
+            try:
+                latest: str | None = njt_static.service_span(zf)
+                span_read = True
+            except static_shared.StaticValidationError:
+                latest, span_read = None, False
         parsed = _parse_zip_bytes(njt_static._parse_zip, res.content, "gtfs_njt.zip")
     except _UNREADABLE as exc:
         return Result("njt-static", FAIL, _unparseable(exc, refusal, "NJ Transit")), None
@@ -1963,6 +2007,16 @@ def check_njt_static(
         statuses.append(FAIL)
         details.append(_refused(refusal, "NJ Transit"))
     _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
+    # PRESENT AND DRAWING NOTHING, asked of the app's own geometry gate (DECORATIVE_GATES)
+    # over the archive this run already holds, so it costs no mint.
+    if "shapes.txt" in members:
+        lines = _app_gate(res.content, "gtfs_njt.zip", DECORATIVE_GATES["njt-static"])
+        if lines is not None:
+            statuses.append(WARN)
+            details.append(
+                "shapes.txt draws no route lines (a deploy now would serve NJ Transit "
+                f"without them: {lines})"
+            )
     # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
     # njt_static treats this feed as FLAT: every parsed row is a boardable marker.
     # If that stops being true the loader's parser drops the non-boardable rows
@@ -2009,8 +2063,8 @@ def check_njt_static(
         elif expected not in (stop.get("name") or ""):
             statuses.append(FAIL)
             details.append(f"stop {stop_id} name is {stop.get('name')!r}, expected {expected}")
-    service_status, service_detail = _njt_service_status(
-        njt_static.latest_service_date(parsed.get("calendar_dates") or {}), now, tz
+    service_status, service_detail = (
+        _njt_service_status(latest, now, tz) if span_read else (PASS, "service span unread")
     )
     if service_status != PASS:
         statuses.append(service_status)

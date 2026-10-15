@@ -116,3 +116,43 @@ def bad_central_directory_offset(archive: bytes) -> bytes:
     assert not offset & 0x00400000, "the rot must add to the offset, so the archive under 4 MiB"
     raw[eocd + 16 : eocd + 20] = (offset ^ 0x00400000).to_bytes(4, "little")
     return bytes(raw)
+
+
+def offset_past_the_seek(archive: bytes, member: str) -> bytes:
+    """The archive with `member`'s central-directory entry pointing past 2**63: its
+    4-byte local-header offset set to 0xFFFFFFFF and a zip64 extra field carrying 2**63.
+    zipfile still opens and lists the archive and every other member reads, and then
+    opening `member` seeks there, which raises ValueError on a file (OverflowError on
+    BytesIO): a class outside every list the loaders named, found by the review of
+    claude/static-rule-siblings. The central directory grows by the extra's 12 bytes, so
+    the end record's directory size grows with it."""
+    raw = bytearray(archive)
+    eocd = raw.rfind(b"PK\x05\x06")
+    cd_size = int.from_bytes(raw[eocd + 12 : eocd + 16], "little")
+    cd_offset = int.from_bytes(raw[eocd + 16 : eocd + 20], "little")
+    directory = bytearray()
+    at = cd_offset
+    found = False
+    while at < cd_offset + cd_size:
+        name_len = int.from_bytes(raw[at + 28 : at + 30], "little")
+        extra_len = int.from_bytes(raw[at + 30 : at + 32], "little")
+        comment_len = int.from_bytes(raw[at + 32 : at + 34], "little")
+        end = at + 46 + name_len + extra_len + comment_len
+        entry = bytearray(raw[at:end])
+        if bytes(entry[46 : 46 + name_len]).decode() == member:
+            found = True
+            entry[42:46] = (0xFFFFFFFF).to_bytes(4, "little")
+            zip64 = (
+                (1).to_bytes(2, "little")
+                + (8).to_bytes(2, "little")
+                + (2**63).to_bytes(8, "little")
+            )
+            extra_at = 46 + name_len + extra_len
+            entry[extra_at:extra_at] = zip64
+            entry[30:32] = (extra_len + len(zip64)).to_bytes(2, "little")
+        directory += entry
+        at = end
+    assert found, f"{member} is not in the archive"
+    end_record = bytearray(raw[eocd:])
+    end_record[12:16] = len(directory).to_bytes(4, "little")
+    return bytes(raw[:cd_offset]) + bytes(directory) + bytes(end_record)

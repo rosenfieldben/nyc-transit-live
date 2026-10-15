@@ -25,7 +25,6 @@ import route_geometry
 from static_routes import fold_stop_routes
 from static_shared import (
     UNREADABLE_AT_LOAD,
-    UNREADABLE_MEMBER,
     cache_is_fresh,
     cached_archive_is_usable,
     read_as_loaded,
@@ -130,13 +129,28 @@ def validate_railroad_stop_times(zf: zipfile.ZipFile) -> None:
     handed to staged_fetch as `validate_when_replacing`: the subway's two-mode rule for
     its route lines, applied to the one member this loader reads and degrades around.
 
-      - Present and unreadable, or reading to no stop times, through the load's own
-        reader (_parse_stop_times): refused when a cache that serves is there to keep
-        (it is refused in favour of an index riders already have), and otherwise, on a
-        cold start (every deploy), promoted with stop_times.txt named under
-        degraded_members on /api/status, the system served without the index. Before
-        D3 the publication gate parsed it strictly, so such a publication was refused
-        in both modes and a cold start left the system off the map entirely.
+      - Present and unreadable, reading to no stop times, or indexing nothing, through
+        the load's own reader (_parse_stop_times) and the index's own join
+        (derive_railroad_stop_routes: no stop time whose trip names a route in
+        trips.txt, as when its trip_ids are foreign or its route_ids blank): refused
+        when a cache the loader calls usable is there to keep, and otherwise, on a cold
+        start (every deploy), promoted with stop_times.txt named under degraded_members
+        on /api/status, the system served without the index. Before D3 the publication
+        gate parsed it strictly, so such a publication was refused in both modes and a
+        cold start left the system off the map entirely.
+
+    THE JOIN, not only the rows (the review of claude/static-rule-siblings): a table that
+    parses and joins nothing builds an empty index as surely as a damaged one, and NJ
+    Transit's geometry gate and the subway's always-gate already ask what their builders
+    build.
+
+    "A CACHE THE LOADER CALLS USABLE" is the cached check's verdict, which does not open
+    this member, so the cache kept may itself be one promoted without an index; refusing
+    over it then keeps an archive no better than the publication refused, and a stale
+    one is downloaded again at each process start until upstream's index builds. That is
+    D3's rule as ruled (the subway's lines have had it since PR #126); in production the
+    data directory does not persist, so every start is a cold start and the case does
+    not arise.
       - Absent: degraded in both modes, never refused (DecorationAbsent), because a
         publication without the member is one this loader has always served.
 
@@ -144,11 +158,19 @@ def validate_railroad_stop_times(zf: zipfile.ZipFile) -> None:
     a promoted archive whose member cannot be read serves every station and train
     rather than reaching the residual arm.
 
-    It runs at a download, never at the cached check: 70 ms on LIRR's publication of
-    2026-10-14 and 1,451 ms on Metro-North's of 2026-10-15, whose stop_times.txt is
-    470,274 rows (measure_static_gates.py, medians of five), in staged_fetch's thread."""
+    It runs at a download, never at the cached check: 58 ms on LIRR's publication of
+    2026-10-14 and 1,448 ms on Metro-North's of 2026-10-15, whose stop_times.txt is
+    470,274 rows (measure_static_gates.py, medians of five, with the join), in
+    staged_fetch's thread."""
     require_decoration(zf, "stop_times.txt")
-    require_parsed(lambda: _parse_stop_times(zf), "stop_times.txt", "stop times")
+    stop_times = read_or_refuse(lambda: _parse_stop_times(zf), "stop_times.txt")
+    require_parsed(lambda: stop_times, "stop_times.txt", "stop times")
+    trips = read_or_refuse(lambda: _parse_trips(zf), "trips.txt")
+    require_parsed(
+        lambda: derive_railroad_stop_routes(trips, stop_times),
+        "stop_times.txt",
+        "routes-per-station index (a stop time whose trip names a route in trips.txt)",
+    )
 
 
 async def _download_zip(system: str, *, cache_serves: bool | None = None) -> None:
@@ -332,15 +354,20 @@ def _parse_stop_times(zf: zipfile.ZipFile) -> dict[str, list[str]]:
 
 def _read_stop_times(zf: zipfile.ZipFile, label: str = "railroad") -> dict[str, list[str]]:
     """The LOAD's read of the decorative member: _parse_stop_times, degrading to an empty
-    index on anything reading it can raise (static_shared.UNREADABLE_MEMBER), logged,
-    never failing the system. A publication whose stop_times.txt cannot be read is
-    promoted on a cold start (validate_railroad_stop_times), so its load must read
-    around the member; inside the residual arm it would discard the archive it was just
-    given and drop the system. Nothing is discarded here, which is also why the
-    environment's faults may degrade it."""
+    index on any Exception, logged, never failing the system. A publication whose
+    stop_times.txt cannot be read is promoted on a cold start (validate_railroad_stop_times),
+    so its load must read around the member; inside the residual arm it would discard
+    the archive it was just given and drop the system. Nothing is discarded here, which
+    is also why the environment's faults may degrade it.
+
+    ANY EXCEPTION, not a list, because the gate that promoted the member degraded catches
+    any (static_shared.validate_archive): a class this arm missed would raise out of
+    _load_one, past its residual arm, and take both railroads down through the gather
+    for the cache's life (a zip64 header offset past 2**63 raises ValueError; the review
+    of claude/static-rule-siblings)."""
     try:
         return _parse_stop_times(zf)
-    except UNREADABLE_MEMBER as exc:
+    except Exception as exc:
         logger.warning(
             "%s stop_times.txt is unreadable (%s); serving without the routes-per-station index",
             label,
@@ -484,8 +511,9 @@ async def _load_one(system: str) -> dict | None:
     if not fresh:
         try:
             # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache this
-            # check called usable keeps its index through a bad stop_times.txt, and one it
-            # called unusable is no cache to keep, whatever a second read would say.
+            # check called usable is kept through a bad stop_times.txt (whether or not its
+            # own index builds: the check does not open that member), and one it called
+            # unusable is no cache to keep, whatever a second read would say.
             await _download_zip(system, cache_serves=usable)
         except Exception as exc:
             if not usable:

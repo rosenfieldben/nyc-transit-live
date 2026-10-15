@@ -180,15 +180,15 @@ UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
     EOFError,
 )
 
-# EVERYTHING READING ONE MEMBER CAN RAISE, the classes read_or_refuse maps to a refusal
-# by name: the archive's own (above) and the rest (_OTHER_READ_ERRORS: bzip2's plain
-# OSError, LZMAError, a method this build lacks, an encrypted member, EINVAL, and the
-# environment's OSError). It is what a DECORATIVE member's read at load degrades on
-# (the railroad's stop_times.txt, NJ Transit's shapes.txt): such a read discards
-# nothing, so the environment's faults may degrade it too, and a class missing here is
-# a class that raises out of the load on every attempt. NJ Transit's shapes arm named
-# its own list and lacked LZMAError, so a damaged lzma shapes.txt did exactly that (the
-# review's walk on claude/static-rule-siblings).
+# WHAT READING ONE MEMBER IS KNOWN TO RAISE, the classes read_or_refuse names with the
+# reader's words: the archive's own (above) and the rest (_OTHER_READ_ERRORS: bzip2's
+# plain OSError, LZMAError, a method this build lacks, an encrypted member, EINVAL, and
+# the environment's OSError). NOT EVERYTHING: a zip64 header offset past 2**63 makes the
+# member's seek raise ValueError (OverflowError on BytesIO), found by the review of
+# claude/static-rule-siblings. read_or_refuse names whatever else a read raises by
+# type, and the DECORATIVE members' reads at load (the railroad's stop_times.txt, NJ
+# Transit's shapes.txt) degrade on any Exception, because the gate that promoted the
+# member with it degraded (validate_archive) catches any Exception too.
 UNREADABLE_MEMBER: tuple[type[BaseException], ...] = UNREADABLE_AT_LOAD + _OTHER_READ_ERRORS
 
 
@@ -234,6 +234,14 @@ def read_or_refuse(parse: Callable[[], _Parsed], member: str) -> _Parsed:
         raise StaticValidationError(
             f"{member} is not readable ({type(exc).__name__})", member=member
         ) from exc
+    except Exception as exc:
+        # ANYTHING ELSE, by type and under the member's name, so the refusal or the
+        # degraded member says which member rather than "archive": validate_archive would
+        # refuse it anyway (its catch is broad on purpose), only without the name. A zip64
+        # header offset past 2**63 is one such class (ValueError on the seek).
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__})", member=member
+        ) from exc
 
 
 def read_as_loaded(parse: Callable[[], _Parsed], member: str) -> _Parsed:
@@ -272,9 +280,11 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     fresh-by-mtime archive sitting in that gap is the wedge R3 was written for.
 
     The double parse is cheap for the small tables. It is not cheap for stop_times.txt,
-    which every loader's gate parses now that the gate is also the cached check
-    (claude/static-rule-siblings, D2): the subway's since A02, the others' since D2, and
-    what that costs is measured per loader in the 2026-10-12 ledger.
+    which four loaders' gates parse now that the gate is also the cached check
+    (claude/static-rule-siblings, D2): the subway's since A02, PATH's, the ferry's and NJ
+    Transit's since D2. The railroad's cached check leaves it out: since D3 the member is
+    decorative there and parsed only at a download, by validate_railroad_stop_times. What
+    each costs is measured per loader in the 2026-10-12 ledger.
 
     A read that fails is refused through read_or_refuse, by member and in the reader's
     own words.

@@ -13,19 +13,29 @@ FEEDS publish, and a synthetic row would only prove the parser agrees with
 whatever the test author typed.
 """
 
+import asyncio
 import csv
+import errno
 import io
 import os
 import time
+import types
 import zipfile
 import zlib
 from pathlib import Path
 
 import pytest
 
+import main
 import railroad_static
 import static_shared
-from tests.archive_damage import damaged_stream, rot_after_the_check, undecodable_deep_in
+import warmups
+from tests.archive_damage import (
+    damaged_stream,
+    offset_past_the_seek,
+    rot_after_the_check,
+    undecodable_deep_in,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -602,6 +612,61 @@ async def test_one_systems_unreadable_cache_leaves_the_other_serving(rail_paths,
     assert result["LIRR"] is not None
 
 
+async def test_an_environment_fault_in_one_system_fails_the_attempt_for_both(
+    rail_paths, monkeypatch
+):
+    """_load_one's other half (claude/static-rule-siblings, D1). Out of file descriptors
+    while LIRR's load reads a valid, fresh cache says nothing about its bytes, so it is
+    raised rather than turned into None, and the plain gather fails the attempt for BOTH
+    systems; the warmup retries, and the next attempt serves both caches, kept, with no
+    download. Returned as None, the group would reach a partial ready with LIRR missing,
+    and the warmup, which returns at ready, would not ask again for the life of the
+    process. The shared five-loader test cannot see this: it runs the railroad as one
+    system, where raising and returning None both fail the attempt (the branch's
+    review, F13)."""
+    monkeypatch.setattr(main, "STATIC_RETRY_S", 0.01)
+    write_railroad_zip(rail_paths["LIRR"])
+    write_railroad_zip(rail_paths["MNR"])
+    cached = {system: path.read_bytes() for system, path in rail_paths.items()}
+    downloads = []
+
+    async def no_download(system, **_kwargs):
+        downloads.append(system)
+
+    monkeypatch.setattr(railroad_static, "_download_zip", no_download)
+    real = railroad_static._parse_system
+    faults = {"left": 1}
+
+    def emfile_once_for_lirr(zip_path):
+        if zip_path == rail_paths["LIRR"] and faults["left"]:
+            faults["left"] -= 1
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real(zip_path)
+
+    monkeypatch.setattr(railroad_static, "_parse_system", emfile_once_for_lirr)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(railroad_static_status="loading"))
+    task = asyncio.create_task(warmups._warm_railroad_static(app))
+    seen: list[str] = []
+    try:
+        for _ in range(2000):
+            status = app.state.railroad_static_status
+            if not seen or seen[-1] != status:
+                seen.append(status)
+            if status == "ready":
+                break
+            await asyncio.sleep(0.001)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert seen == ["loading", "failed", "ready"]
+    assert faults["left"] == 0
+    for system in ("LIRR", "MNR"):
+        assert "8" in app.state.railroad_static[system]["stops"], f"{system} serves"
+        assert rail_paths[system].read_bytes() == cached[system], f"{system}'s cache is kept"
+    assert downloads == []
+
+
 # ---------------- stop_times.txt: the two-mode rule (claude/static-rule-siblings, D3) ----------
 #
 # The member feeds only the routes-per-station index, so it is DECORATIVE: its gate
@@ -645,6 +710,17 @@ def _header_only_stop_times(archive: bytes) -> bytes:
     return buf.getvalue()
 
 
+def _with_member(archive: bytes, member: str, text: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(buf, "w") as target:
+        for info in source.infolist():
+            body = text.encode() if info.filename == member else source.read(info.filename)
+            target.writestr(info.filename, body)
+    return buf.getvalue()
+
+
+_JOINS_NOTHING = "stop_times.txt yielded no usable routes-per-station index"
+
 # Each publication's stop_times.txt cannot build the index, and the gate says why in the
 # member's own name.
 UNINDEXABLE = {
@@ -661,6 +737,34 @@ UNINDEXABLE = {
         "stop_times.txt is not readable as CSV (",
     ),
     "header only": (_header_only_stop_times, "stop_times.txt yielded no usable stop times"),
+    # A class outside every list the load used to name (ValueError on the seek): degraded
+    # at a download, it raised out of every load after it (the review's F1).
+    "offset past the seek": (
+        lambda good: offset_past_the_seek(good, "stop_times.txt"),
+        "stop_times.txt is not readable (ValueError)",
+    ),
+    # Rows that read and join nothing build an empty index as surely as a damaged table
+    # (the review's F3): every stop time's trip absent from trips.txt, or every trip
+    # without a route.
+    "foreign trip ids": (
+        lambda good: _with_member(
+            good,
+            "stop_times.txt",
+            csv_text(
+                STOP_TIMES_COLS,
+                [{**row, "trip_id": "NOPE_1"} for row in INDEX_STOP_TIME_ROWS],
+            ),
+        ),
+        _JOINS_NOTHING,
+    ),
+    "trips without routes": (
+        lambda good: _with_member(
+            good,
+            "trips.txt",
+            csv_text(TRIPS_COLS, [{**row, "route_id": ""} for row in TRIP_ROWS]),
+        ),
+        _JOINS_NOTHING,
+    ),
 }
 
 
@@ -728,7 +832,7 @@ async def test_a_stop_times_that_cannot_index_is_promoted_and_named_on_a_cold_st
     data = await railroad_static._load_one("LIRR")
 
     assert data is not None and set(data["stops"]) == {"8", "12"}
-    assert data["stop_times"] == {}
+    assert railroad_static.derive_railroad_stop_routes(data["trips"], data["stop_times"]) == {}
     assert rail_paths["LIRR"].read_bytes() == publication
     entry = static_shared.archive_status()["railroad_LIRR"]
     assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None

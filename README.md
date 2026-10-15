@@ -727,10 +727,18 @@ subway's absent `shapes.txt` takes the rule as a broken one does. The state stay
 until a later promotion whose member reads, which in production means the next
 deploy: a running process does not re-fetch an archive it has promoted, so a
 corrected upstream publication is picked up by redeploying, not by waiting. Whether a
-cache "serves" is the loader's own verdict on it at the start of that attempt, so the
-rule and the loader never disagree about the same file. Every other table (stations,
-trips, calls, transfers, routes, the service calendar, and the joins the indexes are
-built from) refuses in every mode.
+cache "serves" is the loader's own verdict on it at the start of that attempt (its
+cached check, which does not open the decorative member), so the rule and the loader
+never disagree about the same file; a cache promoted without its lines or index still
+serves by that verdict, so an equally broken publication is refused over it, and on a
+volume that persisted, a stale one would be downloaded again at each process start
+until upstream repaired the member. Every other table (stations, trips, calls,
+transfers, routes, the service calendar) refuses in every mode when the load cannot
+read it, and the floors past that differ by loader: the subway also refuses an empty
+calls table and one that does not join (one call of a routed trip at a stop that folds
+to a station), NJ Transit an empty one, and PATH and the ferry only ask that theirs
+read, so a calls table that reads and joins nothing is promoted there with an empty
+routes-per-station index.
 
 That makes one state deliberate and worth recognizing: a group can be `ready`
 while its archive is older than the 30-day refresh threshold. It is reachable

@@ -49,6 +49,7 @@ from static_shared import StaticValidationError, validate_archive
 from tests.archive_damage import (
     bad_central_directory_offset,
     damaged_stream,
+    offset_past_the_seek,
     rot_after_the_check,
 )
 
@@ -312,7 +313,7 @@ def test_a_removals_only_calendar_dates_is_fine_when_calendar_carries_the_span()
     )
     with _open(members) as zf:
         njt_static.validate_njt_archive(zf, now=NOW)
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 400)
 
 
 def test_a_conventional_calendar_dates_is_judged_on_calendars_end_date():
@@ -343,7 +344,7 @@ def test_the_span_is_the_later_of_the_two_calendars():
             "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 30)},1\n",
         }
     )
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 400)
     # And the other direction: calendar_dates reaching past calendar's end wins.
     members = _members(
         **{
@@ -351,7 +352,7 @@ def test_the_span_is_the_later_of_the_two_calendars():
             "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 300)},1\n",
         }
     )
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 300)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 300)
 
 
 def test_a_calendar_with_no_usable_end_date_contributes_nothing():
@@ -1849,6 +1850,12 @@ UNDRAWABLE = {
     "no shape a trip references": (
         _shapes_no_trip_references,
         "shapes.txt yielded no usable route lines",
+    ),
+    # A class outside every list the load used to name (ValueError on the seek): degraded
+    # at a download, it raised out of every load after it (the review's F1).
+    "offset past the seek": (
+        lambda: offset_past_the_seek(_fixture_bytes(), "shapes.txt"),
+        "shapes.txt is not readable (ValueError)",
     ),
 }
 _ABSENT = "shapes.txt is absent from the publication, which is served without it"

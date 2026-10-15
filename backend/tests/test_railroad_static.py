@@ -18,11 +18,13 @@ import io
 import os
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import pytest
 
 import railroad_static
+from tests.archive_damage import damaged_stream, rot_after_the_check
 
 pytestmark = pytest.mark.anyio
 
@@ -561,6 +563,42 @@ async def test_one_system_failure_does_not_block_the_other(rail_paths):
     assert set(result) == {"LIRR", "MNR"}
     assert result["LIRR"] is not None and "8" in result["LIRR"]["stops"]
     assert result["MNR"] is None
+
+
+async def test_one_systems_unreadable_cache_leaves_the_other_serving(rail_paths, monkeypatch):
+    """D1 ON claude/static-rule-siblings, and _load_one's contract restored. Metro-North's
+    cache passes its check and then rots (a damaged DEFLATE stream in trips.txt, which the
+    load reads): its read raises zlib.error, which this loader's residual arm did not name,
+    so the error escaped _load_one, the plain gather in load_railroad_static re-raised it,
+    and LIRR went down with it on every attempt for the cache's 30 days. Now the arm is the
+    shared one, the cache is discarded, LIRR serves, Metro-North is None, and the next
+    attempt downloads Metro-North instead of failing on the same bytes."""
+    write_railroad_zip(rail_paths["LIRR"])
+    write_railroad_zip(rail_paths["MNR"])
+    rotted = damaged_stream(rail_paths["MNR"].read_bytes(), "trips.txt")
+    with zipfile.ZipFile(io.BytesIO(rotted)) as zf, pytest.raises(zlib.error):
+        zf.read("trips.txt")  # the premise: inflate refuses it, not the CRC check
+    rot_after_the_check(monkeypatch, railroad_static, rail_paths["MNR"], rotted)
+    downloads = []
+
+    async def fake_download(system, **_kwargs):
+        downloads.append(system)
+        write_railroad_zip(rail_paths[system])
+
+    monkeypatch.setattr(railroad_static, "_download_zip", fake_download)
+
+    result = await railroad_static.load_railroad_static()
+
+    assert result["LIRR"] is not None and "8" in result["LIRR"]["stops"]
+    assert result["MNR"] is None
+    assert not rail_paths["MNR"].exists(), "the unreadable cache is discarded"
+    assert downloads == []
+
+    result = await railroad_static.load_railroad_static()
+
+    assert downloads == ["MNR"]
+    assert result["MNR"] is not None and "8" in result["MNR"]["stops"]
+    assert result["LIRR"] is not None
 
 
 # ---------------- build_railroad_route_shapes (synthetic parsed tables) ----------------

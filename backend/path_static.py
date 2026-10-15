@@ -44,6 +44,7 @@ from typing import IO
 import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
     cached_archive_is_usable,
     parse_member,
     require_members,
@@ -524,7 +525,7 @@ async def load_path_static() -> dict:
             logger.warning("PATH static GTFS re-download failed (%s); using the cached copy", exc)
     try:
         data = _parse_zip(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
+    except UNREADABLE_AT_LOAD as exc:
         # The residual below the CACHED-archive validator, which is lighter than
         # the one every publication passes. Reaching here means the bytes on disk
         # were fully parseable when they were promoted and are not now (rot, a
@@ -532,7 +533,10 @@ async def load_path_static() -> dict:
         # case and only that case: this file IS the cache, nothing better sits
         # behind it, and keeping it would wedge every retry on the same bytes. A
         # freshly promoted archive cannot land here, because
-        # validate_path_publication ran this same parse before the rename.
+        # validate_path_publication ran this same parse before the rename. The
+        # classes are the ones every loader shares (static_shared.UNREADABLE_AT_LOAD,
+        # which says why OSError is not one); this arm's own tuple lacked zlib.error,
+        # so a damaged DEFLATE stream in a cached member raised past it every attempt.
         logger.warning("Cached PATH static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

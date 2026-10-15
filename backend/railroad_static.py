@@ -25,6 +25,7 @@ import env_seams
 import route_geometry
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
     cached_archive_is_usable,
     require_members,
     require_parsed,
@@ -368,10 +369,22 @@ def build_railroad_route_shapes(
 
 
 async def _load_one(system: str) -> dict | None:
-    """Ensure/refresh one system's zip and parse it, or None on any failure.
+    """Ensure/refresh one system's zip and parse it, or None when its archive fails.
 
-    Lenient by design: a download or parse failure for this system logs and
-    returns None rather than raising, so one system can never block the other.
+    Lenient by design: a failed download, or a cached archive this system cannot read,
+    logs and returns None rather than raising, so one system's archive can never take
+    the other down through load_railroad_static's gather. The archive's errors are
+    static_shared.UNREADABLE_AT_LOAD, the residual arm every loader shares; before
+    claude/static-rule-siblings this arm named four of them, and a damaged DEFLATE
+    stream in a cached member (zlib.error) escaped it and failed LIRR and Metro-North
+    together.
+
+    AN ENVIRONMENT FAULT IS RAISED, NOT RETURNED AS None (the operator's ruling on
+    claude/a02-publication-validation, kept here): an OSError while reading a cache
+    says nothing about the archive, so the cache is kept and the attempt fails for both
+    systems, and the warmup's next rung reads both caches again. Returning None for it
+    would be worse, not kinder: a partial result reaches ready and the missing system is
+    never retried (F06, A05), so one EMFILE would drop a system until the next deploy.
     """
     zip_path = RAILROAD_STATIC_ZIPS[system]
     # FRESH NOW MEANS VALID AND RECENT (C5). R3's invalidate-on-empty-parse lived
@@ -399,7 +412,7 @@ async def _load_one(system: str) -> dict | None:
             )
     try:
         data = _parse_system(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
+    except UNREADABLE_AT_LOAD as exc:
         # The residual below the CACHED-archive validator, which is lighter than the
         # one every publication passes. Reaching here means the bytes on disk were
         # fully parseable when they were promoted and are not now (rot, a truncated
@@ -407,7 +420,8 @@ async def _load_one(system: str) -> dict | None:
         # only that case: this file IS the cache, nothing better sits behind it, and
         # keeping it would wedge every retry on the same bytes. A freshly promoted
         # archive cannot land here, because validate_railroad_publication ran this
-        # same parse before the rename.
+        # same parse before the rename. The classes are the ones every loader shares
+        # (static_shared.UNREADABLE_AT_LOAD); see the docstring for what is raised.
         logger.warning("Cached %s static GTFS is unparseable (%s); discarding", system, exc)
         zip_path.unlink(missing_ok=True)
         return None
@@ -430,8 +444,10 @@ async def load_railroad_static() -> dict[str, dict | None]:
     for one leaves it None without raising or affecting the other, so this never
     raises on a single-system failure even though placement consumes it. The
     systems load concurrently to keep cold-start under the healthcheck window;
-    _load_one swallows its own exceptions and returns None, so a plain gather
-    (no return_exceptions) preserves the per-system None semantics.
+    _load_one turns its own archive's failures into None, so a plain gather (no
+    return_exceptions) preserves the per-system None semantics. What it raises is an
+    environment fault, which fails the attempt for both systems on purpose (see
+    _load_one): the warmup retries it with both caches kept.
 
     NOTE the caller now reads the AGGREGATE (warmups._warm_railroad_static, R3): a
     result where EVERY system came back unusable (None, or parsed but carrying no

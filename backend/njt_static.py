@@ -101,6 +101,7 @@ import route_geometry
 from feeds.shared import NYC_TZ
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
     StaticValidationError,
     cached_archive_is_usable,
     parse_member,
@@ -1033,29 +1034,19 @@ async def load_njt_static(*, now: float | None = None) -> dict:
             )
     try:
         data = _parse_zip(zip_path)
-    except (
-        zipfile.BadZipFile,
-        KeyError,
-        UnicodeDecodeError,
-        csv.Error,
-        zlib.error,
-        EOFError,
-    ) as exc:
+    except UNREADABLE_AT_LOAD as exc:
         # The residual below the CACHED-archive validator. Reaching here means the
         # bytes on disk were fully parseable when they were promoted and are not now
         # (rot, a truncated write), or no file was ever written because the first
         # download failed. Unlink is right in exactly that case: this file IS the
         # cache, nothing better sits behind it, and keeping it would wedge every
         # retry on the same bytes. zlib.error is a damaged deflate stream inside a
-        # member (A02b), as BadZipFile is a damaged CRC; the tuple missed it, so such
-        # an archive raised out of here instead and was kept for every attempt.
-        # EOFError is a member cut short.
+        # member (A02b), as BadZipFile is a damaged CRC, and EOFError is a member cut
+        # short. The classes are the ones every loader shares since
+        # claude/static-rule-siblings (static_shared.UNREADABLE_AT_LOAD, which also says
+        # why OSError is not one: the environment's faults fail the attempt and keep
+        # the cache, as the operator ruled on the A02 branch's review).
         #
-        # THE ARCHIVE'S ERRORS ONLY (the operator's ruling on the A02 branch's review):
-        # OSError is not here. Out of file descriptors, or a disk that fails a read, says
-        # nothing about these bytes, and discarding a good cache over it left NJ Transit
-        # with nothing to serve whenever the download that followed also failed. Such an
-        # error now fails the attempt with the cache kept, for the next one to read.
         # NOT QUITE EVERY ARCHIVE ERROR (the branch's review, recorded on the ledger's
         # live list for the operator): a member compressed with bzip2 whose stream is
         # damaged raises a plain OSError, lzma's raises LZMAError, and a bit-rotted

@@ -8,7 +8,6 @@ import logging
 import re
 import time
 import zipfile
-import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -17,6 +16,7 @@ from typing import IO
 import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
     StaticValidationError,
     cached_archive_is_usable,
     parse_member,
@@ -263,36 +263,25 @@ def _drained(zf: zipfile.ZipFile, member: str, rows: Callable[[IO[bytes]], Itera
     return parse_member(zf, member, lambda raw: sum(1 for _ in rows(raw)))
 
 
-# THE RESIDUAL ARM (A02, decision D3), the NJ Transit loader's, for the subway.
+# THE RESIDUAL ARM (A02, decision D3), the NJ Transit loader's, for the subway, and since
+# claude/static-rule-siblings the one all five loaders share: its classes and why OSError
+# is not among them are at static_shared.UNREADABLE_AT_LOAD.
 #
-# The parse-class errors reading an archive can raise. One of them out of a load over
-# an archive the validator accepted means the two disagree about what is readable,
-# which they have done three times before (MR2's F1, F08, A02): the cache answers
-# "valid and fresh" at every attempt while every attempt fails, until MAX_AGE_DAYS.
-# Discarding is right in exactly this case: this file IS the cache, nothing better
-# sits behind it (a previous archive was replaced when this one was promoted), and
-# keeping it wedges every retry on the same bytes. With the file gone the next attempt
-# downloads. The validator parses every member the load reads, so nothing should reach
-# this arm; it is here because a backstop that is never reached costs less than a
-# month of a failed subway static group.
+# One of them out of a load over an archive the validator accepted means the two disagree
+# about what is readable, which they have done three times before (MR2's F1, F08, A02):
+# the cache answers "valid and fresh" at every attempt while every attempt fails, until
+# MAX_AGE_DAYS. The validator parses every member the load reads, so nothing should reach
+# this arm except a cache that changed after it was checked; it is here because a
+# backstop that is never reached costs less than a month of a failed subway static group.
 #
-# THE ARCHIVE'S ERRORS ONLY, NOT THE ENVIRONMENT'S (the operator's ruling on the
-# branch's review). Every class here says something about the bytes: they do not
-# decode, are not CSV, do not inflate, are truncated, or lack a member. OSError is not
-# one of them: running out of file descriptors or a failing disk says nothing about the
-# archive, and discarding a good cache over it turned a transient fault into a failed
-# group whenever upstream was down at the same moment. Such an error now fails the
-# attempt with the cache kept, and the next attempt reads it again.
-#
-# NOT QUITE EVERY ARCHIVE ERROR, as the branch's review measured: a member compressed
-# with bzip2 whose stream is damaged raises a plain OSError, one with lzma raises
-# LZMAError, and a bit-rotted central-directory offset raises OSError(EINVAL), errno and
-# all, none of them caught here. For the subway that is moot: the
-# cached check runs validate_subway_archive under validate_archive's broad catch, and it
-# reads every member the reads wrapped here read, so such a cache is refused before any
-# load (shapes.txt is not one of them, and its loader degrades on any exception). The
-# ledger's live list carries it for NJ Transit, where it is not moot.
-_UNREADABLE = (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, KeyError, EOFError)
+# NOT QUITE EVERY ARCHIVE ERROR: a member compressed with bzip2 whose stream is damaged
+# raises a plain OSError, one with lzma raises LZMAError, and a bit-rotted
+# central-directory offset raises OSError(EINVAL), errno and all, none of them caught
+# here. For the subway that is moot: the cached check runs validate_subway_archive under
+# validate_archive's broad catch, and it reads every member the reads wrapped here read,
+# so such a cache is refused before any load (shapes.txt is not one of them, and its
+# loader degrades on any exception).
+_UNREADABLE = UNREADABLE_AT_LOAD
 
 
 @contextmanager

@@ -28,7 +28,6 @@ but one day per fixture.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import re
 import struct
@@ -46,6 +45,7 @@ import route_geometry
 from conftest import golden_fixture_guard
 from feeds.shared import NYC_TZ
 from static_shared import StaticValidationError
+from tests.archive_damage import rot_after_the_check
 
 pytestmark = pytest.mark.anyio
 
@@ -1722,6 +1722,17 @@ def test_golden_the_bounded_parse_reaches_every_shape_the_committed_trips_refere
 _FIXTURE_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=NYC_TZ).timestamp()
 
 
+def _fixture_bytes() -> bytes:
+    """The committed fixture as one archive, every member DEFLATED (see _zip_bytes)."""
+    return _zip_bytes(
+        {
+            path.name: path.read_text(encoding="utf-8")
+            for path in sorted(FIXTURE_DIR.iterdir())
+            if path.suffix == ".txt"
+        }
+    )
+
+
 def _fixture_with_damaged_deflate(member: str) -> bytes:
     """The committed fixture zipped with ZIP_DEFLATED, `member`'s first deflate block
     header rewritten to BTYPE 11, its stored CRC-32 and sizes untouched. Reading the
@@ -1840,23 +1851,32 @@ async def test_a_shapes_txt_that_will_not_open_costs_the_lines_and_nothing_else(
 async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discarded(
     monkeypatch, tmp_path
 ):
-    """THE RESIDUAL ARM, with the same damage in a REQUIRED member. stop_times.txt is
-    one the light cached-archive validator never opens, so a cache carrying it is
-    accepted as usable and fresh and fails the parse; the arm must discard it so the
-    next attempt downloads, rather than letting zlib.error escape and the same bytes
-    fail every attempt until MAX_AGE_DAYS. No network is allowed: a fresh cache
-    downloads nothing."""
+    """THE RESIDUAL ARM, with the same damage in a REQUIRED member, in a cache that
+    passed its check and then rotted, the one way a load meets bytes its check did not
+    see. The arm must discard it so the next attempt downloads, rather than letting
+    zlib.error escape and the same bytes fail every attempt until MAX_AGE_DAYS. The
+    first attempt sends nothing to NJ Transit (the cache was fresh); the second mints
+    once and fetches once, through the fake transport, and serves."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
-    zip_path.write_bytes(_fixture_with_damaged_deflate("stop_times.txt"))
+    good = _fixture_bytes()
+    zip_path.write_bytes(good)
     monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
-    monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
-    with zipfile.ZipFile(zip_path) as zf:
-        njt_static.validate_njt_archive(zf, now=_FIXTURE_NOW)  # the premise: accepted
+    rot_after_the_check(
+        monkeypatch, njt_static, zip_path, _fixture_with_damaged_deflate("stop_times.txt")
+    )
+    calls: list = []
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(good, calls))
 
     assert await njt_static.load_njt_static(now=_FIXTURE_NOW) == {}
     assert not zip_path.exists(), "an archive the load cannot read must not stay the cache"
+    assert calls == []
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert [url.rsplit("/", 1)[-1] for url, _form in calls] == ["getToken", "getGTFS"]
+    assert len(data["stops"]) == 164
 
 
 async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_path):
@@ -1886,66 +1906,3 @@ async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_
     assert set(data["stops"]) == {"109", "112", "38", "125"}
     assert threads, "the cached check must have run the validator"
     assert threading.get_ident() not in threads
-
-
-async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
-    monkeypatch, tmp_path
-):
-    """THE RESIDUAL ARM IS THE ARCHIVE'S (the operator's ruling on the A02 branch's
-    review): OSError left its tuple. Through the real NJ Transit warmup, an environment
-    error while parsing a valid, fresh cache fails the attempt with the cache kept, and
-    the next attempt reads the same cache and reaches ready with nothing sent to NJ
-    Transit: no mint, no download. The committed fixture, so the archive is in service
-    on the real clock the warmup reads."""
-    import errno
-    import types
-
-    import main as app_module
-    import warmups
-
-    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
-    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
-    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
-    zip_path = tmp_path / "gtfs_njt.zip"
-    zip_path.write_bytes(
-        _zip_bytes(
-            {
-                path.name: path.read_text(encoding="utf-8")
-                for path in sorted(FIXTURE_DIR.iterdir())
-                if path.suffix == ".txt"
-            }
-        )
-    )
-    cached = zip_path.read_bytes()
-    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
-    calls: list = []
-    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(b"", calls))
-    real_parse = njt_static._parse_zip
-    faults = {"left": 1}
-
-    def failing_once(path):
-        if faults["left"]:
-            faults["left"] -= 1
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_parse(path)
-
-    monkeypatch.setattr(njt_static, "_parse_zip", failing_once)
-    app = types.SimpleNamespace(state=types.SimpleNamespace(njt_static_status="loading"))
-    seen: list = []
-    task = asyncio.create_task(warmups._warm_njt_static(app))
-    try:
-        for _ in range(2000):
-            status = app.state.njt_static_status
-            if not seen or seen[-1] != status:
-                seen.append(status)
-            if status == "ready":
-                break
-            await asyncio.sleep(0.001)
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert seen == ["loading", "failed", "ready"]
-    assert faults["left"] == 0
-    assert zip_path.read_bytes() == cached, "the cache is kept"
-    assert calls == [], "nothing was sent to NJ Transit"
-    assert len(app.state.njt_stops) == 164

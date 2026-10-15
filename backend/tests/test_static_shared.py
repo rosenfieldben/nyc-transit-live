@@ -30,11 +30,14 @@ import pytest
 
 import ferry_static
 import main as app_module
+import njt_auth
+import njt_static
 import path_static
 import railroad_static
 import static_data
 import static_shared
 import warmups
+from conftest import configure_njt
 
 pytestmark = pytest.mark.anyio
 
@@ -117,7 +120,7 @@ def _csv(columns, rows):
 
 
 def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS, trips=None) -> bytes:
-    """A zip every one of the four validators accepts. `drop` removes members;
+    """A zip every one of the five loaders' validators accepts. `drop` removes members;
     `trips` substitutes raw bytes for trips.txt (used to plant an undecodable byte
     in a table the light validator does not parse)."""
     members = {
@@ -132,6 +135,11 @@ def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS, trips=None) -> b
             _TRANSFERS_COLS,
             [{"from_stop_id": "101", "to_stop_id": "103", "transfer_type": "2"}],
         ),
+        # NJ Transit's two, which no other loader reads: it requires agency.txt, and its
+        # service-date guard needs an added service day no earlier than today, so the one
+        # row is dated far enough out that the archive never expires under the suite.
+        "agency.txt": "agency_id,agency_name\nNJT,NJ TRANSIT\n",
+        "calendar_dates.txt": "service_id,date,exception_type\nwk,20991231,1\n",
     }
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -679,6 +687,9 @@ class Loader:
         validate,
         required,
         raises_on_cold_failure=False,
+        warm=None,
+        status=None,
+        fault=None,
     ):
         self.name = name
         self.module = module
@@ -689,6 +700,12 @@ class Loader:
         self.validate = validate
         self.required = required
         self.raises_on_cold_failure = raises_on_cold_failure
+        # The warmup that drives this loader, the app.state field it flips, and the
+        # module function its LOAD reads the cache through and its validator does not
+        # (so a fault injected there is met by the load, never by the cached check).
+        self.warm = warm
+        self.status = status
+        self.fault = fault
 
 
 LOADERS = [
@@ -705,6 +722,9 @@ LOADERS = [
         # the exception as the failed attempt, where the other three read an empty
         # result the same way.
         raises_on_cold_failure=True,
+        warm=warmups._warm_subway_static,
+        status="subway_static_status",
+        fault="_parse_stops_rows",
     ),
     Loader(
         "railroad",
@@ -715,6 +735,9 @@ LOADERS = [
         lambda data: bool(data) and "101" in data["stops"],
         railroad_static.validate_railroad_archive,
         railroad_static._REQUIRED_MEMBERS,
+        warm=warmups._warm_railroad_static,
+        status="railroad_static_status",
+        fault="_parse_system",
     ),
     Loader(
         "path",
@@ -725,6 +748,9 @@ LOADERS = [
         lambda data: "101" in data.get("stops", {}),
         path_static.validate_path_archive,
         path_static._REQUIRED_MEMBERS,
+        warm=warmups._warm_path_static,
+        status="path_static_status",
+        fault="_parse_zip",
     ),
     Loader(
         "ferry",
@@ -735,9 +761,53 @@ LOADERS = [
         lambda data: "101" in data.get("stops", {}),
         ferry_static.validate_ferry_archive,
         ferry_static._REQUIRED_MEMBERS,
+        warm=warmups._warm_ferry_static,
+        status="ferry_static_status",
+        fault="_parse_zip",
     ),
 ]
 LOADER_IDS = [loader.name for loader in LOADERS]
+
+
+def _njt_paths(tmp_path, monkeypatch):
+    # Configured, so the loader runs at all (an unconfigured one raises before the
+    # cache), and every request NJ Transit's transport is asked for fails the test:
+    # these cases replace the loader's staged_fetch, so the token door is never reached.
+    configure_njt(monkeypatch)
+    monkeypatch.setattr(njt_auth, "TOKEN_CACHE", njt_auth.TokenCache())
+
+    async def no_network(url, form, timeout_s):
+        raise AssertionError(f"no NJ Transit request is allowed here, but {url!r} was sent")
+
+    monkeypatch.setattr(njt_auth, "_httpx_post", no_network)
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", tmp_path / "gtfs_njt.zip")
+    return tmp_path / "gtfs_njt.zip"
+
+
+async def _load_njt():
+    return await njt_static.load_njt_static()
+
+
+# NJ TRANSIT ALONGSIDE THE FOUR, for the cases that are one rule across every loader
+# (claude/static-rule-siblings). It is not in LOADERS because the cases above predate
+# it there and it has its own copies of them in test_njt_static.py; good_archive carries
+# its two extra members so the same archive serves all five.
+NJT_LOADER = Loader(
+    "njt",
+    njt_static,
+    "njt",
+    _njt_paths,
+    _load_njt,
+    # Flat stops: the location_type=1 parent is not a boardable stop, its platform is.
+    lambda data: "101N" in data.get("stops", {}),
+    njt_static.validate_njt_archive,
+    njt_static._REQUIRED_MEMBERS,
+    warm=warmups._warm_njt_static,
+    status="njt_static_status",
+    fault="_parse_zip",
+)
+FIVE_LOADERS = [*LOADERS, NJT_LOADER]
+FIVE_IDS = [loader.name for loader in FIVE_LOADERS]
 
 # A publication shape is a rejection only for the loaders that consume the table it
 # damages. headers-only-routes is a rejection for the railroad, PATH and ferry, all of
@@ -780,6 +850,7 @@ def _patch_download(monkeypatch, module, payload, calls=None):
     async def fetch(url, dest, validate, **kwargs):
         if calls is not None:
             calls.append(dest)
+        kwargs.pop("download", None)  # NJ Transit's token door, replaced like the rest
         await real(url, dest, validate, **kwargs, download=publisher(payload))
 
     monkeypatch.setattr(module, "staged_fetch", fetch)
@@ -918,6 +989,64 @@ async def test_every_loaders_cached_check_validates_off_the_serving_loop(
     assert calls == []
     assert threads, "the cached check must have run the loader's validator"
     assert threading.get_ident() not in threads
+
+
+async def _drive_to_ready(app, field):
+    """Run until `field` reads ready, recording each status it passes through."""
+    seen: list = []
+    for _ in range(2000):
+        status = getattr(app.state, field)
+        if not seen or seen[-1] != status:
+            seen.append(status)
+        if status == "ready":
+            break
+        await asyncio.sleep(0.001)
+    return seen
+
+
+@pytest.mark.parametrize("loader", FIVE_LOADERS, ids=FIVE_IDS)
+async def test_an_environment_error_at_load_keeps_every_loaders_cache(
+    tmp_path, monkeypatch, loader
+):
+    """THE RESIDUAL ARM IS THE ARCHIVE'S, IN ALL FIVE LOADERS (the operator's ruling on
+    claude/a02-publication-validation, made one tuple on claude/static-rule-siblings, D1).
+    Out of file descriptors while the LOAD reads a valid, fresh cache says nothing about
+    its bytes, so through each loader's real warmup the attempt fails with the cache kept,
+    and the next attempt reads the same cache and reaches ready with no download. A
+    discard there turned a transient fault into a failed group whenever upstream was down
+    at the same moment. The fault is injected where the load reads and the cached check
+    does not, so the check passes and the load meets it.
+
+    The railroad's arm turns its archive's errors into None for that system; this one is
+    the environment's, so it fails the attempt for both systems (the warmup retries),
+    which is _load_one's contract on purpose (see its docstring)."""
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive())
+    cached = cache.read_bytes()
+    calls: list = []
+    _patch_download(monkeypatch, loader.module, good_archive(), calls=calls)
+    real = getattr(loader.module, loader.fault)
+    faults = {"left": 1}
+
+    def failing_once(*args):
+        if faults["left"]:
+            faults["left"] -= 1
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real(*args)
+
+    monkeypatch.setattr(loader.module, loader.fault, failing_once)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(**{loader.status: "loading"}))
+    task = asyncio.create_task(loader.warm(app))
+    try:
+        seen = await _drive_to_ready(app, loader.status)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert seen == ["loading", "failed", "ready"]
+    assert faults["left"] == 0
+    assert cache.read_bytes() == cached, "the cache is kept"
+    assert calls == [], "and the next attempt served it without a download"
 
 
 # ---------------------------------------------------------------------------

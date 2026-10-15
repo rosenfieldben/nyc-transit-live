@@ -1490,60 +1490,6 @@ async def test_an_archive_that_passes_validation_and_fails_the_load_is_discarded
     assert app.state.subway_station_routes == {"101": ["1"]}
 
 
-async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
-    gtfs_zip, monkeypatch
-):
-    """D3 NARROWED (the operator's ruling on the branch's review): the residual arm
-    discards for the ARCHIVE's errors only. Out of file descriptors while reading a
-    valid, fresh cache says nothing about its bytes, so through the real warmup the
-    attempt fails with the cache kept, and the next attempt reads the same cache and
-    reaches ready without a download. Discarding there used to leave the group failed
-    whenever the download that followed failed too."""
-    import errno
-    import types
-
-    import main as app_module
-    import warmups
-
-    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
-    write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: no download is needed
-    cached = gtfs_zip.read_bytes()
-    real_reader = static_data._parse_stops_rows
-    faults = {"left": 1}
-
-    def failing_once(raw):
-        if faults["left"]:
-            faults["left"] -= 1
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_reader(raw)
-
-    monkeypatch.setattr(static_data, "_parse_stops_rows", failing_once)
-    downloads: list = []
-
-    async def fetch(url, dest, validate, **kwargs):
-        downloads.append(url)
-
-    monkeypatch.setattr(static_data, "staged_fetch", fetch)
-    app = types.SimpleNamespace(state=types.SimpleNamespace(subway_static_status="loading"))
-    seen: list = []
-    task = asyncio.create_task(warmups._warm_subway_static(app))
-    try:
-        for _ in range(2000):
-            status = app.state.subway_static_status
-            if not seen or seen[-1] != status:
-                seen.append(status)
-            if status == "ready":
-                break
-            await asyncio.sleep(0.001)
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert seen == ["loading", "failed", "ready"]
-    assert faults["left"] == 0
-    assert gtfs_zip.read_bytes() == cached, "the cache is kept"
-    assert downloads == []
-
-
 RESIDUAL_SITES = {
     # site: (the reader only that load path uses, the call that reaches it)
     "stops": ("_parse_stops_rows", lambda: asyncio.run(static_data.load_subway_stops())),

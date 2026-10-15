@@ -122,6 +122,32 @@ except ImportError:  # a build without liblzma, where zipfile cannot read such a
     pass
 
 
+# THE RESIDUAL ARM'S CLASSES, ONE TUPLE FOR ALL FIVE LOADERS (claude/static-rule-siblings,
+# D1). Each loader wraps its reads of the CACHED archive in an arm that discards the cache
+# on one of these and fails the attempt, so the next attempt downloads instead of failing
+# on the same bytes until MAX_AGE_DAYS. Reaching the arm means the cached check and the
+# load disagree about what is readable. Discarding is right in exactly that case: the file
+# IS the cache, nothing better sits behind it, and keeping it wedges every retry.
+#
+# THE ARCHIVE'S ERRORS ONLY, as the operator ruled on claude/a02-publication-validation:
+# the bytes do not decode, are not CSV, do not inflate (zlib.error, which the ferry's, the
+# PATH's and the railroad's own tuples lacked, so a damaged DEFLATE stream wedged them for
+# a month and, in the railroad, escaped _load_one and took both systems down through its
+# gather), are truncated (EOFError), fail a CRC (BadZipFile) or lack a member (KeyError).
+# OSError is not one: running out of file descriptors or a failing disk says nothing about
+# the archive, so such an error fails the attempt with the cache kept, and the warmup's
+# next rung reads it again. Five loaders kept five copies of this list and they drifted
+# apart (four of them in three different shapes); one tuple is what keeps them equal.
+UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
+    UnicodeDecodeError,
+    csv.Error,
+    zipfile.BadZipFile,
+    zlib.error,
+    KeyError,
+    EOFError,
+)
+
+
 def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     """The member must parse, THROUGH THE LOADER'S OWN PARSER, to something usable.
 

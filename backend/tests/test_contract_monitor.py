@@ -35,6 +35,7 @@ import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
+from tests.archive_damage import damaged_stream
 
 _CM_PATH = Path(__file__).resolve().parent.parent / "scripts" / "contract_monitor.py"
 _spec = importlib.util.spec_from_file_location("contract_monitor", _CM_PATH)
@@ -726,15 +727,20 @@ _DRAWABLE_SHAPES = _SUBWAY_SHAPES_COLS + b"1..N01R,1,40.7,-74.0\n1..N01R,2,40.71
 
 
 def _subway_members(n_stops):
-    """A synthetic subway archive carrying every member the app requires, header-only
-    except stops.txt (and one transfers row, which the app's own validator would want),
-    plus a shapes.txt that draws one line: the monitor checks presence, parses stops and
-    stations, and WARNs on geometry that draws nothing."""
+    """A synthetic subway archive carrying every member the app requires, and what the
+    app's always-gate asks of them since the monitor runs it (claude/static-rule-siblings,
+    D6): stop S0 is a parent station, one trip names route 1, one call joins that trip
+    to S0, and one transfers row crosses two stops. Plus a shapes.txt that draws one
+    line: the monitor checks presence, runs the gate, parses stops and stations, and
+    WARNs on geometry that draws nothing."""
+    stops = _subway_stops_csv(n_stops).replace(
+        b"S0,Station 0,40.7000,-73.9000,0", b"S0,Station 0,40.7000,-73.9000,1"
+    )
     return {
-        "stops.txt": _subway_stops_csv(n_stops),
+        "stops.txt": stops,
         "shapes.txt": _DRAWABLE_SHAPES,
-        "trips.txt": b"route_id,service_id,trip_id\n",
-        "stop_times.txt": b"trip_id,stop_id,stop_sequence\n",
+        "trips.txt": b"route_id,service_id,trip_id\n1,wk,T1\n",
+        "stop_times.txt": b"trip_id,stop_id,stop_sequence\nT1,S0,1\n",
         "transfers.txt": b"from_stop_id,to_stop_id,transfer_type\nS1,S2,2\n",
     }
 
@@ -832,6 +838,150 @@ def test_the_monitor_requires_what_the_app_requires():
     assert cm.SUBWAY_WATCHED_MEMBERS == ("shapes.txt",)
 
 
+# ---------------------------------------------------------------------------
+# The app's own publication gates (claude/static-rule-siblings, D6)
+# ---------------------------------------------------------------------------
+
+
+def test_the_monitor_runs_the_gate_each_loader_runs():
+    """Written out by hand, as SUBWAY_REQUIRED is: each loader's publication gate, the
+    function its cached check and its staged download run (test_static_shared's Loader
+    table and test_njt_static pin that side). The monitor asks these, not a copy."""
+    assert cm.STATIC_GATES == {
+        "subway-static": cm.static_data.validate_subway_archive,
+        "railroad-static": cm.railroad_static.validate_railroad_publication,
+        "path-static": cm.path_static.validate_path_publication,
+        "ferry-static": cm.ferry_static.validate_ferry_publication,
+        "njt-static": cm.njt_static.validate_njt_publication,
+    }
+
+
+# THE ROSTER: every member list the monitor keeps beside a loader's, both held to one
+# hand-written list. routes.txt was missing from the railroad's, PATH's and the ferry's
+# until claude/static-rule-siblings.
+ROSTER = [
+    ("subway", "SUBWAY_REQUIRED_MEMBERS", "static_data", SUBWAY_REQUIRED),
+    (
+        "railroad",
+        "RAILROAD_REQUIRED_MEMBERS",
+        "railroad_static",
+        ["routes.txt", "shapes.txt", "stops.txt", "trips.txt"],
+    ),
+    (
+        "path",
+        "PATH_REQUIRED_MEMBERS",
+        "path_static",
+        ["routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"],
+    ),
+    (
+        "ferry",
+        "FERRY_REQUIRED_MEMBERS",
+        "ferry_static",
+        ["routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"],
+    ),
+    (
+        "njt",
+        "NJT_REQUIRED_MEMBERS",
+        "njt_static",
+        [
+            "agency.txt",
+            "calendar_dates.txt",
+            "routes.txt",
+            "stop_times.txt",
+            "stops.txt",
+            "trips.txt",
+        ],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("_name", "mirror", "loader", "expected"), ROSTER, ids=[r[0] for r in ROSTER]
+)
+def test_each_mirrored_member_list_is_its_loaders(_name, mirror, loader, expected):
+    assert sorted(getattr(cm, mirror)) == expected
+    assert sorted(getattr(cm, loader)._REQUIRED_MEMBERS) == expected
+
+
+def _refused_in_its_words(detail: str, system: str, words: str) -> bool:
+    return (
+        f"the app refuses this publication, so a deploy now would serve no {system} ({words}"
+        in detail
+    )
+
+
+def test_subway_static_a_publication_the_app_refuses_is_a_fail_in_its_words():
+    """One 0xFF deep in trips.txt, which the monitor's own reads (members, stops,
+    stations, shapes) never open and the app's always-gate does: before D6 this passed,
+    and a deploy's cold start would have refused it and served no subway. The stops are
+    still returned for the realtime decode. A publication the gate passes is unchanged
+    (test_subway_static_healthy_synthetic_passes)."""
+    members = _subway_members(120)
+    filler = b"".join(b"1,wk,F%d\n" % i for i in range(400))
+    members["trips.txt"] += filler + b"1,wk,T\xff2\n"
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, parsed = cm.check_subway_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.FAIL
+    assert _refused_in_its_words(
+        result.detail, "subway", "trips.txt is not readable as CSV ('utf-8' codec can't decode"
+    )
+    assert parsed is not None and len(parsed["stops"]) == 120
+
+
+def test_railroad_static_a_publication_the_app_refuses_is_a_fail_for_that_system():
+    """LIRR's trips.txt carries one 0xFF the monitor's stops parse never reads; the
+    railroad's publication gate refuses it, under LIRR's name, and Metro-North's
+    publication, which the gate passes, adds nothing to the detail."""
+    trips = b"trip_id,route_id\nT1,1\n" + b"".join(b"F%d,1\n" % i for i in range(400))
+    lirr = _railroad_zip(240, **{"trips.txt": trips + b"T\xff2,1\n"})
+    fetch = FakeFetcher({"lirr": lirr, "mnr": _railroad_zip(120)})
+    result, parsed = cm.check_railroad_static(
+        fetch, NO_SLEEP, 1000.0, urls={"LIRR": "lirr", "MNR": "mnr"}
+    )
+    assert result.status == cm.FAIL
+    assert result.detail.startswith("LIRR ")
+    assert _refused_in_its_words(result.detail, "LIRR", "trips.txt is not readable as CSV (")
+    assert "MNR" not in result.detail
+    assert set(parsed) == {"LIRR", "MNR"}
+
+
+def test_path_static_a_publication_the_app_refuses_is_a_fail_in_its_words():
+    """A header-only routes.txt: the monitor's PATH check has no route floor, the app's
+    gate does (a publication with no route names is one it will not serve)."""
+    members = _fixture_txt_members("path_gtfs")
+    members["routes.txt"] = members["routes.txt"].split(b"\n")[0] + b"\n"
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, _parsed = cm.check_path_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.FAIL
+    assert _refused_in_its_words(result.detail, "PATH", "routes.txt yielded no usable routes)")
+
+
+def test_ferry_static_a_publication_the_app_refuses_is_a_fail_not_a_crash():
+    """The ferry's gate reads what its parse reads, so a refusal arrives with the parse's
+    own failure: here trips.txt's DEFLATE stream is damaged, and zlib.error, outside the
+    three classes the check used to catch, ended the whole run before it. Now the check
+    catches the app's classes and reports both, the refusal in the gate's words."""
+    archive = damaged_stream(_zip_bytes(_ferry_members_with_stop_times()), "trips.txt")
+    fetch = FakeFetcher({"u": archive})
+    result, parsed = cm.check_ferry_static(fetch, NO_SLEEP, 1000.0, url="u")
+    assert result.status == cm.FAIL
+    assert result.detail.startswith("unparseable (Error -3 while decompressing data")
+    assert _refused_in_its_words(result.detail, "NYC Ferry", "trips.txt is not readable (error: ")
+    assert parsed is None
+
+
+def test_njt_static_a_publication_the_app_refuses_is_a_fail_and_costs_no_mint():
+    """A header-only trips.txt: no NJ Transit floor in the monitor counts trips, and the
+    app's gate refuses a feed whose stops can never carry a train. The gate reads the
+    archive the run already holds, so the run still mints exactly once."""
+    head = _NJT_TRIPS.split("\n")[0] + "\n"
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"trips.txt": head})})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert _refused_in_its_words(result.detail, "NJ Transit", "trips.txt yielded no usable trips)")
+    assert [url for url, _h, _p in fetch.calls].count(NJT_TOKEN) == 1
+
+
 def test_subway_static_parse_does_not_leak_module_path():
     # _parse_subway_bytes swaps a module constant during the parse; it must be
     # restored afterward so nothing else in the process sees the temp path.
@@ -847,12 +997,16 @@ def test_subway_static_parse_does_not_leak_module_path():
 # ---------------------------------------------------------------------------
 
 
-def _railroad_zip(n_stops):
+def _railroad_zip(n_stops, **members):
+    """Every member railroad_static requires, and the one route its publication gate
+    (which the monitor runs since claude/static-rule-siblings, D6) asks routes.txt for."""
     return _zip_bytes(
         {
             "stops.txt": _railroad_stops_csv(n_stops),
             "trips.txt": b"trip_id,route_id\n",
             "shapes.txt": b"shape_id\n",
+            "routes.txt": b"route_id,route_long_name\n1,Main Line\n",
+            **members,
         }
     )
 

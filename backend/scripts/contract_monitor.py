@@ -440,9 +440,12 @@ SUBWAY_REQUIRED_MEMBERS = (
     "transfers.txt",
 )
 SUBWAY_WATCHED_MEMBERS = ("shapes.txt",)
-RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
-PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
-FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
+# routes.txt joined these three on claude/static-rule-siblings: each loader had required
+# it for a long while (its _REQUIRED_MEMBERS) and the monitor's lists had not followed,
+# which the roster test in test_contract_monitor now holds equal for all five.
+RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt")
+PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt", "routes.txt")
+FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt", "routes.txt")
 # NJ Transit ships NO calendar.txt and NO feed_info.txt, by design, so neither can
 # be required here; requiring either would FAIL the monitor on every valid
 # publication. calendar_dates.txt takes calendar's place and IS required, because
@@ -468,6 +471,29 @@ NJT_REQUIRED_MEMBERS = (
 # it as required turned the 6-hourly schedule red over a member the app was
 # designed to survive losing.
 NJT_WATCHED_MEMBERS = ("shapes.txt",)
+
+# THE APP'S OWN PUBLICATION GATES, one per static check (claude/static-rule-siblings,
+# D6). Each is the function its loader runs on a download before promoting it and on
+# its cache before serving it, so a publication one of these refuses is one a deploy's
+# cold start would not serve: the system is off the map until upstream republishes.
+# The check runs the gate over the bytes it fetched (_app_gate) and reports a refusal
+# as FAIL in the gate's words. The monitor asks the app here rather than keeping its
+# own copy of the rules, which is how the subway check used to pass publications the
+# app refused outright; test_contract_monitor pins this map against the loaders' gates.
+STATIC_GATES: dict[str, Callable[..., None]] = {
+    "subway-static": static_data.validate_subway_archive,
+    "railroad-static": railroad_static.validate_railroad_publication,
+    "path-static": path_static.validate_path_publication,
+    "ferry-static": ferry_static.validate_ferry_publication,
+    "njt-static": njt_static.validate_njt_publication,
+}
+
+# What reading a publication with the app's own parsers can raise, from the app
+# (static_shared): the archive's classes and the other read errors. The checks caught
+# three of them (BadZipFile, KeyError, UnicodeDecodeError), so a parse that raised
+# zlib.error or csv.Error, which the gate above now refuses by name, ended the run
+# before the check's FAIL was reported.
+_UNREADABLE = static_shared.UNREADABLE_MEMBER
 
 # stops.txt columns njt_static._parse_stops READS to build a marker: the id, the
 # name the identity spot check compares, and the two coordinates a row without
@@ -1389,6 +1415,33 @@ def _parse_subway_bytes(raw: bytes) -> dict:
     return {"stops": stops, "stations": stations, "shapes": shapes, "geometry": geometry}
 
 
+def _app_gate(raw: bytes, filename: str, gate: Callable[[zipfile.ZipFile], None]) -> str | None:
+    """The app's publication gate over fetched bytes, through the app's own boundary
+    (static_shared.validate_archive, which turns every way of failing to read into the
+    one refusal type): None when it passes, else the refusal in the gate's words."""
+    with tempfile.TemporaryDirectory() as td:
+        zpath = Path(td) / filename
+        zpath.write_bytes(raw)
+        try:
+            static_shared.validate_archive(zpath, gate)
+        except static_shared.StaticValidationError as exc:
+            return _sanitize(exc)
+    return None
+
+
+def _refused(refusal: str, system: str, prefix: str = "") -> str:
+    """The detail for a publication the app's gate refuses (STATIC_GATES says why FAIL)."""
+    return (
+        f"{prefix}the app refuses this publication, so a deploy now would serve no "
+        f"{system} ({refusal})"
+    )
+
+
+def _unparseable(exc: BaseException, refusal: str | None, system: str, prefix: str = "") -> str:
+    detail = f"{prefix}unparseable ({_sanitize(exc)})"
+    return detail if refusal is None else f"{detail}; {_refused(refusal, system)}"
+
+
 # Static feeds we have explicitly, individually acknowledged as expired-but-live:
 # the upstream publisher has not republished, its last-published file is genuinely
 # past its feed_end_date, yet the schedule/topology it ships is still correct and
@@ -1482,34 +1535,38 @@ def check_subway_static(
     url: str | None = None,
     tz=None,
 ) -> tuple[Result, dict | None]:
-    """Subway static zip: reachable, a valid zip, required members present,
-    parseable by the production parsers, and a generous stop-count floor. Returns
-    the parsed tables so the subway realtime check can decode against real
-    stops."""
+    """Subway static zip: reachable, a valid zip, required members present, accepted
+    by the app's own always-gate (STATIC_GATES), parseable by the production parsers,
+    and a generous stop-count floor. Returns the parsed tables so the subway realtime
+    check can decode against real stops."""
     url = url if url is not None else static_data.SUBWAY_GTFS_URL
     tz = tz if tz is not None else feeds.NYC_TZ
     res, detail = _fetch_retrying(fetch, url, sleep)
     if res is None:
         return Result("subway-static", FAIL, f"unreachable ({detail})"), None
+    refusal = _app_gate(res.content, "gtfs_subway.zip", STATIC_GATES["subway-static"])
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
             end_status = _feed_end_date_status("subway", zf, members, now, tz)
         parsed = _parse_subway_bytes(res.content)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
-        return Result("subway-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
+    except _UNREADABLE as exc:
+        return Result("subway-static", FAIL, _unparseable(exc, refusal, "subway")), None
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, SUBWAY_REQUIRED_MEMBERS)
     _check_members(statuses, details, members, SUBWAY_WATCHED_MEMBERS, status=WARN)
+    # THE ALWAYS-GATE (STATIC_GATES): an undecodable byte in trips.txt, tables that do
+    # not join, a header-only transfers.txt. Until claude/static-rule-siblings this check
+    # parsed stops and checked members only, so it passed publications the app refuses.
+    if refusal is not None:
+        statuses.append(FAIL)
+        details.append(_refused(refusal, "subway"))
     # PRESENT AND DRAWING NOTHING, the case presence cannot see (SUBWAY_WATCHED_MEMBERS
     # says why a WARN): a header-only shapes.txt, shape ids that drifted from the route
     # pattern, one point per shape, or bytes nothing can read. Asked of the app's own
     # route-lines gate (_parse_subway_bytes), the one that decides whether a deploy
-    # draws this publication's lines. Not of its always-gate, validate_subway_archive,
-    # which this check has never run (it parses stops and checks members), so a
-    # publication the app refuses outright can still pass here: a gap older than this
-    # WARN, on the ledger's live list.
+    # draws this publication's lines.
     if "shapes.txt" in members and parsed["geometry"] is not None:
         statuses.append(WARN)
         details.append(
@@ -1535,8 +1592,9 @@ def check_railroad_static(
     tz=None,
 ) -> tuple[Result, dict]:
     """Both railroad static zips (LIRR, MNR): reachable, valid, required members
-    present, parseable by railroad_static._parse_stops, and a generous stop floor
-    each. Returns {system: stops} for the railroad realtime check."""
+    present, accepted by the app's publication gate (STATIC_GATES), parseable by
+    railroad_static._parse_stops, and a generous stop floor each. Returns
+    {system: stops} for the railroad realtime check."""
     urls = urls if urls is not None else railroad_static.RAILROAD_STATIC_URLS
     tz = tz if tz is not None else feeds.NYC_TZ
     parsed: dict[str, dict] = {}
@@ -1548,6 +1606,9 @@ def check_railroad_static(
             statuses.append(FAIL)
             details.append(f"{system} unreachable ({detail})")
             continue
+        refusal = _app_gate(
+            res.content, f"gtfs_{system.lower()}.zip", STATIC_GATES["railroad-static"]
+        )
         try:
             with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
                 members = set(zf.namelist())
@@ -1555,12 +1616,15 @@ def check_railroad_static(
                 # Per-system key (lirr/mnr) so the two railroad feeds can be
                 # acknowledged independently if one ever needs it; neither is today.
                 end_status = _feed_end_date_status(system.lower(), zf, members, now, tz)
-        except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
+        except _UNREADABLE as exc:
             statuses.append(FAIL)
-            details.append(f"{system} unparseable ({_sanitize(exc)})")
+            details.append(_unparseable(exc, refusal, system, prefix=f"{system} "))
             continue
         parsed[system] = stops
         _check_members(statuses, details, members, RAILROAD_REQUIRED_MEMBERS, prefix=f"{system} ")
+        if refusal is not None:
+            statuses.append(FAIL)
+            details.append(_refused(refusal, system, prefix=f"{system} "))
         if len(stops) < RAILROAD_STATIC_MIN_STOPS:
             statuses.append(FAIL)
             details.append(f"{system} only {len(stops)} stops (< {RAILROAD_STATIC_MIN_STOPS})")
@@ -1580,14 +1644,16 @@ def check_path_static(
     tz=None,
 ) -> tuple[Result, dict | None]:
     """PATH static zip: reachable, valid, required members present (including
-    stop_times.txt), parseable by path_static._parse_zip, parent count above the
-    floor, and the identity spot check (station 26733 exists and is named
-    Newark). Returns the parsed tables for the PATH realtime check."""
+    stop_times.txt), accepted by the app's publication gate (STATIC_GATES), parseable
+    by path_static._parse_zip, parent count above the floor, and the identity spot
+    check (station 26733 exists and is named Newark). Returns the parsed tables for the
+    PATH realtime check."""
     url = url if url is not None else path_static.PATH_STATIC_URL
     tz = tz if tz is not None else feeds.NYC_TZ
     res, detail = _fetch_retrying(fetch, url, sleep)
     if res is None:
         return Result("path-static", FAIL, f"unreachable ({detail})"), None
+    refusal = _app_gate(res.content, "gtfs_path.zip", STATIC_GATES["path-static"])
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
@@ -1600,11 +1666,14 @@ def check_path_static(
             # would no longer have a real guard behind it.
             end_status = _feed_end_date_status("path", zf, members, now, tz)
         parsed = _parse_zip_bytes(path_static._parse_zip, res.content, "gtfs_path.zip")
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
-        return Result("path-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
+    except _UNREADABLE as exc:
+        return Result("path-static", FAIL, _unparseable(exc, refusal, "PATH")), None
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, PATH_REQUIRED_MEMBERS)
+    if refusal is not None:
+        statuses.append(FAIL)
+        details.append(_refused(refusal, "PATH"))
     stops = parsed.get("stops") or {}
     if len(stops) < PATH_STATIC_MIN_PARENTS:
         statuses.append(FAIL)
@@ -1631,25 +1700,30 @@ def check_ferry_static(
     tz=None,
 ) -> tuple[Result, dict | None]:
     """NYC Ferry static zip: reachable, valid, required members present (including
-    stop_times.txt), parseable by ferry_static._parse_zip, route and stop counts
-    above their floors, and the identity spot check (route ER exists). Fetched
-    with the courteous UA (Connexionz is a community host). Returns the parsed
-    tables so the ferry realtime check can join trips to routes."""
+    stop_times.txt), accepted by the app's publication gate (STATIC_GATES), parseable
+    by ferry_static._parse_zip, route and stop counts above their floors, and the
+    identity spot check (route ER exists). Fetched with the courteous UA (Connexionz
+    is a community host). Returns the parsed tables so the ferry realtime check can
+    join trips to routes."""
     url = url if url is not None else ferry_static.FERRY_STATIC_URL
     tz = tz if tz is not None else feeds.NYC_TZ
     res, detail = _fetch_retrying(fetch, url, sleep, headers=_ferry_ua())
     if res is None:
         return Result("ferry-static", FAIL, f"unreachable ({detail})"), None
+    refusal = _app_gate(res.content, "gtfs_ferry.zip", STATIC_GATES["ferry-static"])
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
             end_status = _feed_end_date_status("ferry", zf, members, now, tz)
         parsed = _parse_zip_bytes(ferry_static._parse_zip, res.content, "gtfs_ferry.zip")
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
-        return Result("ferry-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
+    except _UNREADABLE as exc:
+        return Result("ferry-static", FAIL, _unparseable(exc, refusal, "NYC Ferry")), None
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, FERRY_REQUIRED_MEMBERS)
+    if refusal is not None:
+        statuses.append(FAIL)
+        details.append(_refused(refusal, "NYC Ferry"))
     routes = parsed.get("routes") or {}
     stops = parsed.get("stops") or {}
     if len(routes) < FERRY_STATIC_MIN_ROUTES:
@@ -1837,10 +1911,12 @@ def check_njt_static(
     REUSES the token and therefore costs nothing extra.
 
     Everything else is the ordinary static shape: reachable, a valid zip, required
-    members present, parseable by the production parser (njt_static._parse_zip, so
-    a pass here means the real code path works against today's bytes), counts above
-    their floors, an identity spot check, and the service-date band above. Returns
-    the parsed tables so a future NJT realtime check can join against them.
+    members present, accepted by the app's publication gate (STATIC_GATES, run over
+    the archive already fetched, so it costs no mint), parseable by the production
+    parser (njt_static._parse_zip, so a pass here means the real code path works
+    against today's bytes), counts above their floors, an identity spot check, and
+    the service-date band above. Returns the parsed tables so a future NJT realtime
+    check can join against them.
     """
     creds = _njt_credentials(username, password)
     if creds is None:
@@ -1868,16 +1944,24 @@ def check_njt_static(
     # A 200 is not proof of authorization here: the probe's invalid-token response
     # IS an HTTP 500, so _fetch_retrying would have reported it as an ordinary
     # unreachable above. Reaching this line means the token was accepted.
+    #
+    # THE GATE COSTS NO MINT: it reads the archive this run already holds. `now` is the
+    # run's clock, so the gate's service-date guard reads the same day the band does.
+    gate = STATIC_GATES["njt-static"]
+    refusal = _app_gate(res.content, "gtfs_njt.zip", lambda zf: gate(zf, now=now))
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
         parsed = _parse_zip_bytes(njt_static._parse_zip, res.content, "gtfs_njt.zip")
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
-        return Result("njt-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
+    except _UNREADABLE as exc:
+        return Result("njt-static", FAIL, _unparseable(exc, refusal, "NJ Transit")), None
 
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, NJT_REQUIRED_MEMBERS)
+    if refusal is not None:
+        statuses.append(FAIL)
+        details.append(_refused(refusal, "NJ Transit"))
     _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
     # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
     # njt_static treats this feed as FLAT: every parsed row is a boardable marker.

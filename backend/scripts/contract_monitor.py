@@ -76,6 +76,7 @@ import njt_static  # noqa: E402
 import path_static  # noqa: E402
 import railroad_static  # noqa: E402
 import static_data  # noqa: E402
+import static_shared  # noqa: E402
 from cache import _sanitize_upstream as _sanitize  # noqa: E402
 from feeds import njt as njt_feed  # noqa: E402
 
@@ -306,12 +307,15 @@ PRODUCTION_HEALTH_CODES = (
     "njt-mint-quota",
     "observations-qualified",
     "njt-mint-allowance",
+    "subway-lines-degraded",
 )
 
-# Prose for the codes whose NAME does not say what the operator should do. Three need
+# Prose for the codes whose NAME does not say what the operator should do. Four need
 # it. "njt-mint-quota" reports a budget that is spent, which is a different
 # instruction from "something broke", and "njt-mint-allowance" reports production
 # holding at its own share of that budget, which is the same instruction.
+# "subway-lines-degraded" names what riders lost and not that the fault is upstream's,
+# that the running process cannot recover it, or what a redeploy needs first.
 # "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
@@ -323,6 +327,15 @@ PRODUCTION_HEALTH_CODES = (
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
 # is not widened by them. Nothing from the wire is echoed.
 _HEALTH_CODE_NOTES = {
+    "subway-lines-degraded": (
+        "production's subway serves every station without route lines; when /api/status "
+        "static_archives.subway.degraded_members names shapes.txt, the archive promoted at "
+        "its last start draws nothing, the fault is upstream's publication, a running "
+        "process never re-fetches it, and a redeploy restores the lines only once "
+        "upstream's shapes.txt draws again, which this run's subway-static check reports; "
+        "when it names nothing, the lines failed to load from an archive that draws, and "
+        "a redeploy restores them"
+    ),
     "njt-mint-allowance": (
         "production has spent its own allowance of NJ Transit mints for the Eastern day "
         f"({njt_auth.DAILY_MINT_ALLOWANCE} by default; /api/status njt_mint_allowance "
@@ -412,13 +425,21 @@ NJT_SERVICE_WARN_DAYS = 30
 # process keeps serving the last-known-good, reports ready, and the drift check passed the
 # publication it had just refused. So the monitor names every member
 # static_data._REQUIRED_MEMBERS does, and test_contract_monitor holds the two equal.
+# shapes.txt LEFT THAT LIST on claude/a02-publication-validation (the operator's ruling:
+# geometry stays decorative): the app now serves a publication without usable lines,
+# naming shapes.txt as a degraded member, rather than refusing it. So it is WATCHED here
+# at WARN (see NJT_WATCHED_MEMBERS for why a WARN), and watched for more than presence:
+# check_subway_static also WARNs when the member is there and draws nothing, read
+# through the app's own route-shapes loader, because that publication is what the next
+# deploy would serve without lines. The production half is /healthz's
+# subway-lines-degraded, on PRODUCTION_HEALTH_CODES above.
 SUBWAY_REQUIRED_MEMBERS = (
     "stops.txt",
-    "shapes.txt",
     "trips.txt",
     "stop_times.txt",
     "transfers.txt",
 )
+SUBWAY_WATCHED_MEMBERS = ("shapes.txt",)
 RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
 PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
 FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
@@ -1342,7 +1363,13 @@ def _parse_subway_bytes(raw: bytes) -> dict:
     shapes.txt parse is exactly the divergence this monitor exists to catch.
     load_subway_stations / load_subway_route_shapes swallow their own errors and
     return empty, so stops (which raises on a bad zip) is the parse-validity
-    signal."""
+    signal.
+
+    "geometry" is the app's own route-lines gate over the same bytes: None when it
+    passes, else its reason. That gate, not the loader's output, decides whether a cold
+    start promotes this publication with its lines degraded (static_shared.staged_fetch),
+    and the loader keeps one-point polylines that draw nothing, so asking it instead
+    would pass a publication the app degrades (the A02 branch's review)."""
     with tempfile.TemporaryDirectory() as td:
         zpath = Path(td) / "gtfs_subway.zip"
         zpath.write_bytes(raw)
@@ -1352,9 +1379,14 @@ def _parse_subway_bytes(raw: bytes) -> dict:
             stops = static_data._parse_stops()
             stations = static_data.load_subway_stations()
             shapes = static_data.load_subway_route_shapes()
+            try:
+                static_shared.validate_archive(zpath, static_data.validate_subway_geometry)
+                geometry = None
+            except static_shared.StaticValidationError as exc:
+                geometry = str(exc)
         finally:
             static_data.SUBWAY_GTFS_ZIP = original
-    return {"stops": stops, "stations": stations, "shapes": shapes}
+    return {"stops": stops, "stations": stations, "shapes": shapes, "geometry": geometry}
 
 
 # Static feeds we have explicitly, individually acknowledged as expired-but-live:
@@ -1469,6 +1501,21 @@ def check_subway_static(
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, SUBWAY_REQUIRED_MEMBERS)
+    _check_members(statuses, details, members, SUBWAY_WATCHED_MEMBERS, status=WARN)
+    # PRESENT AND DRAWING NOTHING, the case presence cannot see (SUBWAY_WATCHED_MEMBERS
+    # says why a WARN): a header-only shapes.txt, shape ids that drifted from the route
+    # pattern, one point per shape, or bytes nothing can read. Asked of the app's own
+    # route-lines gate (_parse_subway_bytes), the one that decides whether a deploy
+    # draws this publication's lines. Not of its always-gate, validate_subway_archive,
+    # which this check has never run (it parses stops and checks members), so a
+    # publication the app refuses outright can still pass here: a gap older than this
+    # WARN, on the ledger's live list.
+    if "shapes.txt" in members and parsed["geometry"] is not None:
+        statuses.append(WARN)
+        details.append(
+            "shapes.txt draws no route lines (a deploy now would serve every station "
+            f"without them: {_sanitize(parsed['geometry'])})"
+        )
     stops = parsed["stops"]
     if len(stops) < SUBWAY_STATIC_MIN_STOPS:
         statuses.append(FAIL)

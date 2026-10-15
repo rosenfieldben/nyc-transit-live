@@ -47,8 +47,9 @@ WHAT THIS SCRIPT MEASURES, AND HOW.
   as an async context manager with the warmups/pollers/bus index replaced by
   instant no-op coroutines and asyncio.create_task spied on, so every task the
   startup creates is counted. Static: main.lifespan's own source is parsed with ast,
-  and the whole backend package is scanned for other create_task sites and for any
-  add_done_callback.
+  and the backend package the app imports (everything but tests/ and scripts/, whose
+  tools run as their own processes) is scanned for other create_task sites and for
+  any add_done_callback.
 
 NO NJ TRANSIT ANYTHING. No NJT module is imported by this script's own code paths,
 no NJT function is called, and the three credential variables that backend/.env
@@ -796,10 +797,17 @@ async def part_d() -> dict:
                 all(scheduled.count(w) == 1 for w in watched))
 
     # No other scheduler and no completion hook anywhere in the backend package.
+    # The question is whether the SERVED app has a second scheduler, so the two
+    # directories the app never imports are skipped: tests/, and scripts/, whose tools
+    # run as their own processes (measure_subway_validation.py schedules the real subway
+    # warmup in its own event loop to time it, as the audit scripts under docs/ do).
+    # Matched on the path BELOW backend/, never the absolute one: a checkout that sits
+    # under a directory named tests or scripts would otherwise skip every file and pass
+    # this check vacuously.
     other_sites: list[str] = []
     done_callbacks: list[str] = []
     for py in sorted(BACKEND.glob("*.py")) + sorted(BACKEND.glob("*/*.py")):
-        if "tests" in py.parts:
+        if py.relative_to(BACKEND).parts[0] in ("tests", "scripts"):
             continue
         text = py.read_text(encoding="utf-8")
         for i, line in enumerate(text.splitlines(), start=1):

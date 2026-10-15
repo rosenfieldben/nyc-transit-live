@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import errno
 import hashlib
 import io
 import struct
+import threading
 import types
 import zipfile
 from pathlib import Path
@@ -80,12 +82,22 @@ _STOP_ROWS = [
     },
 ]
 _ROUTE_ROWS = [{"route_id": "R1", "route_long_name": "Alpha Line", "route_color": "00839C"}]
+# The shape id is in the subway's own form (route, dots, direction), because the subway
+# validator reads shapes.txt through its loader's parser and counts only points of a
+# shape that names a route (A02). The other three loaders join trips to shapes by id
+# and care nothing for its form.
 _TRIP_ROWS = [
-    {"route_id": "R1", "service_id": "wk", "trip_id": "t1", "direction_id": "0", "shape_id": "s1"}
+    {
+        "route_id": "R1",
+        "service_id": "wk",
+        "trip_id": "t1",
+        "direction_id": "0",
+        "shape_id": "R1..N01R",
+    }
 ]
 _SHAPE_ROWS = [
     {
-        "shape_id": "s1",
+        "shape_id": "R1..N01R",
         "shape_pt_sequence": str(i),
         "shape_pt_lat": str(40.70 + i / 100),
         "shape_pt_lon": str(-74.00 - i / 100),
@@ -182,7 +194,8 @@ def undecodable_deep_member() -> bytes:
     the loader's residual arm when the real parse hit the bad byte: one bad
     publication and BOTH archives gone, which is precisely the bug C5 exists to
     prevent, surviving inside C5. staged_fetch now runs the publication validator,
-    which does the full parse before the rename.
+    which does the full parse before the rename. The subway met the same shape later,
+    as audit 2026-10-12's A02, and its validator now parses trips.txt too.
     """
     return good_archive(
         trips=b"route_id,service_id,trip_id,direction_id,shape_id\nR1,wk,t1,0,\xd1\xd1\n"
@@ -247,6 +260,219 @@ async def test_good_publication_is_promoted_and_recorded(tmp_path):
     assert entry["last_download_error"] is None
     assert entry["failed_downloads"] == 0
     assert not list(tmp_path.glob("*.part"))  # the stage file is gone either way
+
+
+# ---------------------------------------------------------------------------
+# staged_fetch's two-mode rule: what validate_when_replacing's failure does
+# ---------------------------------------------------------------------------
+#
+# The operator's ruling on the A02 branch's review: a DECORATIVE gate (the subway's route
+# lines) refuses a publication only when a cache that passes the always-gate is there to
+# keep serving; with none, the publication is promoted and the failure is published on
+# the archive's status as a degraded member, by name, with the parser's reason. Generic
+# validators here, so the rule is pinned apart from any loader's tables.
+
+GEOMETRY_REASON = "shapes.txt yielded no usable drawable route shapes"
+
+
+def refuse_geometry(member: str | None = "shapes.txt"):
+    calls: list = []
+
+    def validate(zf):
+        calls.append(zf.namelist())
+        raise static_shared.StaticValidationError(GEOMETRY_REASON, member=member)
+
+    validate.calls = calls
+    return validate
+
+
+async def _fetch_with_geometry(dest, payload, geometry, validate=accept_all):
+    await static_shared.staged_fetch(
+        "https://example.invalid/gtfs.zip",
+        dest,
+        validate,
+        key="k",
+        label="test archive",
+        download=publisher(payload),
+        validate_when_replacing=geometry,
+    )
+
+
+@pytest.mark.parametrize(("member", "key"), [("shapes.txt", "shapes.txt"), (None, "archive")])
+async def test_a_decorative_failure_with_no_cache_is_promoted_and_named(tmp_path, member, key):
+    """A cold start: nothing to keep, so refusing would trade the whole layer for its
+    decoration. Promoted, no download error, and the degraded member on the status under
+    its own name (or "archive" when the failure names none) with the parser's words."""
+    dest = tmp_path / "gtfs.zip"
+    payload = good_archive()
+    await _fetch_with_geometry(dest, payload, refuse_geometry(member))
+    assert dest.read_bytes() == payload
+    entry = static_shared.archive_status()["k"]
+    assert entry["last_promoted_at"] is not None
+    assert entry["last_download_error"] is None and entry["failed_downloads"] == 0
+    assert entry["degraded_members"] == {key: GEOMETRY_REASON}
+
+
+async def test_a_decorative_failure_over_a_cache_that_serves_is_refused(tmp_path):
+    """2026-09-05's F08: bad geometry never replaces an archive that passes the always-gate.
+    Refused exactly as an always-gate failure is: the cache byte-identical, the failure
+    counted and named, and nothing degraded about the archive still serving."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive())
+    before = sha(dest)
+    with pytest.raises(static_shared.StaticValidationError):
+        await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), refuse_geometry())
+    assert sha(dest) == before
+    assert not list(tmp_path.glob("*.part"))
+    entry = static_shared.archive_status()["k"]
+    assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+    assert entry["last_download_error"] == f"invalid archive: {GEOMETRY_REASON}"
+    assert entry["degraded_members"] == {}
+
+
+async def test_a_cache_the_always_gate_refuses_is_no_cache_to_keep(tmp_path):
+    """The rule asks whether the cache PASSES the always-gate, not whether a file exists:
+    an unreadable one is nothing to keep serving, so the publication is promoted over it
+    with the degraded member named."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(b"<!doctype html> not a zip")
+    payload = good_archive()
+    await _fetch_with_geometry(dest, payload, refuse_geometry())
+    assert dest.read_bytes() == payload
+    assert static_shared.archive_status()["k"]["degraded_members"] == {
+        "shapes.txt": GEOMETRY_REASON
+    }
+
+
+def _refusing_the_cache(dest, raised):
+    """An always-gate that passes every archive but the cache at `dest`, where it raises
+    `raised`: the only call it fails is the two-mode rule's re-check of that cache."""
+
+    def validate(zf):
+        if Path(zf.filename) == dest:
+            raise raised
+
+    return validate
+
+
+async def test_a_valid_zip_the_always_gate_refuses_is_no_cache_to_keep(tmp_path):
+    """The converse of the unreadable cache above, with the zip itself readable: the rule
+    asks the always-gate, not whether the file opens, so a cache it refuses on its bytes
+    is promoted over (the branch's review, F5: the old test's cache was not a zip at all,
+    so a re-check that only opened the file passed it too)."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive(drop=("routes.txt",)))
+    payload = good_archive()
+    refusal = static_shared.StaticValidationError("stops.txt yielded no usable parent stations")
+    await _fetch_with_geometry(
+        dest, payload, refuse_geometry(), validate=_refusing_the_cache(dest, refusal)
+    )
+    assert dest.read_bytes() == payload
+    assert static_shared.archive_status()["k"]["degraded_members"] == {
+        "shapes.txt": GEOMETRY_REASON
+    }
+
+
+@pytest.mark.parametrize(
+    ("cache", "verdict", "promoted"),
+    [("good", False, True), ("unreadable", True, False)],
+    ids=["the caller found it unusable", "the caller found it serving"],
+)
+async def test_the_callers_verdict_decides_the_mode_without_a_second_read(
+    tmp_path, cache, verdict, promoted
+):
+    """WHOSE VERDICT DECIDES (the branch's second review round). A loader has already
+    judged the cache at the start of its attempt, and the mode is that judgment: a
+    cache it called unusable is no cache to keep, and one it called serving is kept,
+    whatever a second read here would say. Each case is set against what such a read
+    would answer (a good cache, an unreadable one), and the always-gate counts that it
+    was never asked about the cache at all."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive() if cache == "good" else b"<!doctype html> not a zip")
+    before = sha(dest)
+    asked: list = []
+
+    def validate(zf):
+        asked.append(Path(zf.filename))
+
+    payload = good_archive(drop=("routes.txt",))
+    attempt = static_shared.staged_fetch(
+        "https://example.invalid/gtfs.zip",
+        dest,
+        validate,
+        key="k",
+        label="test archive",
+        download=publisher(payload),
+        validate_when_replacing=refuse_geometry(),
+        cache_serves=verdict,
+    )
+    if promoted:
+        await attempt
+        assert dest.read_bytes() == payload
+        assert static_shared.archive_status()["k"]["degraded_members"] == {
+            "shapes.txt": GEOMETRY_REASON
+        }
+    else:
+        with pytest.raises(static_shared.StaticValidationError):
+            await attempt
+        assert sha(dest) == before
+    assert dest not in asked, "the cache was read again"
+
+
+async def test_without_a_verdict_an_environment_fault_reads_as_no_cache(tmp_path):
+    """A caller that passes no verdict gets the check every loader makes,
+    cached_archive_is_usable, and that check reads any failure as no cache: so one
+    EMFILE while re-reading a cache whose lines draw promotes geometry that draws
+    nothing over it. Stations over lines, which is the ruling's order: the second
+    review round showed that telling the environment's faults from the bytes' by errno
+    kept caches the loader had called unusable, and then nothing served at all. The
+    subway passes its verdict and never takes this path."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive())
+    payload = good_archive(drop=("routes.txt",))
+    fault = OSError(errno.EMFILE, "Too many open files")
+    await _fetch_with_geometry(
+        dest, payload, refuse_geometry(), validate=_refusing_the_cache(dest, fault)
+    )
+    assert dest.read_bytes() == payload
+
+
+async def test_degraded_members_describe_the_archive_now_serving(tmp_path):
+    """Replaced at every promotion, left alone by a refusal: a cold promotion names the
+    member; a later bad publication is refused over that archive (which passes the
+    always-gate) and the name stays, because the archive it describes is still serving;
+    a clean publication then clears it."""
+    dest = tmp_path / "gtfs.zip"
+    await _fetch_with_geometry(dest, good_archive(), refuse_geometry())
+    assert static_shared.archive_status()["k"]["degraded_members"] == {
+        "shapes.txt": GEOMETRY_REASON
+    }
+    with pytest.raises(static_shared.StaticValidationError):
+        await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), refuse_geometry())
+    assert static_shared.archive_status()["k"]["degraded_members"] == {
+        "shapes.txt": GEOMETRY_REASON
+    }
+    await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), accept_all)
+    entry = static_shared.archive_status()["k"]
+    assert entry["degraded_members"] == {} and entry["last_download_error"] is None
+
+
+async def test_an_always_gate_failure_is_refused_before_the_decorative_gate_is_asked(tmp_path):
+    """The two-mode rule is the decorative gate's only. A publication the always-gate
+    refuses is refused with no cache at all (third-audit finding 4's cold start), and the
+    decorative gate never runs on it."""
+    dest = tmp_path / "gtfs.zip"
+    geometry = refuse_geometry()
+
+    def refuse_all(zf):
+        raise static_shared.StaticValidationError("stops.txt yielded no usable stops")
+
+    with pytest.raises(static_shared.StaticValidationError):
+        await _fetch_with_geometry(dest, good_archive(), geometry, validate=refuse_all)
+    assert not dest.exists()
+    assert geometry.calls == []
+    entry = static_shared.archive_status()["k"]
+    assert entry["last_download_error"] == "invalid archive: stops.txt yielded no usable stops"
 
 
 @pytest.mark.parametrize("shape", sorted(BAD_PUBLICATIONS))
@@ -532,10 +758,12 @@ def _shapes_for(loader):
 LOADER_SHAPES = [(loader, shape) for loader in LOADERS for shape in _shapes_for(loader)]
 LOADER_SHAPE_IDS = [f"{loader.name}-{shape}" for loader, shape in LOADER_SHAPES]
 
-# The three lenient loaders parse every table in one pass and unlink a cache they
-# cannot parse; the subway's load reads only stops.txt, so it has no deeper table to
-# fail on and no residual arm. The deep-parse regression is about that arm.
-DEEP_PARSE_LOADERS = [loader for loader in LOADERS if loader.name != "subway"]
+# Every loader parses deeper tables than its light gate used to, and unlinks a cache it
+# cannot parse. The subway joined this list with A02: it read trips.txt and
+# stop_times.txt for the routes index all along, without a gate that parsed them or a
+# residual arm, which is how an undecodable trips.txt was promoted and then wedged
+# every attempt. The deep-parse regression is about that arm.
+DEEP_PARSE_LOADERS = LOADERS
 DEEP_PARSE_IDS = [loader.name for loader in DEEP_PARSE_LOADERS]
 
 
@@ -660,6 +888,38 @@ async def test_a_valid_fresh_cache_is_served_without_any_download(tmp_path, monk
     assert static_shared.archive_status() == {}
 
 
+@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
+async def test_every_loaders_cached_check_validates_off_the_serving_loop(
+    tmp_path, monkeypatch, loader
+):
+    """D5 AT EVERY CALL SITE (audit 2026-10-12, A02 and A09). Each loader asks
+    static_shared.cached_archive_is_usable whether its cache can be served, and that
+    runs the loader's own validator in a worker thread so the loop the pollers and
+    /healthz share keeps running. The subway's heartbeat test in test_static_data.py
+    pins what that buys; this pins WHERE it happens for every loader, by thread rather
+    than by timing: with a valid, fresh cache and no download, the validator must run
+    on a thread other than the one running this test's event loop. A loader put back
+    on the synchronous check runs it here, on the loop's thread, and fails.
+    NJ Transit's loader has the same test in test_njt_static.py."""
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive())
+    calls = []
+    _patch_download(monkeypatch, loader.module, good_archive(), calls=calls)
+    threads = []
+    real = loader.validate
+
+    def recording(zf):
+        threads.append(threading.get_ident())
+        real(zf)
+
+    monkeypatch.setattr(loader.module, real.__name__, recording)
+
+    assert loader.served(await loader.load())
+    assert calls == []
+    assert threads, "the cached check must have run the loader's validator"
+    assert threading.get_ident() not in threads
+
+
 # ---------------------------------------------------------------------------
 # Third-audit finding 4, by name
 # ---------------------------------------------------------------------------
@@ -774,7 +1034,13 @@ EXPECTED_REQUIRED = {
     # label class, MR5's kicker listing the complex's routes), so an archive without it
     # draws Times Square as five lone stops with no ring and no name at zoom 12 or 13,
     # while the status says "ready".
-    "subway": ("shapes.txt", "stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"),
+    #
+    # AND shapes.txt LEFT IT (claude/a02-publication-validation, the operator's ruling:
+    # geometry stays decorative). It has its own gate, static_data.validate_subway_geometry,
+    # which refuses only when a cache that draws is there to keep and otherwise promotes
+    # with shapes.txt named as a degraded member, so requiring it here would take every
+    # station off the map at a cold start to protect the lines.
+    "subway": ("stop_times.txt", "stops.txt", "transfers.txt", "trips.txt"),
     "railroad": ("routes.txt", "shapes.txt", "stops.txt", "trips.txt"),
     "path": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
     "ferry": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
@@ -840,10 +1106,13 @@ async def test_a_publication_that_fails_the_deep_parse_never_replaces_the_cache(
     both archives. staged_fetch runs the publication validator now, which parses
     everything the load parses before the rename.
 
-    The subway is excluded, and structurally so rather than by convenience: its
-    load reads only stops.txt, which the light validator already parses in full, so
-    it has no deeper table to fail on and no residual arm to destroy anything. An
-    archive with a damaged trips.txt is simply a VALID subway archive.
+    THE SUBWAY IS IN THIS TEST NOW, and this docstring used to say why it could not
+    be: that its load read only stops.txt, so an archive with a damaged trips.txt was
+    "simply a VALID subway archive". Its load had read trips.txt and stop_times.txt
+    for the routes-per-station index since H5, and audit 2026-10-12's A02 found that
+    exact archive promoted and then failing every warmup attempt for a month. Its
+    validator parses every member its load reads now, so the archive is refused
+    before the rename, which is what this test asks of every loader.
     """
     cache = loader.set_path(tmp_path, monkeypatch)
     cache.write_bytes(good_archive())

@@ -89,6 +89,7 @@ import io
 import logging
 import time
 import zipfile
+import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -101,7 +102,7 @@ from feeds.shared import NYC_TZ
 from static_routes import fold_stop_routes
 from static_shared import (
     StaticValidationError,
-    cached_archive_is_valid,
+    cached_archive_is_usable,
     parse_member,
     require_members,
     require_parsed,
@@ -834,15 +835,34 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     the trains, which is precisely the trade _REQUIRED_MEMBERS refuses. It degrades
     to no lines, loudly, and the rest of the load carries on.
 
+    A DAMAGED DEFLATE STREAM IS UNREADABLE TOO (audit 2026-10-12, A02b). Inflate
+    rejecting the member's compressed data raises zlib.error, not BadZipFile (that is
+    what a CRC mismatch raises) and not OSError, and it was missing from the tuple
+    below: the error escaped load_njt_static and took every station down for the
+    cache's 30-day life, the exact trade this arm exists to refuse.
+
+    AND SO IS ONE THAT CANNOT EVEN BE OPENED, which the read's tuple does not see
+    because ZipFile.open raises before any byte is read: BadZipFile for a damaged
+    local header, NotImplementedError for a compression method this Python cannot
+    inflate, RuntimeError for a member flagged encrypted. Caught at the open with the
+    same consequence (found by the review of claude/a02-publication-validation: a
+    promoted publication whose shapes.txt could not be opened either took the whole
+    cache down through the residual arm or escaped it entirely). EOFError is the read's
+    truncated-member case.
+
+    NOTHING BEFORE THIS PARSE OPENS shapes.txt. The publication gate
+    (validate_njt_publication) parses every REQUIRED member and deliberately not this
+    one, since a publication without usable geometry is still promoted (15c), so a
+    damaged shapes.txt reaches the cache and is first read here, by the load. What
+    follows from that is the age policy's: the lines stay gone until the cache ages
+    out at MAX_AGE_DAYS and the next download replaces it.
+
     THE ONE TIMED PARSE IN THIS APP. Not because the bound is known to be a large
     saving (that depends on how much of a publication's geometry its trips
     actually reference, which nobody here has measured), but because this is the
     biggest member the app reads and a cost nobody records is a cost nobody can
     check later. The first real number arrives with the fixture refresh. It logs at
-    INFO like every other static load line, and it fires TWICE per download
-    (validate_njt_publication runs this same parse against the staged file before
-    the promote, then the load parses the promoted copy), which is the truth about
-    what the process did rather than an accident worth hiding.
+    INFO like every other static load line, once per load.
     """
     wanted = {shape_id for trip in trips.values() if (shape_id := trip.get("shape_id"))}
     try:
@@ -850,11 +870,23 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     except KeyError:
         logger.info("NJ Transit publication carries no shapes.txt; route lines will be empty")
         return {}
+    except (zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError) as exc:
+        logger.warning(
+            "NJ Transit shapes.txt cannot be opened (%s); serving without route lines", exc
+        )
+        return {}
     started = time.monotonic()
     try:
         with member as raw:
             shapes = _parse_shapes(raw, wanted)
-    except (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, OSError) as exc:
+    except (
+        UnicodeDecodeError,
+        csv.Error,
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        OSError,
+    ) as exc:
         logger.warning("NJ Transit shapes.txt is unreadable (%s); serving without route lines", exc)
         return {}
     logger.info(
@@ -976,7 +1008,7 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     # FRESH MEANS VALID AND RECENT (C5), and for this feed "valid" carries the
     # service-date guard, so a cached archive whose schedule expired overnight is
     # rejected here and re-downloaded rather than served for another 30 days.
-    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate)
+    usable = await cached_archive_is_usable(zip_path, validate)
     fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
@@ -1001,14 +1033,47 @@ async def load_njt_static(*, now: float | None = None) -> dict:
             )
     try:
         data = _parse_zip(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error, OSError) as exc:
+    except (
+        zipfile.BadZipFile,
+        KeyError,
+        UnicodeDecodeError,
+        csv.Error,
+        zlib.error,
+        EOFError,
+    ) as exc:
         # The residual below the CACHED-archive validator. Reaching here means the
         # bytes on disk were fully parseable when they were promoted and are not now
         # (rot, a truncated write), or no file was ever written because the first
         # download failed. Unlink is right in exactly that case: this file IS the
         # cache, nothing better sits behind it, and keeping it would wedge every
-        # retry on the same bytes. A freshly promoted archive cannot land here,
-        # because validate_njt_publication ran this same parse before the rename.
+        # retry on the same bytes. zlib.error is a damaged deflate stream inside a
+        # member (A02b), as BadZipFile is a damaged CRC; the tuple missed it, so such
+        # an archive raised out of here instead and was kept for every attempt.
+        # EOFError is a member cut short.
+        #
+        # THE ARCHIVE'S ERRORS ONLY (the operator's ruling on the A02 branch's review):
+        # OSError is not here. Out of file descriptors, or a disk that fails a read, says
+        # nothing about these bytes, and discarding a good cache over it left NJ Transit
+        # with nothing to serve whenever the download that followed also failed. Such an
+        # error now fails the attempt with the cache kept, for the next one to read.
+        # NOT QUITE EVERY ARCHIVE ERROR (the branch's review, recorded on the ledger's
+        # live list for the operator): a member compressed with bzip2 whose stream is
+        # damaged raises a plain OSError, lzma's raises LZMAError, and a bit-rotted
+        # central-directory offset raises OSError(EINVAL) on every member read, errno
+        # and all, so no errno test separates them from the environment. stop_times.txt
+        # is the required member the light cached check never opens, so a cache that
+        # rots there escapes this arm and is kept until MAX_AGE_DAYS. The ruling named
+        # this tuple, so it is reported, not widened; the subway's answer, a cached
+        # check that opens what the load reads, is the one that closes it.
+        #
+        # WHAT THE GATE COVERS, AND WHAT IT DOES NOT. A freshly promoted archive
+        # reaches here only through a member the publication gate does not parse:
+        # validate_njt_publication parses every REQUIRED member, and shapes.txt,
+        # the one optional member, is never opened before the load. Its open and read
+        # failures (the classes _parse_shapes_member names) are caught there and
+        # degrade to no route lines, so this arm sees the required members only, and
+        # only from a cache that changed after it was checked (the light validator a
+        # load runs does not open stop_times.txt).
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

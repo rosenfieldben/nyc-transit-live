@@ -1,4 +1,5 @@
-"""A02 (High), "Subway archive validation can replace good data with a persistent failure".
+"""A02 (High), "Subway archive validation can replace good data with a persistent failure":
+the repair, pinned.
 
 THE AUDIT'S CLAIM (the 2026-10-12 report, finding A02, verbatim):
 
@@ -30,6 +31,46 @@ THE AUDIT'S CLAIM (the 2026-10-12 report, finding A02, verbatim):
 
     The same article's "Related medium-priority NJT variant" (a damaged DEFLATE
     shapes.txt in the NJ Transit archive) is reproduced by a02b, not here.
+
+FIXED ON claude/a02-publication-validation, by one rule: the validator is the
+loader's parser. Every member the subway load reads is read at validation through the
+one generator the load reads it with (static_data's _iter_* functions, drained to a
+count by the validator and accumulated by the loader), and must yield at least one row;
+and the three the routes-per-station index is built from must JOIN, one call of a trip
+with a route at a stop that folds to a station (the join floor, the sixth row below).
+So an archive the load cannot read, or whose index would be empty, is refused at
+staging and the last-known-good keeps serving. shapes.txt is read by a gate of its own,
+by the operator's ruling that geometry is decorative, and its failure follows the
+two-mode rule (static_shared.staged_fetch): refused over a cache that serves, promoted
+with shapes.txt named a degraded member on a cold start (M5g; 09-05's F08 pins both
+arms). Behind it, a residual arm discards a cached archive that passes validation and
+still fails the load on the archive's own bytes, so the next attempt downloads (ARM 1's
+bypass check reaches it).
+
+BEFORE (this script's record at d5f6d70, the numbers the ledger's A02 row carries):
+the validator parsed 2 of its 5 required members (stops.txt and transfers.txt) and
+checked the others for presence. A cold-cache publication whose trips.txt alone held
+one 0xFF byte was promoted (archive status: promoted, no error, 0 failed downloads),
+then 3 of 3 warmup attempts raised UnicodeDecodeError on 1 download while
+cached_archive_is_valid kept answering True over the cache the loader had just failed
+on; stop_times.txt had the same gap; shapes.txt (2026-09-05's F08) was promoted and
+served 0 route lines. A repair published right after the bad promotion was not fetched
+by any of 75 further attempts over 6 h of the real backoff (74 from a good archive
+loaded a month earlier) or at MAX_AGE_DAYS less an hour; the first attempt an hour
+past MAX_AGE_DAYS fetched it.
+
+AFTER, asserted below: every one of the five members is refused with one 0xFF byte by
+the gate that reads it, by name and with the codec's own words; an archive whose tables
+do not join is refused by the always-gate, naming stop_times.txt; on a cold cache the
+four the always-gate reads, and the unjoinable archive, are refused on every attempt,
+while bad shapes.txt is promoted with every station served, 0 route lines and
+shapes.txt named a degraded member on /api/status; the trips.txt and stop_times.txt corruptions
+are refused at staging on every attempt from a cold cache (3 refusals, 3 downloads,
+0 promotions, no cache on disk, the group failed and retrying); a repair published
+after the first refusal is fetched and promoted by the very next attempt, one backoff
+rung later; from a good archive loaded a month earlier the same bad publication is
+refused while the good archive keeps serving all 496 stations, the station-route index
+and the route lines, and the repair is promoted at the next start.
 
 WHAT IS PRODUCTION CODE HERE, unmodified and called directly:
     warmups._warm_subway_static    THE subway static warmup: load stops, route lines,
@@ -134,7 +175,12 @@ import sleep, from time import time) binds the injected one.
        are synthesized: three trips on routes 1, 7 and A calling at five parent
        stations (101, 103, 127, 725, A27), and one shape per route. The BAD archive
        differs from the GOOD one in exactly one byte: a 0xFF (never valid in UTF-8)
-       at the end of the first trip's headsign in trips.txt.
+       at the end of the first trip's headsign in trips.txt; BAD_STOP_TIMES puts the
+       same byte at the end of stop_times.txt's first row instead. The REPAIR is the
+       GOOD archive with the first headsign reworded, so it serves the same index and
+       its promotion is visible as a change of cache bytes. JOIN_BROKEN is the GOOD
+       archive with trips.txt's route_id header renamed to route: every member reads
+       and holds rows, and no call belongs to a trip with a route.
     6. main.app's subway fields are reset to what main.lifespan sets before each
        warmup run, and static_shared.reset_archive_status() clears the per-archive
        record (it is module state and outlives a run), so each run starts as a
@@ -155,27 +201,19 @@ with a fixed zip timestamp so their digests are stable, and nothing depends on
 today's date: every age is measured on the virtual clock. A real-time watchdog
 stops a run whose warmup wedges (10 s per run of the warmup), so a backoff that
 stops passing through asyncio.sleep fails the run in seconds instead of hanging it.
-Runs in about five seconds, most of it the roughly 160 real warmup attempts of
-ARMS 4 and 5.
+Runs in about two seconds. The virtual clock carried the record's month-long
+persistence arms; for the repair it carries the backoff between a refusal and the
+attempt that fetches the repair, and ARM 5's month between two process starts.
 
 RUN IT, from the repository root:
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a02_unreadable_trips_promoted.py
 
-Exits 0 while A02 still behaves as recorded, 1 with the failed checks named if the
-code has changed underneath the record.
+Exits 0 while the repair holds, 1 with every check that moved named if it does not.
 
-RECORDED DISPOSITION: VERIFIED. The audit's three numbers reproduce exactly (three
-attempts, three UnicodeDecodeErrors, one download, promoted with zero failed
-downloads), and the mechanism is measured rather than read: of the five members the
-validator requires, it parses two (stops.txt, transfers.txt) and only checks the
-presence of the other three, and the loader keeps a cache it cannot parse as usable
-and fresh. On the virtual clock a repair published right after the bad promotion is
-not fetched by any attempt over the first six hours of the real backoff schedule or
-at one hour short of MAX_AGE_DAYS, from a cold cache and from a good archive the
-warmup had loaded a month earlier; it is fetched one hour past MAX_AGE_DAYS. This
-row generalizes the 2026-09-05 F08 (shapes.txt, the geometry-only instance, still
-standing): trips.txt and stop_times.txt are the members where the same gap fails
-the whole warmup.
+RECORDED DISPOSITION: FIXED (claude/a02-publication-validation). The BEFORE paragraph
+above is the record this script used to pin; the checks below pin the AFTER, and each
+prints the BEFORE value beside the one it measures, so a regression reads as the
+finding coming back.
 """
 
 from __future__ import annotations
@@ -651,6 +689,19 @@ BAD = write_zip(
     UPSTREAM_DIR / "bad_trips.zip",
     {**GOOD_MEMBERS, "trips.txt": with_invalid_byte(TRIPS_BYTES)},
 )
+BAD_STOP_TIMES = write_zip(
+    UPSTREAM_DIR / "bad_stop_times.zip",
+    {**GOOD_MEMBERS, "stop_times.txt": with_invalid_byte(STOP_TIMES_BYTES)},
+)
+# The repair: readable everywhere, the same trips and calls (so the same index), and
+# different bytes, so its promotion shows as a change of cache digest.
+REPAIR = write_zip(
+    UPSTREAM_DIR / "repair.zip",
+    {
+        **GOOD_MEMBERS,
+        "trips.txt": TRIPS_BYTES.replace(b"Van Cortlandt Park-242 St", b"Van Cortlandt Park"),
+    },
+)
 CORRUPT = {
     m: write_zip(UPSTREAM_DIR / f"corrupt_{m}.zip", {**GOOD_MEMBERS, m: with_invalid_byte(b)})
     for m, b in GOOD_MEMBERS.items()
@@ -661,16 +712,24 @@ ABSENT = {
     )
     for m in GOOD_MEMBERS
 }
+# THE SIXTH ROW: every member present and readable, every one with rows, and trips.txt's
+# route_id column renamed, so no call belongs to a trip with a route and the
+# routes-per-station index the load builds is empty (MR2 F1's empty index, reached
+# through readable tables). The join floor is what refuses it.
+JOIN_BROKEN = write_zip(
+    UPSTREAM_DIR / "join_route_id_renamed.zip",
+    {**GOOD_MEMBERS, "trips.txt": TRIPS_BYTES.replace(b"route_id,", b"route,", 1)},
+)
+JOIN_MEMBER = "stop_times.txt"  # the member the join's refusal names: its rows are the calls
+JOIN_REASON = (
+    "stop_times.txt yielded no usable call of a trip that has a route_id at a stop that "
+    "folds to a parent station (trips.txt, stop_times.txt and stops.txt do not join, so the "
+    "routes-per-station index would be empty)"
+)
 
 CACHE = static_data.SUBWAY_GTFS_ZIP
 MAX_AGE_DAYS = static_data.MAX_AGE_DAYS
 MAX_AGE_S = MAX_AGE_DAYS * 86400
-# How long the persistence arms follow the real backoff schedule before the clock
-# jumps to the run-up to MAX_AGE_DAYS: the whole rising schedule and then hours of
-# its steady-state rung, about 75 attempts. A repair that waits on a count of failed
-# attempts (up to about that many) or on elapsed time (up to MAX_AGE_DAYS minus an
-# hour) fetches inside this window or at the jump.
-SCHEDULE_WINDOW_S = 6 * 3600
 WATCHDOG_S = 10.0  # real seconds one run of the warmup may take before it is stopped
 
 
@@ -819,9 +878,10 @@ async def drive_warmup(plan, *, full: bool = True) -> dict:
     return {"pauses": pauses, "outcome": outcome, "final": final, "attempts": attempts}
 
 
-def staged_verdict(path: Path) -> str:
+def staged_verdict(path: Path, gate=None) -> str:
+    """One of the REAL gates over an archive file: the always-gate by default."""
     try:
-        static_shared.validate_archive(path, static_data.validate_subway_archive)
+        static_shared.validate_archive(path, gate or static_data.validate_subway_archive)
     except static_shared.StaticValidationError as exc:
         return f"REJECTED ({exc})"
     return "ACCEPTED"
@@ -876,169 +936,264 @@ def promoted_clean(p: dict) -> bool:
 # The run
 # ---------------------------------------------------------------------------
 
+BRANCH = "claude/a02-publication-validation"
+
+
+def refused_by_name(verdict: str, member: str) -> bool:
+    """The staged validator's refusal names the member and carries the codec's words."""
+    return verdict.startswith(f"REJECTED ({member} is not readable as CSV (") and (
+        "can't decode byte 0xff" in verdict
+    )
+
+
+# Which gate reads which member. shapes.txt is read by the route lines' own gate, which
+# staged_fetch runs under the two-mode rule; the always-gate does not ask for it.
+GEOMETRY = "shapes.txt"
+ALWAYS = [m for m in MEMBERS if m != GEOMETRY]
+
+
+def gate_for(member: str):
+    if member == GEOMETRY:
+        return static_data.validate_subway_geometry
+    return static_data.validate_subway_archive
+
 
 async def mechanism() -> dict:
-    rule("MECHANISM  what the publication validator asks of each required member")
+    rule("MECHANISM  what each gate asks of each member, and of the join")
     print("  Each row is one archive differing from the good one in a single member:")
-    print("  absent, or present with one 0xFF byte. Verdicts are the real staged")
-    print("  validator, cached_archive_is_valid handed that validator on the same bytes,")
-    print("  and up to two cold-cache attempts of the real warmup with that archive")
-    print("  published (the second shows whether the LOADER keeps the cache it failed on).")
-    print(f"  good archive, staged validator: {staged_verdict(GOOD)}")
+    print("  absent, or present with one 0xFF byte; the sixth differs in one trips.txt")
+    print("  header (route_id renamed), so every member reads and the tables do not join.")
+    print("  Verdicts are the real gate that reads the member (the always-gate,")
+    print("  validate_subway_archive, or for shapes.txt the geometry gate,")
+    print("  validate_subway_geometry), cached_archive_is_valid handed the always-gate on")
+    print("  the same bytes, and two cold-cache attempts of the real warmup with that")
+    print("  archive published (the second shows whether the loader cached anything it")
+    print("  cannot read).")
+    print(f"  good archive: always-gate {staged_verdict(GOOD)}, geometry gate "
+          f"{staged_verdict(GOOD, static_data.validate_subway_geometry)}")
     rows = {}
-    for member in MEMBERS:
-        absent = staged_verdict(ABSENT[member])
-        staged = staged_verdict(CORRUPT[member])
-        as_cache = static_shared.cached_archive_is_valid(
-            CORRUPT[member], static_data.validate_subway_archive
-        )
+    for member in [*MEMBERS, "join"]:
+        bad = JOIN_BROKEN if member == "join" else CORRUPT[member]
+        gate = static_data.validate_subway_archive if member == "join" else gate_for(member)
+        absent = "n/a" if member == "join" else staged_verdict(ABSENT[member], gate)
+        always_absent = "n/a" if member == "join" else staged_verdict(ABSENT[member])
+        staged = staged_verdict(bad, gate)
+        as_cache = static_shared.cached_archive_is_valid(bad, static_data.validate_subway_archive)
         clear_data()
-        Upstream.publishing = CORRUPT[member]
+        Upstream.publishing = bad
         run = await drive_warmup(until(2))
-        first = run["pauses"][0] if run["pauses"] else None
-        second = run["pauses"][1] if len(run["pauses"]) > 1 else None
-        warm = f"failed: {first['raised']}" if first else f"{run['final']['group']}"
-        promoted = bool((first or run["final"])["archive"].get("last_promoted_at"))
+        pauses = run["pauses"]
+        final = run["final"]
         rows[member] = {
             "absent_rejected": absent.startswith("REJECTED"),
-            "corrupt_accepted": staged == "ACCEPTED",
+            "always_absent": always_absent,
+            "refused": staged.startswith("REJECTED"),
+            "named": (
+                staged == f"REJECTED ({JOIN_REASON})"
+                if member == "join"
+                else refused_by_name(staged, member)
+            ),
             "cache_valid": as_cache,
-            "warmup": warm,
-            "promoted": promoted,
-            "route_lines": run["final"]["route_lines"],
-            "next_downloads": second["downloads"] if second else None,
+            "raised": [p["raised"] for p in pauses],
+            "promoted": any(p["archive"].get("last_promoted_at") for p in pauses),
+            "cached": [p["cache"] for p in pauses],
+            "downloads": [p["downloads"] for p in pauses],
+            "outcome": run["outcome"],
+            "final": final,
         }
-        print(f"  {member:<15} absent: {absent[:8]}  one 0xFF: {staged[:60]}")
-        print(
-            f"  {'':<15} as a cache: valid={as_cache}  warmup: {warm}, "
-            f"promoted={promoted}, route lines served={run['final']['route_lines']}"
-            + (
-                f", downloads after attempt 2: {second['downloads']}"
-                if second
-                else ""
+        label = "join" if member == "join" else member
+        gate_name = "geometry" if gate is static_data.validate_subway_geometry else "always"
+        print(f"  {label:<15} [{gate_name} gate] absent: {absent[:8]}  "
+              f"{'route_id renamed' if member == 'join' else 'one 0xFF'}: {staged[:84]}")
+        if pauses:
+            print(
+                f"  {'':<15} as a cache: valid={as_cache}  warmup: raised {rows[member]['raised']}, "
+                f"promoted={rows[member]['promoted']}, downloads by attempt "
+                f"{rows[member]['downloads']}"
             )
-        )
+        else:
+            arch = final["archive"]
+            print(
+                f"  {'':<15} as a cache: valid={as_cache}  warmup: {run['outcome']} on attempt "
+                f"{run['attempts']}, {final['downloads']} download, group {final['group']!r}, "
+                f"{final['stations']} stations, {final['route_lines']} route lines"
+            )
+            print(f"  {'':<15} degraded_members={arch.get('degraded_members')!r}")
     print()
+    every = [*MEMBERS, "join"]
+    refusing = [*ALWAYS, "join"]  # what the always-gate refuses, so no mode promotes
     required = [m for m in MEMBERS if rows[m]["absent_rejected"]]
-    parsed = [m for m in MEMBERS if not rows[m]["corrupt_accepted"]]
-    presence_only = [m for m in required if m not in parsed]
-    gap = [m for m in presence_only if rows[m]["warmup"].startswith("failed")]
-    agree = [m for m in MEMBERS if rows[m]["cache_valid"] == rows[m]["corrupt_accepted"]]
-    kept = {m: rows[m]["next_downloads"] for m in gap}
+    parsed = [m for m in every if rows[m]["refused"]]
+    named = [m for m in every if rows[m]["named"]]
+    agree = [m for m in every if rows[m]["cache_valid"] is False]
+    reached = [
+        m
+        for m in refusing
+        if rows[m]["promoted"]
+        or rows[m]["outcome"] != "stopped"
+        or rows[m]["raised"] != ["StaticValidationError"] * 2
+        or rows[m]["cached"] != ["(absent)"] * 2
+    ]
+    redownload = {m: rows[m]["downloads"] for m in refusing}
+    geo = rows[GEOMETRY]
+    gf = geo["final"]
+    garch = gf["archive"]
     check(
-        "M1 every one of the five members is required (absent -> rejected)",
-        required == MEMBERS,
-        required,
-        "'verifies ... the presence of required tables'",
+        "M1 every member the load reads is required by the gate that reads it (absent -> "
+        "refused), and shapes.txt by the geometry gate alone",
+        required == MEMBERS and rows[GEOMETRY]["always_absent"] == "ACCEPTED",
+        f"{required}; the always-gate on an archive without shapes.txt: "
+        f"{rows[GEOMETRY]['always_absent'][:8]}",
+        "'verifies ... the presence of required tables' (BEFORE: all five by the one gate)",
     )
     check(
-        "M2 the validator parses exactly two of the five (one 0xFF -> rejected)",
-        parsed == ["stops.txt", "transfers.txt"],
+        "M2 each gate parses its members (one 0xFF -> refused), and the always-gate refuses "
+        "tables that do not join (the sixth row)",
+        parsed == every,
         parsed,
-        "'verifies some members' but 'does not fully parse every table'",
+        "BEFORE: two of five, ['stops.txt', 'transfers.txt'], and no join",
     )
     check(
-        "M3 static_shared.cached_archive_is_valid, handed the staged validator by this "
-        "script, returns the staged verdict on all five",
-        agree == MEMBERS,
-        f"agrees on {agree}",
-        "not stated (the spec: it runs that same validator)",
+        "M3 each refusal names its member and carries the codec's own words (the join's names "
+        "stop_times.txt and says the index would be empty), which is what archive status and "
+        "/api/status publish",
+        named == every,
+        f"named on {named}",
+        "BEFORE: no refusal to name for trips.txt, stop_times.txt, shapes.txt or the join",
     )
     check(
-        "M4 members accepted unreadable that the warmup then fails on",
-        gap == ["trips.txt", "stop_times.txt"],
-        gap,
-        "trips.txt ('stop_times.txt' not named by the audit)",
-    )
-    shapes = rows["shapes.txt"]
-    check(
-        "M5 F08's instance still stands: unreadable shapes.txt accepted, promoted, "
-        "ready with 0 route lines",
-        shapes["corrupt_accepted"]
-        and shapes["promoted"]
-        and shapes["warmup"] == "ready"
-        and shapes["route_lines"] == 0,
-        f"accepted={shapes['corrupt_accepted']} promoted={shapes['promoted']} "
-        f"warmup={shapes['warmup']} route lines={shapes['route_lines']}",
-        "the prior audit's 'geometry-only corruption finding' (09-05 F08)",
+        "M4 static_shared.cached_archive_is_valid, handed the always-gate, refuses the four "
+        "and the join as a cache, and keeps a cache whose geometry does not draw (it serves "
+        "every station; geometry is decorative)",
+        agree == refusing and geo["cache_valid"] is True,
+        f"refuses {agree}; on bad shapes.txt {geo['cache_valid']}",
+        "BEFORE: True on trips.txt, stop_times.txt, shapes.txt and the join",
     )
     check(
-        "M6 the LOADER's own decision, by behavior: after the warmup fails on a cached "
-        "unreadable member, the next attempt downloads nothing (usable and fresh)",
-        bool(gap) and all(v == 1 for v in kept.values()),
-        f"downloads after attempt 2: {kept}",
-        "'Subsequent attempts accept the same newly cached archive as fresh'",
+        "M5 no member the always-gate reads, and no unjoinable archive, reaches the warmup "
+        "from a cold cache: each attempt is refused at staging, nothing is promoted, no cache "
+        "is written",
+        reached == [],
+        f"got past staging: {reached}",
+        "BEFORE: trips.txt and stop_times.txt promoted then UnicodeDecodeError; the join "
+        "promoted with an empty index (0 of 496 stations with routes)",
     )
-    return {"parsed": parsed, "presence_only": presence_only, "gap": gap}
+    check(
+        "M5g shapes.txt on a cold cache, the two-mode rule's second mode: promoted, ready on "
+        "the first attempt, every station and the index served, 0 route lines, and "
+        "/api/status names shapes.txt as a degraded member with the gate's reason",
+        geo["outcome"] == "ready-returned"
+        and gf["downloads"] == 1
+        and gf["group"] == "ready"
+        and gf["stations"] == EXPECTED_STATIONS
+        and gf["index"] == EXPECTED_INDEX
+        and gf["route_lines"] == 0
+        and bool(garch.get("last_promoted_at"))
+        and garch.get("last_download_error") is None
+        and list(garch.get("degraded_members") or {}) == [GEOMETRY]
+        and refused_by_name(f"REJECTED ({garch['degraded_members'][GEOMETRY]})", GEOMETRY),
+        f"{geo['outcome']}, {gf['downloads']} download, group {gf['group']!r}, "
+        f"{gf['stations']} stations, index built {gf['index'] == EXPECTED_INDEX}, "
+        f"{gf['route_lines']} route lines, degraded_members={garch.get('degraded_members')!r}",
+        "BEFORE: promoted, ready with 0 route lines and nothing on the status saying why "
+        "(F08's second half)",
+    )
+    check(
+        "M6 the LOADER's decision, by behavior: the attempt after a refusal downloads again, "
+        "because nothing unreadable or unjoinable was cached as usable and fresh",
+        all(v == [1, 2] for v in redownload.values()),
+        f"downloads by attempt {redownload}",
+        "BEFORE: [1, 1] for trips.txt and stop_times.txt ('accept the same newly cached "
+        "archive as fresh')",
+    )
+    return {"parsed": parsed}
 
 
-async def arm1() -> dict:
-    rule("ARM 1  cold cache; the publication's trips.txt holds one 0xFF; three attempts")
-    print(f"  staged validator on the bad archive: {staged_verdict(BAD)}")
+async def arm1(member: str, bad: Path, label: str) -> dict:
+    rule(f"ARM {label}  cold cache; the publication's {member} holds one 0xFF; three attempts")
+    print(f"  staged validator on the bad archive: {staged_verdict(bad)}")
     clear_data()
-    Upstream.publishing = BAD
+    Upstream.publishing = bad
     run = await drive_warmup(until(3))
     for p in run["pauses"]:
         show_pause(p)
     show_final(run)
     pauses = run["pauses"]
     raised = [p["raised"] for p in pauses]
-    last = pauses[-1] if pauses else {"archive": {}, "downloads": None}
+    texts = [p["raised_text"] for p in pauses]
+    last = pauses[-1] if pauses else {"archive": {}}
     arch = last["archive"]
     print()
     check(
-        "A1.1 three attempts, all raised UnicodeDecodeError",
-        raised == ["UnicodeDecodeError"] * 3,
-        raised,
-        "'Three attempts all raised UnicodeDecodeError'",
+        f"A{label}.1 three attempts, each refused at staging, naming {member}",
+        raised == ["StaticValidationError"] * 3 and all(t.startswith(member) for t in texts),
+        list(zip(raised, [t[:40] for t in texts])),
+        "BEFORE: ['UnicodeDecodeError'] * 3 ('Three attempts all raised UnicodeDecodeError')",
     )
     check(
-        "A1.2 download requests at the socket layer across the three attempts "
-        "(the loader's own usable-and-fresh decision, by behavior)",
-        [p["downloads"] for p in pauses] == [1, 1, 1],
+        f"A{label}.2 download requests at the socket layer, cumulative by attempt: every "
+        "attempt asks again, because nothing it could not read was kept",
+        [p["downloads"] for p in pauses] == [1, 2, 3],
         [p["downloads"] for p in pauses],
-        "'only one download occurred'",
+        "BEFORE: [1, 1, 1] ('only one download occurred')",
     )
     check(
-        "A1.3 archive status after each attempt: promoted, no error, 0 failed downloads",
-        len(pauses) == 3 and all(promoted_clean(p) for p in pauses),
-        f"last_promoted_at={'set' if arch.get('last_promoted_at') else None}, "
-        f"last_download_error={arch.get('last_download_error')!r}, "
-        f"failed_downloads={arch.get('failed_downloads')}",
-        "'reported a successful promotion and zero failed downloads'",
+        f"A{label}.3 archive status after each attempt: never promoted, the failed downloads "
+        f"counted, the error naming {member} and the codec's words",
+        len(pauses) == 3
+        and all(p["archive"].get("last_promoted_at") is None for p in pauses)
+        and [p["archive"].get("failed_downloads") for p in pauses] == [1, 2, 3]
+        and all(
+            refused_by_name(
+                "REJECTED (" + (p["archive"].get("last_download_error") or "")
+                .removeprefix("invalid archive: ") + ")",
+                member,
+            )
+            for p in pauses
+        ),
+        f"last_promoted_at={arch.get('last_promoted_at')}, failed_downloads="
+        f"{[p['archive'].get('failed_downloads') for p in pauses]}, "
+        f"last_download_error={arch.get('last_download_error')!r}",
+        "BEFORE: promoted, no error, 0 failed downloads",
     )
     check(
-        "A1.4 the cached archive is the bad publication, byte for byte",
-        bool(pauses) and all(p["cache"] == digest(BAD) for p in pauses),
-        f"cache {last.get('cache')} vs bad {digest(BAD)}",
-        "'can replace the good archive'",
+        f"A{label}.4 no cache on disk after any attempt",
+        bool(pauses) and all(p["cache"] == "(absent)" for p in pauses),
+        [p["cache"] for p in pauses],
+        "BEFORE: the bad publication, byte for byte ('can replace the good archive')",
+    )
+    standalone = static_shared.cached_archive_is_valid(bad, static_data.validate_subway_archive)
+    check(
+        f"A{label}.5 static_shared.cached_archive_is_valid(bad archive, validate_subway_archive)",
+        standalone is False,
+        standalone,
+        "BEFORE: True ('accept the same newly cached archive as fresh')",
     )
     check(
-        "A1.5 static_shared.cached_archive_is_valid(cache, validate_subway_archive), as "
-        "this script calls it, on the cache the loader just failed on",
-        len(pauses) == 3 and all(p["cache_valid"] is True for p in pauses),
-        [p["cache_valid"] for p in pauses],
-        "'accept the same newly cached archive as fresh' (spec: True)",
-    )
-    check(
-        "A1.6 the group state /api/status publishes during the attempts",
+        f"A{label}.6 the group state /api/status publishes during the attempts",
         [p["group"] for p in pauses] == ["failed"] * 3,
         [p["group"] for p in pauses],
         "not stated",
     )
-    # WHERE in the attempt it fails, by elimination: the same archive with a readable
-    # trips.txt loads (ARM 2), and the station-route index loader is the step that
-    # reads trips.txt. Asked once, standalone, of the cache the warmup just failed on.
+    # THE BYPASS: the bad archive placed as the cache by hand, which nothing in the app
+    # does any more, so the load's reader of the member is asked directly. It still
+    # cannot read the byte, and the residual arm discards the cache it failed on, so the
+    # next attempt would download rather than accept the same bytes for a month.
+    place_cache(bad)
     try:
         static_data.load_subway_station_routes()
         index_step = "returned"
     except Exception as exc:
         index_step = f"raised {type(exc).__name__}"
+    discarded = not CACHE.exists()
+    clear_data()
     check(
-        "A1.7 the station-route index loader on that cache",
-        index_step == "raised UnicodeDecodeError",
-        index_step,
-        "'fails while building the station-route index'",
+        f"A{label}.7 validation bypassed (the bad archive placed as the cache by hand): the "
+        "station-route index loader raises on it and the cache is discarded",
+        index_step == "raised UnicodeDecodeError" and discarded,
+        f"{index_step}; cache discarded: {discarded}",
+        "BEFORE: raised UnicodeDecodeError and kept the cache ('fails while building the "
+        "station-route index')",
     )
     return {"run": run, "raised": raised}
 
@@ -1067,13 +1222,13 @@ async def arm2() -> dict:
 
 
 async def arm3() -> dict:
-    rule("ARM 3  a good, recent cache on disk; then the warmup runs")
+    rule("ARM 3  CONTROL: a good, recent cache on disk; then the warmup runs")
     clear_data()
     place_cache(GOOD)
     Upstream.publishing = GOOD  # a download, if one were made, would succeed
     print(
-        f"  what 'fresh' means today: the loader's cache check passes and the mtime is "
-        f"less than MAX_AGE_DAYS={MAX_AGE_DAYS} days old"
+        f"  what 'fresh' means: the loader's cache check passes and the mtime is less than "
+        f"MAX_AGE_DAYS={MAX_AGE_DAYS} days old"
     )
     run = await drive_warmup(until(3))
     show_final(run)
@@ -1089,141 +1244,64 @@ async def arm3() -> dict:
     return {"run": run}
 
 
-def persistence_plan(state: dict):
-    """Attempt 1 meets the bad publication; at pause 1 the repair is published. Then
-    the real backoff schedule for SCHEDULE_WINDOW_S, then a jump to one hour short of
-    MAX_AGE_DAYS after the bad promotion (two attempts there), then a jump to one hour
-    past it. The plan labels each attempt with the phase it ran in."""
-
-    def plan(pause: int, seen: dict, delay: float):
-        seen["phase"] = state["phase"]
-        if pause == 1:
-            Upstream.publishing = GOOD  # the repair, published upstream
-            state["t_bad"] = Clock.now()  # the bad promotion happened in attempt 1
-        next_at = Clock.now() + delay
-        if state["phase"] == "schedule" and next_at - state["t_bad"] >= SCHEDULE_WINDOW_S:
-            state["phase"], state["near_from"] = "near", pause + 1
-            return True, state["t_bad"] + MAX_AGE_S - 3600
-        if state["phase"] == "near" and pause == state["near_from"] + 1:
-            state["phase"] = "past"
-            return True, state["t_bad"] + MAX_AGE_S + 3600
-        if state["phase"] == "past":
-            return False, None  # the attempt past MAX_AGE_DAYS failed too: stop
-        return pause < 400, None
-
-    return plan
-
-
-def summarize_persistence(run: dict) -> dict:
-    """Times are virtual, from the start of attempt 1 (the bad promotion)."""
-    pauses = run["pauses"]
-    phases: dict[str, list[dict]] = {"schedule": [], "near": [], "past": []}
-    for p in pauses:
-        phases.setdefault(p.get("phase", "schedule"), []).append(p)
-
-    def span(ps: list[dict]) -> str:
-        if not ps:
-            return "none"
-        first, last = ps[0], ps[-1]
-        when = elapsed(first["at"])
-        if last is not first:
-            when += f" .. {elapsed(last['at'])}"
-        return (
-            f"attempts {first['attempt']}-{last['attempt']} ({len(ps)}) at {when}: raised "
-            f"{sorted({p['raised'] or 'None' for p in ps})}, downloads "
-            f"{sorted({p['downloads'] for p in ps})}, group {sorted({str(p['group']) for p in ps})}"
-        )
-
-    print(f"    schedule window: {span(phases['schedule'])}")
-    print(f"    near the bound : {span(phases['near'])}")
-    if phases["past"]:
-        print(f"    past the bound : {span(phases['past'])}")
-    f = run["final"]
-    print(
-        f"    outcome {run['outcome']} after {run['attempts']} attempts at "
-        f"{elapsed(f['at'])}: {f['downloads']} download(s) in all, group "
-        f"{f['group']!r}, index built {f['index'] == EXPECTED_INDEX}"
-    )
-    return phases
-
-
-def persistence_checks(names: tuple[str, str], run: dict, phases: dict, state: dict) -> None:
-    pauses = run["pauses"]
-    first = pauses[0] if pauses else None
-    before = phases["schedule"][1:] + phases["near"]
-    check(
-        f"{names[0]} with the repair published, no attempt before MAX_AGE_DAYS downloads it: "
-        f"{SCHEDULE_WINDOW_S // 3600} h of the real backoff schedule, then two attempts "
-        "at one hour short of MAX_AGE_DAYS after the bad promotion",
-        first is not None
-        and len(phases["schedule"]) >= 10
-        and len(phases["near"]) == 2
-        and all(
-            p["downloads"] == 1 and p["raised"] == "UnicodeDecodeError" and p["group"] == "failed"
-            for p in before
-        ),
-        f"{len(phases['schedule']) - 1 if phases['schedule'] else 0} further attempts in "
-        f"the schedule window and {len(phases['near'])} near the bound; downloads "
-        f"{sorted({p['downloads'] for p in before})}, raised "
-        f"{sorted({p['raised'] or 'None' for p in before})}, group "
-        f"{sorted({str(p['group']) for p in before})}",
-        "'Subsequent attempts ... do not download a repair'",
-    )
-    f = run["final"]
-    reached_past = state["phase"] == "past"
-    check(
-        f"{names[1]} one hour past MAX_AGE_DAYS the next attempt fetches the repair and the "
-        "group is ready",
-        reached_past
-        and run["outcome"] == "ready-returned"
-        and f["downloads"] == 2
-        and f["group"] == "ready"
-        and f["index"] == EXPECTED_INDEX
-        and not phases["past"],
-        f"outcome {run['outcome']}, {f['downloads']} download(s), group {f['group']!r}, "
-        f"index built {f['index'] == EXPECTED_INDEX}, past the bound "
-        f"{reached_past}, at {elapsed(f['at'])}",
-        "not stated (Repair: 'healthy publication ... eventual recovery')",
-    )
+def repair_after_first(pause: int, seen: dict, delay: float):
+    """At the first pause (attempt 1 refused the bad publication), publish the repair;
+    allow up to four attempts, so a repair that waited would be seen to wait."""
+    if pause == 1:
+        Upstream.publishing = REPAIR
+    return pause < 4, None
 
 
 async def arm4() -> dict:
-    rule("ARM 4  PERSISTENCE, cold cache: bad publication, then the repair published")
+    rule("ARM 4  RECOVERY, cold cache: a bad publication, then the repair published")
     print("  attempt 1: upstream publishes the bad archive; nothing is cached.")
-    print("  pause 1  : upstream now publishes the repaired (good) archive.")
-    print(f"  then     : the real backoff schedule for {SCHEDULE_WINDOW_S // 3600} h on the "
-          "virtual clock; a jump to one hour")
-    print(f"             short of MAX_AGE_DAYS ({MAX_AGE_DAYS} d) after the bad promotion; a "
-          "jump to one hour past it.")
+    print("  pause 1  : upstream now publishes the repair; the warmup's own backoff passes.")
     clear_data()
     Upstream.publishing = BAD
-    state = {"phase": "schedule"}
-    run = await drive_warmup(persistence_plan(state), full=False)
-    phases = summarize_persistence(run)
+    run = await drive_warmup(repair_after_first)
     pauses = run["pauses"]
+    for p in pauses:
+        show_pause(p)
+    show_final(run)
     first = pauses[0] if pauses else None
+    f = run["final"]
     check(
-        "A4.1 attempt 1 downloads the bad publication, promotes it and fails",
+        "A4.1 attempt 1 downloads the bad publication and refuses it at staging: nothing "
+        "promoted, no cache",
         first is not None
         and first["downloads"] == 1
-        and first["cache"] == digest(BAD)
-        and first["raised"] == "UnicodeDecodeError"
-        and promoted_clean(first),
-        f"downloads {first and first['downloads']}, cache {first and first['cache']} (bad "
-        f"{digest(BAD)}), raised {first and first['raised']}, promoted cleanly "
-        f"{first is not None and promoted_clean(first)}",
-        "'can replace the good archive'",
+        and first["raised"] == "StaticValidationError"
+        and first["cache"] == "(absent)"
+        and first["archive"].get("last_promoted_at") is None,
+        f"downloads {first and first['downloads']}, raised {first and first['raised']}, cache "
+        f"{first and first['cache']}",
+        "BEFORE: promoted, then UnicodeDecodeError ('can replace the good archive')",
     )
-    persistence_checks(("A4.2", "A4.3"), run, phases, state)
-    return {"run": run, "phases": phases}
+    check(
+        "A4.2 the very next attempt, one backoff rung later, fetches and promotes the repair "
+        "and the group is ready with the index built",
+        run["outcome"] == "ready-returned"
+        and run["attempts"] == 2
+        and f["downloads"] == 2
+        and f["cache"] == digest(REPAIR)
+        and f["group"] == "ready"
+        and f["index"] == EXPECTED_INDEX
+        and bool(f["archive"].get("last_promoted_at")),
+        f"outcome {run['outcome']} after {run['attempts']} attempts at {elapsed(f['at'])}, "
+        f"{f['downloads']} downloads, cache {f['cache']} (repair {digest(REPAIR)}), group "
+        f"{f['group']!r}, index built {f['index'] == EXPECTED_INDEX}",
+        "BEFORE: not fetched by 75 further attempts over 6 h of the real backoff, nor at "
+        "MAX_AGE_DAYS less 1 h; fetched 1 h past MAX_AGE_DAYS",
+    )
+    return {"run": run}
 
 
 async def arm5() -> dict:
     rule("ARM 5  CONTINUITY: good archive LOADED; a month later a bad publication; repair")
     print("  first    : the real warmup loads the good archive (cold cache, one download).")
     print(f"  restart  : the process restarts {MAX_AGE_DAYS + 1} days later on the virtual "
-          "clock; upstream now publishes")
-    print("             the bad archive. pause 1: the repair is published. Then as ARM 4.")
+          "clock; upstream now publishes the bad archive.")
+    print("  restart  : the next process start, upstream now publishing the repair.")
     clear_data()
     Upstream.publishing = GOOD
     pre = await drive_warmup(until(1))
@@ -1241,39 +1319,68 @@ async def arm5() -> dict:
     )
     Clock.advance((MAX_AGE_DAYS + 1) * 86400)  # the next process start, a month later
     Upstream.publishing = BAD
-    state = {"phase": "schedule"}
-    run = await drive_warmup(persistence_plan(state), full=False)
-    phases = summarize_persistence(run)
-    pauses = run["pauses"]
-    first = pauses[0] if pauses else None
+    run = await drive_warmup(until(3))
+    show_final(run)
+    f = run["final"]
+    arch = f["archive"]
     check(
-        "A5.2 the restarted process downloads the bad publication over the good cache, "
-        "fails, and the good bytes are gone from disk",
-        first is not None
-        and first["downloads"] == 1
-        and first["cache"] == digest(BAD)
-        and first["raised"] == "UnicodeDecodeError"
-        and first["group"] == "failed"
-        and promoted_clean(first),
-        f"downloads {first and first['downloads']}, cache {first and first['cache']} (good "
-        f"{digest(GOOD)}, bad {digest(BAD)}), raised {first and first['raised']}, group "
-        f"{first and first['group']!r}",
-        "'can replace the good archive' (Repair: 'retain the last fully usable snapshot')",
+        "A5.2 the restarted process downloads the bad publication, refuses it, and reaches "
+        "ready on that attempt with the good archive serving every layer",
+        run["outcome"] == "ready-returned"
+        and run["attempts"] == 1
+        and f["downloads"] == 1
+        and f["cache"] == digest(GOOD)
+        and f["group"] == "ready"
+        and f["stations"] == EXPECTED_STATIONS
+        and f["index"] == EXPECTED_INDEX
+        and f["route_lines"] == 3
+        and arch.get("last_promoted_at") is None
+        and arch.get("failed_downloads") == 1
+        and (arch.get("last_download_error") or "").startswith(
+            "invalid archive: trips.txt is not readable as CSV ("
+        ),
+        f"outcome {run['outcome']} after {run['attempts']} attempt(s), {f['downloads']} "
+        f"download(s), cache {f['cache']} (good {digest(GOOD)}), {f['stations']} stations, "
+        f"index built {f['index'] == EXPECTED_INDEX}, {f['route_lines']} route lines; archive "
+        f"status failed_downloads={arch.get('failed_downloads')}, "
+        f"last_download_error={arch.get('last_download_error')!r}",
+        "BEFORE: the bad publication replaced the good cache (the good bytes gone from disk) "
+        "and every attempt failed until MAX_AGE_DAYS after it ('retain the last fully usable "
+        "snapshot')",
     )
-    persistence_checks(("A5.3", "A5.4"), run, phases, state)
-    return {"run": run, "phases": phases}
+    Upstream.publishing = REPAIR
+    nxt = await drive_warmup(until(3))
+    show_final(nxt)
+    g = nxt["final"]
+    check(
+        "A5.3 the next start downloads and promotes the repair over the good archive",
+        nxt["outcome"] == "ready-returned"
+        and nxt["attempts"] == 1
+        and g["downloads"] == 1
+        and g["cache"] == digest(REPAIR)
+        and g["index"] == EXPECTED_INDEX
+        and bool(g["archive"].get("last_promoted_at"))
+        and g["archive"].get("last_download_error") is None,
+        f"outcome {nxt['outcome']}, {g['downloads']} download, cache {g['cache']} (repair "
+        f"{digest(REPAIR)}), index built {g['index'] == EXPECTED_INDEX}",
+        "BEFORE: not fetched until MAX_AGE_DAYS after the bad promotion",
+    )
+    return {"run": run, "next": nxt}
 
 
 async def amain() -> int:
     global API
     print("=" * 78)
-    print("A02  Subway archive validation can replace good data with a persistent failure")
+    print("A02  Subway archive validation can replace good data (the repair)")
     print("=" * 78)
     print(f"repo         : {REPO}")
     print(f"DATA_DIR     : {os.environ['DATA_DIR']}")
     print(f"upstream URL : {static_data.SUBWAY_GTFS_URL} (nothing listens; fake socket layer)")
     print(f"fixture      : {FIXTURE.relative_to(REPO)} (stops.txt, transfers.txt)")
-    print(f"bad archive  : trips.txt + one 0xFF; good {digest(GOOD)}, bad {digest(BAD)}")
+    print(
+        f"archives     : good {digest(GOOD)}, bad trips.txt {digest(BAD)}, bad stop_times.txt "
+        f"{digest(BAD_STOP_TIMES)}, repair {digest(REPAIR)}"
+    )
     print(
         "retry seams  : "
         + ", ".join(f"{n}={env_seams.DEFAULTS.get(n, '(not a seam)')}" for n in TIMING_SEAMS)
@@ -1284,7 +1391,8 @@ async def amain() -> int:
         async with httpx.AsyncClient(transport=transport, base_url="http://a02.local") as client:
             API = client
             mech = await mechanism()
-            one = await arm1()
+            one = await arm1("trips.txt", BAD, "1")
+            one_b = await arm1("stop_times.txt", BAD_STOP_TIMES, "1b")
             await arm2()
             await arm3()
             four = await arm4()
@@ -1305,9 +1413,9 @@ async def amain() -> int:
         Upstream.refused or "none",
         "n/a (containment)",
     )
-    # The injection, measured where it is now about two months ahead of real time: each
-    # calendar clock a repair could be timed by reads the virtual clock. A Python on
-    # which a rebinding stopped taking would fail here, not leave such a repair unseen.
+    # The injection, measured where it is now a month ahead of real time: each calendar
+    # clock a repair could be timed by reads the virtual clock. A Python on which a
+    # rebinding stopped taking would fail here, not leave such a repair unseen.
     now = Clock.now()
     utc = datetime.timezone.utc
     with warnings.catch_warnings():
@@ -1341,25 +1449,27 @@ async def amain() -> int:
             print(f"  - {name}")
         print("DISPOSITION: NOT AS RECORDED, see the failed checks above")
         return 1
-    window = [
-        len(four["phases"]["schedule"]) - 1,
-        len(five["phases"]["schedule"]) - 1,
-    ]
+    rung = four["run"]["final"]["at"]
+    stations = five["run"]["final"]["stations"]
+    lines = five["run"]["final"]["route_lines"]
     print(
-        "DISPOSITION: VERIFIED  A cold-cache publication whose trips.txt alone holds one "
-        "0xFF byte passed the real staged validator and was promoted (archive status: "
-        "promoted, no error, 0 failed downloads), then the real subway warmup failed "
-        f"{len(one['raised'])} of {len(one['raised'])} attempts with UnicodeDecodeError "
-        "on 1 download while /api/status reported the group failed. The validator parses "
-        f"{len(mech['parsed'])} of its 5 required members ({', '.join(mech['parsed'])}), "
-        f"so {' and '.join(mech['gap'])} are promoted unreadable and the loader keeps "
-        "the failing cache as usable and fresh: with a repair published after the first "
-        f"failure, {window[0]} and {window[1]} further attempts over "
-        f"{SCHEDULE_WINDOW_S // 3600} h of the real backoff schedule (from a cold cache, "
-        "and from a good archive loaded a month earlier) plus 2 each at MAX_AGE_DAYS "
-        f"({MAX_AGE_DAYS}) minus 1 h made no further download, and the first attempt "
-        "1 h past MAX_AGE_DAYS fetched it and reached ready (shapes.txt, F08, still "
-        "promotes and serves 0 route lines)."
+        f"DISPOSITION: FIXED ({BRANCH})  BEFORE: the staged validator parsed 2 of its 5 "
+        "required members, so a cold-cache publication whose trips.txt alone held one 0xFF "
+        "byte was promoted (0 failed downloads) and the warmup then failed 3 of 3 attempts "
+        "with UnicodeDecodeError on 1 download; stop_times.txt had the same gap and "
+        "shapes.txt (F08) was promoted to 0 route lines; a repair published at once was not "
+        "fetched for MAX_AGE_DAYS (75 further attempts over 6 h of the real backoff). AFTER: "
+        f"the gates refuse all {len(mech['parsed']) - 1} members and the unjoinable archive "
+        "through the loader's own readers (shapes.txt by its own gate, refused over a cache "
+        "that serves and promoted degraded and named on a cold start), so "
+        f"the trips.txt and stop_times.txt corruptions were refused at staging on "
+        f"{len(one['raised'])} and {len(one_b['raised'])} of 3 attempts with 0 promotions "
+        "and no cache written, archive status naming the member and the codec's words; the "
+        f"repair was fetched and promoted by the next attempt, {elapsed(rung)} after the "
+        "first refusal; and from a good archive loaded a month earlier the same bad "
+        f"publication was refused while the good archive kept serving {stations} stations, "
+        f"the station-route index and {lines} route lines, the repair promoted at the next "
+        "start. A cache that passes validation and still fails the load is discarded."
     )
     return 0
 

@@ -250,7 +250,14 @@ def install_stubs(counts: Counter, *, stub_njt: bool) -> list[tuple[object, str,
         counts["bus_index"] += 1
 
     swap(main, "load_subway_stops", subway_stops)
-    swap(main, "load_subway_route_shapes", lambda: [])
+    # One drawable line, not none: since the A02 branch /healthz reads the subway's
+    # served lines (subway-lines-degraded), and a stub that drew nothing would make the
+    # probe report a geometry fault this record is not about.
+    swap(
+        main,
+        "load_subway_route_shapes",
+        lambda: [{"route": "1", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}],
+    )
     swap(main, "load_subway_stations", lambda: {})
     swap(main, "load_subway_station_routes", lambda: {})
     swap(main, "load_subway_station_complexes", lambda: {})

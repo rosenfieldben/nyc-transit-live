@@ -928,6 +928,13 @@ class StaticArchiveStatus(BaseModel):
     last_promoted_at: float | None
     last_download_error: str | None
     failed_downloads: int
+    # The members of the archive now serving that failed a DECORATIVE gate, by name,
+    # each with the parser's own reason (static_shared.staged_fetch's two-mode rule).
+    # Nonempty only when a publication was promoted over no cache it could have been
+    # refused in favor of: the archive serves, and this says what it serves without.
+    # Replaced at every promotion; a refused download leaves it describing the archive
+    # still serving. ADDITIVE, so a client of the older shape reads it as absent.
+    degraded_members: dict[str, str] = {}
 
 
 class SubwayFeedHealth(BaseModel):
@@ -1191,6 +1198,24 @@ HEALTH_NJT_MINT_QUOTA = "njt-mint-quota"
 # one the NJ Transit layer is dark until the reset, which is the price of a ceiling
 # that the fault it stops cannot reach past.
 HEALTH_NJT_MINT_ALLOWANCE = "njt-mint-allowance"
+# THE SUBWAY SERVING WITHOUT ITS ROUTE LINES, BY RULE (claude/a02-publication-validation).
+# On a cold start, which is every deploy, a publication whose shapes.txt draws nothing is
+# promoted rather than refused (static_shared.staged_fetch, the two-mode rule): every
+# station serves and the lines are empty. Before that ruling the same publication was
+# refused and the group failed, which subway-static-failed reported; promoted, nothing
+# else would, and riders lose every line under a 200 that says nothing. READ OFF WHAT
+# RIDERS ARE SERVED: the group is ready and no route line it serves has two points.
+# Not off the archive record (static_archives.subway.degraded_members, which says why),
+# because the branch's review found the record and the map disagreeing both ways: the
+# route-shapes loader swallows its errors, so a transient fault there leaves an archive
+# promoted clean serving no lines with nothing recorded, while an environment fault on
+# the stage's own read is recorded as a degraded member under lines that then draw.
+# Cleared by the next start whose lines draw, which in production is the next deploy:
+# a running process neither re-fetches a promoted archive nor reloads its lines.
+# Degraded rather than gating for the reason at HEALTH_GATING_CODES: the fault is in
+# upstream's publication, not in the code being promoted, so gating would refuse every
+# deploy, a fix included, for as long as upstream's geometry stayed bad.
+HEALTH_SUBWAY_LINES_DEGRADED = "subway-lines-degraded"
 
 HEALTH_DEGRADED_CODES = (
     HEALTH_NO_FEED_FRESH,
@@ -1201,6 +1226,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_NJT_MINT_QUOTA,
     HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_NJT_MINT_ALLOWANCE,
+    HEALTH_SUBWAY_LINES_DEGRADED,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO

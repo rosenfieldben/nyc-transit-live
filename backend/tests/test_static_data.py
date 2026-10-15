@@ -5,12 +5,14 @@ monkeypatched so no test touches the network (failure cases point the URL at
 a closed local port).
 """
 
+import asyncio
 import csv
 import io
 import json
 import os
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import httpx
@@ -77,32 +79,33 @@ def write_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None, members=None):
             zf.writestr(name, content)
 
 
-def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
+def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None):
     """Write a zip that passes validate_subway_archive (C5 seam).
 
     The validator requires stops.txt, shapes.txt, trips.txt, stop_times.txt AND
-    transfers.txt to be PRESENT, so every archive a cache-lifecycle test hands the loader
-    carries all five. Header-only is enough for three of them and keeps each test's subject
-    unchanged: an empty shapes.txt yields the same [] route lines a missing one used to, and
-    an empty stop_times.txt yields the same {} routes-per-station index. transfers.txt carries
-    one pair, because the validator's floor is one cross-stop row.
-
-    THE LAST TWO ARE NEW AS OF THE F1 BRANCH. This docstring claimed trips.txt was
-    required for a while when it was not, which is its own small lesson about a comment
-    outliving the tuple it describes; both are genuinely required now and
-    backend/static_data.py's _REQUIRED_MEMBERS says why. transfers.txt joined them on
-    claude/subway-hub-definition, for the station complexes.
+    transfers.txt, and since A02 it PARSES all five and wants a row from each, so every
+    archive a cache-lifecycle test hands the loader carries one usable row per member:
+    one trip, one call at the platform 101N, one shape point, one cross-stop pair. Header
+    only used to be enough for three of them (an empty shapes.txt yielded the same []
+    route lines a missing one did), and that is exactly the archive A02 and F08 found
+    being promoted; it is now a publication the validator refuses, and the tests that
+    refuse it say so by name.
     """
-    write_gtfs_zip(
-        path,
-        members={
-            "stops.txt": csv_text(STOPS_COLS, stop_rows),
-            "trips.txt": csv_text(TRIPS_COLS, ()),
-            "shapes.txt": csv_text(SHAPES_COLS, shape_rows),
-            "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
-            "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
-        },
-    )
+    write_gtfs_zip(path, members=loadable_members(stop_rows=stop_rows, shape_rows=shape_rows))
+
+
+def loadable_members(stop_rows=STOP_ROWS, shape_rows=None, **override):
+    """The five members of a subway archive the validator accepts, as text, with
+    `override` replacing any of them by name (text, or bytes for a corrupt member)."""
+    members = {
+        "stops.txt": csv_text(STOPS_COLS, stop_rows),
+        "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, SHAPE_ROWS if shape_rows is None else shape_rows),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, STOP_TIME_ROWS),
+        "transfers.txt": csv_text(TRANSFERS_COLS, TRANSFER_ROWS),
+    }
+    members.update(override)
+    return members
 
 
 @pytest.fixture
@@ -125,7 +128,7 @@ def age_file(path, days):
 async def test_fresh_cache_parsed_without_downloading(gtfs_zip, monkeypatch):
     write_loadable_gtfs_zip(gtfs_zip)
 
-    async def fail(*args):  # any download attempt is a test failure
+    async def fail(*args, **kwargs):  # any download attempt is a test failure
         raise AssertionError("should not download with a fresh cache")
 
     monkeypatch.setattr(static_data, "_download_zip", fail)
@@ -158,13 +161,13 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(gtfs_zip, monkeypat
     make_bad_cache(gtfs_zip)
     calls = []
 
-    async def fake_download():
-        calls.append(1)
+    async def fake_download(*, cache_serves=None):
+        calls.append(cache_serves)
         write_loadable_gtfs_zip(gtfs_zip)
 
     monkeypatch.setattr(static_data, "_download_zip", fake_download)
     stops = await static_data.load_subway_stops()
-    assert len(calls) == 1
+    assert calls == [False], "one download, told the cache it replaces does not serve"
     assert "101N" in stops
 
 
@@ -267,6 +270,24 @@ def test_variant_dedup_keeps_branch_drops_express(gtfs_zip):
 TRIPS_COLS = ["route_id", "trip_id", "service_id", "trip_headsign", "direction_id", "shape_id"]
 STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
 TRANSFERS_COLS = ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"]
+# One usable row each, what write_loadable_gtfs_zip's archives carry (A02: the validator
+# parses every member and wants a row from each).
+TRIP_ROWS = [{"route_id": "1", "trip_id": "t1", "trip_headsign": "Uptown", "shape_id": "1..N01R"}]
+STOP_TIME_ROWS = [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}]
+SHAPE_ROWS = [
+    {
+        "shape_id": "1..N01R",
+        "shape_pt_sequence": "1",
+        "shape_pt_lat": "40.7",
+        "shape_pt_lon": "-74.0",
+    },
+    {
+        "shape_id": "1..N01R",
+        "shape_pt_sequence": "2",
+        "shape_pt_lat": "40.71",
+        "shape_pt_lon": "-74.01",
+    },
+]
 # ONE REAL COMPLEX, both directions, as the MTA writes them: the validator's floor is one
 # cross-stop row (the operator's ruling on review finding H2), so every archive that has to
 # PASS validation carries a pair, and an archive with none is a test's subject, not a
@@ -396,14 +417,20 @@ def test_load_subway_station_routes_raises_on_bad_zip(gtfs_zip):
 
 
 def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
-    """A stop_times.txt that is present and unreadable. This is the case a required
-    member set alone does NOT cover: the archive is structurally complete, so
-    validate_subway_archive passes it, and only the loader refusing to swallow turns
-    it into a failed load. It is the mutation target for the removed except clause."""
+    """A stop_times.txt that is present and unreadable: its DEFLATE payload damaged, so
+    the archive opens and lists and only READING that member raises.
+
+    THIS TEST'S PREMISE REVERSED WITH A02, and the reversal is the fix. It used to
+    assert that validate_subway_archive PASSED this archive (the member was checked for
+    presence only) and that only the loader refusing to swallow turned it into a failed
+    load. The validator now reads the member through the loader's own generator, so it
+    refuses the archive, naming the member, and the loader still raises over the same
+    bytes when validation is bypassed: both halves of the rule, on the damage a
+    decoding byte cannot show."""
     body = csv_text(STOP_TIMES_COLS, [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}])
     with zipfile.ZipFile(gtfs_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("stops.txt", csv_text(STOPS_COLS, ROUTE_STOP_ROWS))
-        zf.writestr("shapes.txt", csv_text(SHAPES_COLS, ()))
+        zf.writestr("shapes.txt", csv_text(SHAPES_COLS, SHAPE_ROWS))
         zf.writestr("trips.txt", csv_text(TRIPS_COLS, [{"route_id": "1", "trip_id": "t1"}]))
         zf.writestr("stop_times.txt", body)
         zf.writestr("transfers.txt", csv_text(TRANSFERS_COLS, TRANSFER_ROWS))
@@ -427,11 +454,10 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
     raw[payload] ^= 0xFF
     gtfs_zip.write_bytes(bytes(raw))
 
-    # THE PREMISE, asserted rather than assumed: this archive is structurally complete,
-    # so require_members passes it. That is what makes this the case only the loader's
-    # own refusal to swallow can catch, and what makes it the mutation target for the
-    # deleted except clause. Without this assertion the test could be passing because
-    # the zip had become unopenable, which the bad-zip test above already covers.
+    # THE PREMISE, asserted rather than assumed: the archive is structurally complete,
+    # so require_members passes it and the refusal below is the PARSE's. Without this the
+    # test could pass because the zip had become unopenable, which the bad-zip test above
+    # already covers.
     with zipfile.ZipFile(gtfs_zip) as zf:
         assert set(zf.namelist()) == {
             "stops.txt",
@@ -440,10 +466,18 @@ def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
             "stop_times.txt",
             "transfers.txt",
         }
-        static_data.validate_subway_archive(zf)  # raises if the premise is wrong
+        static_data.require_members(zf, static_data._REQUIRED_MEMBERS)
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert str(err.value).startswith("stop_times.txt is not readable")
 
-    with pytest.raises(Exception):
+    # And with validation bypassed, the load's own read of the same bytes fails as a
+    # damaged member fails (zlib.error from inflate, or BadZipFile if the damage lands
+    # where the CRC sees it first), and the residual arm discards the cache: the
+    # classes A02b added to the subway's tuple, pinned for the subway.
+    with pytest.raises((zlib.error, zipfile.BadZipFile)):
         static_data.load_subway_station_routes()
+    assert not gtfs_zip.exists(), "an archive the load cannot read must not stay the cache"
 
 
 @pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt", "transfers.txt"])
@@ -554,8 +588,11 @@ def test_a_station_with_no_trips_is_still_tolerated(gtfs_zip):
         },
     )
     assert static_data.load_subway_station_routes() == {"101": ["1"]}
-    # An archive with headers and no trip rows at all is the same kind of quiet, and
-    # is still a load rather than a failure.
+    # An archive with headers and no trip rows at all is the same kind of quiet to this
+    # loader, which still loads it rather than failing. It never gets here from upstream:
+    # since A02 the validator refuses a trips.txt or stop_times.txt with no usable row
+    # (test_a_member_with_no_usable_row_is_refused), so this is the loader's own
+    # tolerance, not a publication the app would promote.
     write_gtfs_zip(
         gtfs_zip,
         members={
@@ -727,13 +764,7 @@ _TRANSFER_HEADER = "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
 
 
 def _loadable_members(transfers: str) -> dict[str, str]:
-    return {
-        "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
-        "shapes.txt": csv_text(SHAPES_COLS, ()),
-        "trips.txt": csv_text(TRIPS_COLS, ()),
-        "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
-        "transfers.txt": transfers,
-    }
+    return loadable_members(stop_rows=ROUTE_STOP_ROWS, **{"transfers.txt": transfers})
 
 
 @pytest.mark.parametrize(
@@ -816,3 +847,885 @@ def test_the_e2e_census_fixture_agrees_with_this_archive(gtfs_zip):
         sid: s["name"] for sid, s in stations.items()
     }
     assert all(row["routes"] for row in census), "every station lists its routes"
+
+
+# ---------------- A02 and F08: every member the load reads is read at validation ----------------
+#
+# THE FINDING (audit 2026-10-12 A02, generalizing 2026-09-05 F08): the validator required
+# five members and parsed two (stops.txt, transfers.txt). One undecodable byte in trips.txt
+# or stop_times.txt was promoted over a working cache, then failed every warmup attempt for
+# MAX_AGE_DAYS, because the cached-archive check runs the same validator and kept answering
+# that the archive was fine; in shapes.txt it was promoted and drew 0 route lines. THE RULE
+# (decisions D1 and D2): the validator is the loader's parser. Each member is read at
+# validation through the one generator the load reads it with, and must yield a row.
+
+
+def with_invalid_byte(text: str) -> bytes:
+    """The member with one 0xFF (never valid UTF-8) at the end of its first data row."""
+    data = text.encode("utf-8")
+    first_eol = data.index(b"\n")
+    end = data.index(b"\n", first_eol + 1)
+    if data[end - 1 : end] == b"\r":
+        end -= 1
+    return data[:end] + b"\xff" + data[end:]
+
+
+def _drain_cached_shapes():
+    """The generator the route-shapes loader reads, over the cached shapes.txt. The loader
+    itself degrades to [] around it, so this is where its failure is visible."""
+    with zipfile.ZipFile(static_data.SUBWAY_GTFS_ZIP) as zf, zf.open("shapes.txt") as raw:
+        for _ in static_data._iter_shape_points(raw):
+            pass
+
+
+# THE COUPLING THE RULE PROMISES, one row per member the load reads: the member and the
+# load's own reader of it. A member the validator refuses but no reader reads, or one a
+# reader reads that the validator lets through, breaks a row of this table.
+FIVE_READERS = {
+    "stops.txt": lambda: static_data._parse_stops(),
+    "transfers.txt": lambda: static_data.load_subway_station_complexes(),
+    "trips.txt": lambda: static_data.load_subway_station_routes(),
+    "stop_times.txt": lambda: static_data.load_subway_station_routes(),
+    "shapes.txt": _drain_cached_shapes,
+}
+
+
+@pytest.mark.parametrize("member", sorted(FIVE_READERS))
+def test_one_undecodable_byte_in_any_member_is_refused_and_would_fail_the_load(gtfs_zip, member):
+    """Refused at validation with the member named and the codec's own words (what an
+    operator reads on /api/status), and the same archive, validation bypassed by placing
+    it as the cache, makes the load's reader of that member raise.
+
+    shapes.txt by its OWN gate: the route lines are decorative, so validate_subway_geometry
+    reads them (and staged_fetch decides from what is cached whether its failure refuses
+    or degrades), and the always-gate accepts an archive whose only fault is there."""
+    members = loadable_members(stop_rows=ROUTE_STOP_ROWS)
+    members[member] = with_invalid_byte(members[member])
+    write_gtfs_zip(gtfs_zip, members=members)
+    gate = (
+        static_data.validate_subway_geometry
+        if member == "shapes.txt"
+        else static_data.validate_subway_archive
+    )
+
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            gate(zf)
+        if member == "shapes.txt":
+            static_data.validate_subway_archive(zf)  # not the always-gate's question
+    assert str(err.value).startswith(f"{member} is not readable as CSV (")
+    assert "can't decode byte 0xff" in str(err.value)
+    assert err.value.member == member
+
+    if member == "shapes.txt":
+        # F08's symptom, and on a cold start the accepted cost: the loader degrades to no
+        # route lines rather than failing.
+        assert static_data.load_subway_route_shapes() == []
+    with pytest.raises(UnicodeDecodeError):
+        FIVE_READERS[member]()
+
+
+@pytest.mark.parametrize(
+    ("member", "body", "what"),
+    [
+        pytest.param("trips.txt", csv_text(TRIPS_COLS, ()), "trips", id="trips-headers-only"),
+        pytest.param(
+            "stop_times.txt",
+            csv_text(STOP_TIMES_COLS, ()),
+            "stop times",
+            id="stop-times-headers-only",
+        ),
+    ],
+)
+def test_a_member_with_no_usable_row_is_refused(gtfs_zip, member, body, what):
+    """The floor, the same one stops.txt and transfers.txt have had: a member that
+    parses cleanly to nothing is refused, by its own name. The join floor below would
+    refuse these too; the order (each member's own floor first) is what keeps the
+    operator's message pointing at the member that is empty."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members(**{member: body}))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert str(err.value) == f"{member} yielded no usable {what}"
+
+
+GEOMETRY_NONE = (
+    "shapes.txt yielded no usable drawable route shapes "
+    "(two points of one shape whose id names a route)"
+)
+
+# Every way the route lines can come out empty: (shapes.txt body, or None for absent;
+# the geometry gate's message). FORMAT DRIFT is the case the review found on a cold
+# start: a shape_id the reader does not recognize as a route's draws nothing.
+BAD_GEOMETRY = {
+    "one 0xFF": (lambda: with_invalid_byte(csv_text(SHAPES_COLS, SHAPE_ROWS)), None),
+    "header only": (lambda: csv_text(SHAPES_COLS, ()), GEOMETRY_NONE),
+    "of no route": (
+        lambda: csv_text(SHAPES_COLS, [dict(row, shape_id="s1") for row in SHAPE_ROWS]),
+        GEOMETRY_NONE,
+    ),
+    "format drift": (
+        lambda: csv_text(SHAPES_COLS, [dict(row, shape_id="1-N01R") for row in SHAPE_ROWS]),
+        GEOMETRY_NONE,
+    ),
+    "one point": (lambda: csv_text(SHAPES_COLS, SHAPE_ROWS[:1]), GEOMETRY_NONE),
+    # Two shapes of one route, one point each: a line is drawn per SHAPE, so this draws
+    # nothing although the route has two points (the branch's review, F8).
+    "one point per shape": (
+        lambda: csv_text(SHAPES_COLS, [SHAPE_ROWS[0], dict(SHAPE_ROWS[1], shape_id="1..N02R")]),
+        GEOMETRY_NONE,
+    ),
+    "absent": (None, "missing required member(s): shapes.txt"),
+}
+
+
+def _geometry_members(variant: str, **base) -> dict:
+    members = loadable_members(**base)
+    body, _message = BAD_GEOMETRY[variant]
+    if body is None:
+        del members["shapes.txt"]
+    else:
+        members["shapes.txt"] = body()
+    return members
+
+
+@pytest.mark.parametrize("variant", sorted(BAD_GEOMETRY))
+def test_the_geometry_gate_refuses_every_empty_drawing_and_the_always_gate_does_not(
+    gtfs_zip, variant
+):
+    """validate_subway_geometry is the route lines' gate and asks what the route-shapes
+    loader would draw: at least two points of one shape whose id names a route, read
+    whole. Each variant fails it by name and passes the always-gate, which no longer
+    reads shapes.txt; the load's own answer agrees (no route line drawn)."""
+    write_gtfs_zip(gtfs_zip, members=_geometry_members(variant))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_geometry(zf)
+    message = BAD_GEOMETRY[variant][1]
+    if message is None:
+        assert str(err.value).startswith("shapes.txt is not readable as CSV (")
+    else:
+        assert str(err.value) == message
+    assert err.value.member == "shapes.txt"
+    assert _drawn(static_data.load_subway_route_shapes()) == []
+
+
+def _shapes_damaged_in(members: dict, compression: int) -> bytes:
+    """An archive whose shapes.txt is compressed with `compression` and has its compressed
+    stream damaged, so READING it raises what that decompressor raises (zlib's error, bz2's
+    errno-less OSError, lzma's LZMAError) while the archive opens and lists. Deflate's first
+    block header is set to the block type RFC 1951 reserves (as a02b's fixture does), since
+    a flipped data byte in a stream this short is as likely to reach the CRC check first;
+    the other two have a byte of their stream flipped. Located through header_offset (see
+    the deflate test above for why)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in members.items():
+            zf.writestr(name, body, compress_type=compression if name == "shapes.txt" else None)
+    raw = bytearray(buf.getvalue())
+    with zipfile.ZipFile(io.BytesIO(bytes(raw))) as zf:
+        offset = zf.getinfo("shapes.txt").header_offset
+    name_len = int.from_bytes(raw[offset + 26 : offset + 28], "little")
+    extra_len = int.from_bytes(raw[offset + 28 : offset + 30], "little")
+    payload = offset + 30 + name_len + extra_len
+    if compression == zipfile.ZIP_DEFLATED:
+        raw[payload] |= 0b110  # BTYPE 11
+    else:
+        raw[payload + 10] ^= 0xFF
+    return bytes(raw)
+
+
+DAMAGED_SHAPES = {
+    "deflate": (zipfile.ZIP_DEFLATED, "error"),
+    "bzip2": (zipfile.ZIP_BZIP2, "OSError"),
+    "lzma": (zipfile.ZIP_LZMA, "LZMAError"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(DAMAGED_SHAPES))
+async def test_a_shapes_txt_that_will_not_decompress_is_named_by_member(
+    gtfs_zip, monkeypatch, fresh_archive_status, kind
+):
+    """WHAT EACH DECOMPRESSOR RAISES, NAMED BY MEMBER (the branch's review, F4 and F9).
+    The geometry gate's refusal names shapes.txt whichever decompressor refused the
+    bytes, so a cold start keys the degraded member by its name, never "archive". The
+    always-gate does not read the member and passes; the message carries the exception's
+    type (and only its type where that is an OSError, whose text can name a path)."""
+    compression, type_name = DAMAGED_SHAPES[kind]
+    publication = _shapes_damaged_in(loadable_members(stop_rows=ROUTE_STOP_ROWS), compression)
+    gtfs_zip.write_bytes(publication)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+    with pytest.raises(static_data.StaticValidationError) as err:
+        static_shared.validate_archive(gtfs_zip, static_data.validate_subway_geometry)
+    assert err.value.member == "shapes.txt"
+    assert str(err.value).startswith(f"shapes.txt is not readable ({type_name}")
+    gtfs_zip.unlink()
+
+    _publish(monkeypatch, {"bytes": publication}, [])
+    await static_data.load_subway_stops()
+    assert gtfs_zip.read_bytes() == publication, "promoted on a cold start"
+    degraded = static_shared.archive_status()["subway"]["degraded_members"]
+    assert list(degraded) == ["shapes.txt"] and degraded["shapes.txt"] == str(err.value)
+
+
+def test_the_geometry_gate_accepts_one_drawable_shape(gtfs_zip):
+    """The converse: two points of one route's shape is a line, and the gate passes it."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members())
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_geometry(zf)
+
+
+# ---------------- the join floor: the routes-per-station index has a station in it ----------------
+
+JOIN_MESSAGE = (
+    "stop_times.txt yielded no usable call of a trip that has a route_id at a stop that "
+    "folds to a parent station (trips.txt, stop_times.txt and stops.txt do not join, so the "
+    "routes-per-station index would be empty)"
+)
+_RENAMED_TRIPS_COLS = [
+    "route",
+    "trip_id",
+    "service_id",
+    "trip_headsign",
+    "direction_id",
+    "shape_id",
+]
+_RENAMED_STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent"]
+
+# Every member reads and holds a row in each of these, so the members' own floors pass
+# them; each breaks the JOIN the index is built from, which is MR2 F1's empty index
+# reached through readable tables.
+JOIN_BREAKS = {
+    "route_id renamed": {
+        "trips.txt": csv_text(
+            _RENAMED_TRIPS_COLS, [{"route": "1", "trip_id": "t1", "shape_id": "1..N01R"}]
+        )
+    },
+    "route_id blank": {"trips.txt": csv_text(TRIPS_COLS, [dict(TRIP_ROWS[0], route_id="")])},
+    "calls of no trip": {
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, [dict(STOP_TIME_ROWS[0], trip_id="zz")])
+    },
+    "parent_station renamed": {
+        "stops.txt": csv_text(
+            _RENAMED_STOPS_COLS,
+            [{**row, "parent": row.get("parent_station", "")} for row in STOP_ROWS],
+        )
+    },
+    "calls at no station": {
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, [dict(STOP_TIME_ROWS[0], stop_id="999N")])
+    },
+    # The platform folds, but to a parent that is no station (no location_type 1 row):
+    # the index would hold 103 and no served station (the branch's review, F7).
+    "calls at a parent that is no station": {
+        "stops.txt": csv_text(
+            STOPS_COLS,
+            [*STOP_ROWS, dict(STOP_ROWS[1], stop_id="103N", parent_station="103")],
+        ),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, [dict(STOP_TIME_ROWS[0], stop_id="103N")]),
+    },
+}
+
+
+@pytest.mark.parametrize("case", sorted(JOIN_BREAKS))
+def test_an_archive_whose_tables_do_not_join_is_refused(gtfs_zip, case):
+    """THE JOIN FLOOR (the operator's ruling on the branch's review). Refused with a
+    message that says the index would be empty, and the load agrees: the same archive
+    placed as the cache builds an index with no served station in it."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members(**JOIN_BREAKS[case]))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert str(err.value) == JOIN_MESSAGE
+    stations = static_data.load_subway_stations()
+    assert stations, "the stops floor passes: the stations are there"
+    assert not set(static_data.load_subway_station_routes()) & set(stations)
+
+
+def test_the_join_floor_finds_the_first_station_a_route_calls_at(gtfs_zip):
+    """The converse, and what the floor asks exactly: trip t1 on route 1 calls at the
+    platform 101N, which folds to the station 101."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members())
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+        assert static_data._first_station_route(zf) == ("101", "1")
+
+
+def test_the_join_floor_walks_past_calls_that_do_not_join(gtfs_zip):
+    """It asks for ONE joining call anywhere in the table, not of the first row (the
+    branch's review, F6): a call of no trip, then a call at no station, then t1 at 101N,
+    and the floor finds 101 on the third row."""
+    calls = [
+        dict(STOP_TIME_ROWS[0], trip_id="zz"),
+        dict(STOP_TIME_ROWS[0], stop_id="999N"),
+        STOP_TIME_ROWS[0],
+    ]
+    members = loadable_members(**{"stop_times.txt": csv_text(STOP_TIMES_COLS, calls)})
+    write_gtfs_zip(gtfs_zip, members=members)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        assert static_data._first_station_route(zf) == ("101", "1")
+        static_data.validate_subway_archive(zf)
+
+
+def test_a_bad_byte_past_the_joins_first_hit_is_refused_by_the_drain(gtfs_zip):
+    """THE JOIN STOPS AT ITS FIRST HIT, SO IT IS NOT THE FULL READ. stop_times.txt's
+    first row joins, then calls running well past the text reader's first chunk, then
+    one 0xFF in the last row: the join finds its station without decoding the byte, and
+    the drain, which reads the whole member, is what refuses it. Without the drain this
+    archive is promoted and the load is its first full read, which is A02. The A02
+    record cannot see this: its stop_times.txt is one chunk, so the join decodes it all."""
+    filler = [dict(STOP_TIME_ROWS[0], stop_sequence=str(n)) for n in range(2, 4002)]
+    text = csv_text(STOP_TIMES_COLS, STOP_TIME_ROWS + filler).encode("utf-8")
+    assert len(text) > 4 * 8192
+    bad = text[:-2] + b"\xff" + text[-2:]
+    write_gtfs_zip(gtfs_zip, members=loadable_members(**{"stop_times.txt": bad}))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        assert static_data._first_station_route(zf) == ("101", "1")
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    assert str(err.value).startswith("stop_times.txt is not readable as CSV (")
+    assert "can't decode byte 0xff" in str(err.value)
+
+
+def test_the_loadable_archive_is_accepted_and_loads_every_layer(gtfs_zip):
+    """The converse, so the refusals above cannot pass by refusing everything."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=ROUTE_STOP_ROWS))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)
+    assert static_data.load_subway_station_routes() == {"101": ["1"]}
+    assert [r["route"] for r in static_data.load_subway_route_shapes()] == ["1"]
+
+
+def _zip_bytes(members: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _publish(monkeypatch, published: dict, downloads: list):
+    """Inject at the TRANSFER, so staged_fetch's stage, validate and promote are real."""
+    real_staged_fetch = static_shared.staged_fetch
+
+    async def fetch(url, dest, validate, **kwargs):
+        async def transfer(u, stage, deadline_s):
+            downloads.append(dest.exists())
+            stage.write_bytes(published["bytes"])
+
+        await real_staged_fetch(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(static_data, "staged_fetch", fetch)
+
+
+@pytest.fixture
+def fresh_archive_status():
+    """static_shared's per-archive record is module state that outlives a test."""
+    static_shared.reset_archive_status()
+    yield
+    static_shared.reset_archive_status()
+
+
+async def test_a_bad_publication_between_good_ones_never_interrupts_the_subway(
+    gtfs_zip, monkeypatch, fresh_archive_status
+):
+    """The test A02's row asked for: a good cache, a bad publication, then a healthy one.
+
+    The bad one is refused at staging, the good cache keeps serving every layer through
+    it (stations, the routes index, route lines), archive status records the failed
+    download with the member and the codec's words, /api/status publishes that (D7), and
+    the healthy publication is promoted on the next attempt."""
+    import main as app_module
+
+    write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=ROUTE_STOP_ROWS))
+    age_file(gtfs_zip, days=static_data.MAX_AGE_DAYS + 10)  # stale: the loader downloads
+    good = gtfs_zip.read_bytes()
+    bad_members = loadable_members(stop_rows=ROUTE_STOP_ROWS)
+    bad_members["trips.txt"] = with_invalid_byte(bad_members["trips.txt"])
+    renamed = [dict(row, stop_name="Alpha Renamed") for row in ROUTE_STOP_ROWS]
+    healthy = _zip_bytes(loadable_members(stop_rows=renamed))
+    published = {"bytes": _zip_bytes(bad_members)}
+    downloads: list = []
+    _publish(monkeypatch, published, downloads)
+
+    stops = await static_data.load_subway_stops()
+
+    assert stops["101N"]["name"] == "Alpha"  # the good cache, still serving
+    assert gtfs_zip.read_bytes() == good  # byte-identical: the bad bytes never landed
+    assert "101" in static_data.load_subway_stations()
+    assert static_data.load_subway_station_routes() == {"101": ["1"]}
+    assert [r["route"] for r in static_data.load_subway_route_shapes()] == ["1"]
+    entry = static_shared.archive_status()["subway"]
+    assert entry["failed_downloads"] == 1 and entry["last_promoted_at"] is None
+    error = entry["last_download_error"]
+    assert error.startswith("invalid archive: trips.txt is not readable as CSV ('utf-8' codec")
+    assert "can't decode byte 0xff" in error
+    transport = httpx.ASGITransport(app=app_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        body = (await client.get("/api/status")).json()
+    assert body["static_archives"]["subway"]["last_download_error"] == error
+    assert body["static_archives"]["subway"]["failed_downloads"] == 1
+
+    published["bytes"] = healthy  # the repair, on the next attempt
+    stops = await static_data.load_subway_stops()
+
+    assert stops["101N"]["name"] == "Alpha Renamed"
+    assert gtfs_zip.read_bytes() == healthy
+    entry = static_shared.archive_status()["subway"]
+    assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+    assert downloads == [True, True]  # one download each, over a cache that was there
+
+
+def _drawn(routes: list) -> list:
+    """The routes the map would draw a line for: a polyline needs two points."""
+    return [r["route"] for r in routes if any(len(p) >= 2 for p in r["polylines"])]
+
+
+async def _status_body() -> dict:
+    import main as app_module
+
+    transport = httpx.ASGITransport(app=app_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        return (await client.get("/api/status")).json()
+
+
+@pytest.mark.parametrize("variant", sorted(BAD_GEOMETRY))
+async def test_bad_geometry_on_a_cold_start_is_promoted_and_named_on_the_status(
+    gtfs_zip, monkeypatch, fresh_archive_status, variant
+):
+    """THE TWO-MODE RULE, COLD (the operator's ruling: geometry stays decorative). With no
+    cache, a publication whose only fault is its route lines is promoted: every station,
+    the routes index and the complexes serve, the lines are empty, and /api/status names
+    shapes.txt as a degraded member with the gate's own reason. Every deploy is a cold
+    start, so this is the arm production meets."""
+    publication = _zip_bytes(_geometry_members(variant, stop_rows=ROUTE_STOP_ROWS))
+    downloads: list = []
+    _publish(monkeypatch, {"bytes": publication}, downloads)
+
+    stops = await static_data.load_subway_stops()
+
+    assert "101N" in stops and downloads == [False]
+    assert gtfs_zip.read_bytes() == publication, "promoted"
+    assert _drawn(static_data.load_subway_route_shapes()) == []
+    assert static_data.load_subway_station_routes() == {"101": ["1"]}
+    entry = static_shared.archive_status()["subway"]
+    assert entry["last_promoted_at"] is not None
+    assert entry["last_download_error"] is None and entry["failed_downloads"] == 0
+    assert list(entry["degraded_members"]) == ["shapes.txt"]
+    reason = entry["degraded_members"]["shapes.txt"]
+    message = BAD_GEOMETRY[variant][1]
+    if message is None:
+        assert reason.startswith("shapes.txt is not readable as CSV (")
+    else:
+        assert reason == message
+    body = await _status_body()
+    assert body["static_archives"]["subway"]["degraded_members"] == {"shapes.txt": reason}
+
+
+@pytest.mark.parametrize("variant", sorted(BAD_GEOMETRY))
+async def test_bad_geometry_over_a_cache_that_draws_is_refused(
+    gtfs_zip, monkeypatch, fresh_archive_status, variant
+):
+    """THE TWO-MODE RULE, WITH A CACHE (2026-09-05's F08): the same publications are
+    refused when a cache that passes the always-gate is there, which keeps serving
+    byte-identical and keeps drawing its route; the refusal is counted and named, and
+    nothing is degraded about the archive still serving."""
+    write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=ROUTE_STOP_ROWS))
+    age_file(gtfs_zip, days=static_data.MAX_AGE_DAYS + 10)
+    good = gtfs_zip.read_bytes()
+    downloads: list = []
+    publication = _zip_bytes(_geometry_members(variant, stop_rows=ROUTE_STOP_ROWS))
+    _publish(monkeypatch, {"bytes": publication}, downloads)
+
+    stops = await static_data.load_subway_stops()
+
+    assert "101N" in stops and downloads == [True]
+    assert gtfs_zip.read_bytes() == good, "refused: the cache is byte-identical"
+    assert _drawn(static_data.load_subway_route_shapes()) == ["1"]
+    entry = static_shared.archive_status()["subway"]
+    assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+    assert entry["last_download_error"].startswith("invalid archive: ")
+    assert "shapes.txt" in entry["last_download_error"]
+    assert entry["degraded_members"] == {}
+
+
+@pytest.mark.parametrize("cache", ["serving", "refused by the always-gate"])
+async def test_the_loader_hands_the_two_mode_rule_its_own_verdict(
+    gtfs_zip, monkeypatch, fresh_archive_status, cache
+):
+    """ONE VERDICT PER ATTEMPT (the branch's second review round). load_subway_stops
+    judges the cache once, and the two-mode rule acts on that judgment rather than
+    reading the cache again: a stale cache that serves is kept through bad geometry,
+    and a cache the always-gate refuses (platform rows only, no station) is no cache
+    to keep, so the publication is promoted with its lines degraded and every station
+    serves. The always-gate is counted: it is asked about the cache exactly once."""
+    platforms_only = [row for row in ROUTE_STOP_ROWS if row["location_type"] != "1"]
+    stops = ROUTE_STOP_ROWS if cache == "serving" else platforms_only
+    write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=stops))
+    age = time.time() - (static_data.MAX_AGE_DAYS + 1) * 86400
+    os.utime(gtfs_zip, (age, age))
+    before = gtfs_zip.read_bytes()
+    asked: list = []
+    real = static_data.validate_subway_archive
+
+    def counting(zf):
+        if Path(zf.filename) == gtfs_zip:
+            asked.append(zf.filename)
+        return real(zf)
+
+    monkeypatch.setattr(static_data, "validate_subway_archive", counting)
+    publication = _zip_bytes(_geometry_members("header only", stop_rows=ROUTE_STOP_ROWS))
+    _publish(monkeypatch, {"bytes": publication}, [])
+
+    await static_data.load_subway_stops()
+
+    assert len(asked) == 1, f"the cache was judged {len(asked)} times in one attempt"
+    entry = static_shared.archive_status()["subway"]
+    if cache == "serving":
+        assert gtfs_zip.read_bytes() == before, "kept through bad geometry"
+        assert entry["last_promoted_at"] is None and entry["degraded_members"] == {}
+    else:
+        assert gtfs_zip.read_bytes() == publication, "promoted over a cache that serves nothing"
+        assert list(entry["degraded_members"]) == ["shapes.txt"]
+
+
+async def test_a_clean_publication_after_a_degraded_cold_start_clears_the_degraded_member(
+    gtfs_zip, monkeypatch, fresh_archive_status
+):
+    """The degraded member describes the archive serving: promoted over by a publication
+    whose geometry draws, it is gone, and the lines are back."""
+    published = {"bytes": _zip_bytes(_geometry_members("format drift", stop_rows=ROUTE_STOP_ROWS))}
+    _publish(monkeypatch, published, [])
+    await static_data.load_subway_stops()
+    assert static_shared.archive_status()["subway"]["degraded_members"]
+
+    age_file(gtfs_zip, days=static_data.MAX_AGE_DAYS + 10)
+    published["bytes"] = _zip_bytes(loadable_members(stop_rows=ROUTE_STOP_ROWS))
+    await static_data.load_subway_stops()
+
+    assert static_shared.archive_status()["subway"]["degraded_members"] == {}
+    assert _drawn(static_data.load_subway_route_shapes()) == ["1"]
+
+
+@pytest.mark.parametrize("mode", ["cold", "a cache that serves"])
+async def test_a_renamed_route_id_column_is_refused_in_both_modes(
+    gtfs_zip, monkeypatch, fresh_archive_status, mode
+):
+    """The join floor is the always-gate's, so unlike the geometry it refuses whatever is
+    cached: cold, nothing is promoted and the load fails (the warmup retries); with a
+    cache, the cache serves on, its index intact."""
+    if mode != "cold":
+        write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=ROUTE_STOP_ROWS))
+        age_file(gtfs_zip, days=static_data.MAX_AGE_DAYS + 10)
+    good = gtfs_zip.read_bytes() if gtfs_zip.exists() else None
+    members = loadable_members(stop_rows=ROUTE_STOP_ROWS, **JOIN_BREAKS["route_id renamed"])
+    _publish(monkeypatch, {"bytes": _zip_bytes(members)}, [])
+
+    if mode == "cold":
+        with pytest.raises(static_data.StaticValidationError):
+            await static_data.load_subway_stops()
+        assert not gtfs_zip.exists()
+    else:
+        await static_data.load_subway_stops()
+        assert gtfs_zip.read_bytes() == good
+        assert static_data.load_subway_station_routes() == {"101": ["1"]}
+    entry = static_shared.archive_status()["subway"]
+    assert entry["last_promoted_at"] is None
+    assert entry["last_download_error"] == f"invalid archive: {JOIN_MESSAGE}"
+
+
+async def test_an_archive_that_passes_validation_and_fails_the_load_is_discarded(
+    gtfs_zip, monkeypatch
+):
+    """THE RESIDUAL ARM (decision D3), reached by bypassing validation on purpose: a
+    reader only the load uses (the stop_times accumulator; the validator drains and walks
+    the generator under it, never this) is made to fail on a cache the validator accepts.
+    The attempt fails, the cache is discarded, and the next attempt downloads rather than
+    accepting the same bytes as valid and fresh for a month."""
+    import types
+
+    import main as app_module
+    import warmups
+
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: no download is needed
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)  # the premise: the validator accepts it
+    real_reader = static_data._parse_trip_stops
+    fault = {"on": True}
+
+    def failing_reader(zf):
+        if fault["on"]:
+            raise csv.Error("a reader the validator does not share, failing")
+        return real_reader(zf)
+
+    monkeypatch.setattr(static_data, "_parse_trip_stops", failing_reader)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(subway_static_status="loading"))
+    seen_at_download: list = []
+    published = {"bytes": _zip_bytes(loadable_members())}
+    real_staged_fetch = static_shared.staged_fetch
+
+    async def fetch(url, dest, validate, **kwargs):
+        async def transfer(u, stage, deadline_s):
+            seen_at_download.append((dest.exists(), app.state.subway_static_status))
+            fault["on"] = False  # the repair upstream; the load's reader works again
+            stage.write_bytes(published["bytes"])
+
+        await real_staged_fetch(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(static_data, "staged_fetch", fetch)
+    task = asyncio.create_task(warmups._warm_subway_static(app))
+    try:
+        for _ in range(400):
+            if app.state.subway_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "ready"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    # Exactly one download, made after the failed attempt discarded the cache.
+    assert seen_at_download == [(False, "failed")]
+    assert app.state.subway_station_routes == {"101": ["1"]}
+
+
+async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
+    gtfs_zip, monkeypatch
+):
+    """D3 NARROWED (the operator's ruling on the branch's review): the residual arm
+    discards for the ARCHIVE's errors only. Out of file descriptors while reading a
+    valid, fresh cache says nothing about its bytes, so through the real warmup the
+    attempt fails with the cache kept, and the next attempt reads the same cache and
+    reaches ready without a download. Discarding there used to leave the group failed
+    whenever the download that followed failed too."""
+    import errno
+    import types
+
+    import main as app_module
+    import warmups
+
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: no download is needed
+    cached = gtfs_zip.read_bytes()
+    real_reader = static_data._parse_stops_rows
+    faults = {"left": 1}
+
+    def failing_once(raw):
+        if faults["left"]:
+            faults["left"] -= 1
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real_reader(raw)
+
+    monkeypatch.setattr(static_data, "_parse_stops_rows", failing_once)
+    downloads: list = []
+
+    async def fetch(url, dest, validate, **kwargs):
+        downloads.append(url)
+
+    monkeypatch.setattr(static_data, "staged_fetch", fetch)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(subway_static_status="loading"))
+    seen: list = []
+    task = asyncio.create_task(warmups._warm_subway_static(app))
+    try:
+        for _ in range(2000):
+            status = app.state.subway_static_status
+            if not seen or seen[-1] != status:
+                seen.append(status)
+            if status == "ready":
+                break
+            await asyncio.sleep(0.001)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert seen == ["loading", "failed", "ready"]
+    assert faults["left"] == 0
+    assert gtfs_zip.read_bytes() == cached, "the cache is kept"
+    assert downloads == []
+
+
+RESIDUAL_SITES = {
+    # site: (the reader only that load path uses, the call that reaches it)
+    "stops": ("_parse_stops_rows", lambda: asyncio.run(static_data.load_subway_stops())),
+    "station routes": ("_parse_trip_stops", lambda: static_data.load_subway_station_routes()),
+    "station complexes": (
+        "_parse_transfer_pairs",
+        lambda: static_data.load_subway_station_complexes(),
+    ),
+}
+
+
+@pytest.mark.parametrize("site", sorted(RESIDUAL_SITES))
+def test_every_cached_read_the_residual_arm_wraps_discards_an_unreadable_cache(
+    gtfs_zip, monkeypatch, site
+):
+    """D3 AT EACH SITE. The arm wraps three reads of the cached archive: the stops parse
+    in load_subway_stops, the routes-per-station index and the complex index. At each,
+    a reader the validator does not share is made to fail with a parse-class error on a
+    cache the validator accepts (valid and fresh, so no download), and the cache must be
+    gone afterwards, so the next attempt downloads instead of failing on the same bytes
+    for a month. The warmup-level test above drives one site end to end; this pins all
+    three, since removing the arm from any one of them left every other test green."""
+    write_loadable_gtfs_zip(gtfs_zip)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        static_data.validate_subway_archive(zf)  # the premise: the validator accepts it
+    reader, call = RESIDUAL_SITES[site]
+
+    def failing(*_args):
+        raise csv.Error(f"{reader}, a reader the validator does not share, failing")
+
+    monkeypatch.setattr(static_data, reader, failing)
+
+    with pytest.raises(csv.Error):
+        call()
+    assert not gtfs_zip.exists(), f"the {site} read must discard an archive it cannot read"
+
+
+# (member, the rows the stand-in generator yields, the gate that reads the member, the
+# load's own reader of it, what that reader builds from the stand-in's rows). The member
+# is header-only, so a row can only have come from the generator. The trips and calls
+# join the fixture's other tables (t1 calls at 101N), so the join floor passes on them.
+GENERATORS = {
+    "_iter_trip_routes": (
+        "trips.txt",
+        [("t1", "SENTINEL")],
+        lambda zf: static_data.validate_subway_archive(zf),
+        lambda: _parse_cached(static_data._parse_trip_routes),
+        {"t1": "SENTINEL"},
+    ),
+    "_iter_trip_stops": (
+        "stop_times.txt",
+        [("t1", "101N")],
+        lambda zf: static_data.validate_subway_archive(zf),
+        lambda: _parse_cached(static_data._parse_trip_stops),
+        {"t1": ["101N"]},
+    ),
+    "_iter_shape_points": (
+        "shapes.txt",
+        [("S", "S..N01R", 1, 40.0, -74.0), ("S", "S..N01R", 2, 40.1, -74.1)],
+        lambda zf: static_data.validate_subway_geometry(zf),
+        lambda: static_data.load_subway_route_shapes(),
+        [{"route": "S", "polylines": [[[40.0, -74.0], [40.1, -74.1]]]}],
+    ),
+}
+
+
+def _parse_cached(parse):
+    with zipfile.ZipFile(static_data.SUBWAY_GTFS_ZIP) as zf:
+        return parse(zf)
+
+
+@pytest.mark.parametrize("name", sorted(GENERATORS))
+def test_the_validator_and_the_load_read_a_member_through_one_generator(
+    gtfs_zip, monkeypatch, name
+):
+    """D1, pinned: one reader per member, two consumers. Replacing the generator with
+    one that yields a sentinel row changes BOTH what the validator counts (a member with
+    no rows of its own now passes) and what the load builds (the sentinel is in it). A
+    consumer that read the CSV itself would miss the sentinel, and that is the drift
+    this pins against."""
+    member, rows, gate, load, expected = GENERATORS[name]
+    header_only = csv_text(
+        {"trips.txt": TRIPS_COLS, "stop_times.txt": STOP_TIMES_COLS}.get(member, SHAPES_COLS), ()
+    )
+    write_gtfs_zip(gtfs_zip, members=loadable_members(**{member: header_only}))
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError):
+            gate(zf)  # no row of its own: refused
+
+    def yields_the_stand_in(raw):
+        yield from rows
+
+    monkeypatch.setattr(static_data, name, yields_the_stand_in)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        gate(zf)  # the gate read the stand-in's rows
+    assert load() == expected  # and the load built them
+
+
+# ---------------- D5: validation runs off the serving loop ----------------
+#
+# A02's repair made the subway validator parse every member its load reads, which on the
+# live publication is 1.1 to 1.5 s of CPU (backend/scripts/measure_subway_validation.py,
+# recorded in the ledger). Validation runs in two places, staged_fetch on a download and
+# every loader's cached-archive check at a load, and both now hand it to a worker thread
+# behind an await, so the loop the pollers and /healthz share keeps running.
+
+SLOW_VALIDATION_S = 0.2
+# The loop's longest stall inside a validation window must stay under this. A thread
+# doing CPU work hands the interpreter lock back every switch interval (5 ms), so the
+# heartbeat's gaps are a few milliseconds; inline, the gap IS the validation.
+LOOP_STALL_BOUND_S = SLOW_VALIDATION_S / 2
+
+
+def _slowed(validate, windows: list):
+    """The real validator, then CPU until SLOW_VALIDATION_S has passed (a busy-wait,
+    not a sleep, because a parse holds the interpreter lock and a sleep would not), its
+    (start, end) recorded."""
+
+    def slow(zf):
+        started = time.perf_counter()
+        validate(zf)
+        while time.perf_counter() - started < SLOW_VALIDATION_S:
+            pass
+        windows.append((started, time.perf_counter()))
+
+    return slow
+
+
+def _stall_within(stamps: list, windows: list) -> float:
+    """The longest stretch inside a validation window during which the heartbeat did not
+    tick: each gap between ticks, clipped to each window it overlaps."""
+    worst = 0.0
+    for a, b in zip(stamps, stamps[1:]):
+        for start, end in windows:
+            worst = max(worst, min(b, end) - max(a, start))
+    return worst
+
+
+@pytest.mark.parametrize("start", ["cold, staged validation", "cache present, cached check"])
+async def test_a_slow_validation_does_not_hold_the_serving_loop(gtfs_zip, monkeypatch, start):
+    """D5, pinned at both places validation runs. A 1 ms heartbeat shares the loop with
+    load_subway_stops while a validation that takes SLOW_VALIDATION_S runs: from a cold
+    cache it is staged_fetch's, with a cache already on disk it is the cached-archive
+    check's, the one every process start runs. The heartbeat must keep ticking.
+
+    WHAT THIS TEST NEEDS TO SEE, which is why the first assertion is a precondition and
+    not decoration: a validation long enough that holding the loop for it would break
+    LOOP_STALL_BOUND_S. With a fast validator the same assertion on the heartbeat would
+    pass inline and off the loop alike, and the test would say nothing, so it fails
+    instead when the validation it watched was short."""
+    windows: list = []
+    slow = _slowed(static_data.validate_subway_archive, windows)
+    monkeypatch.setattr(static_data, "validate_subway_archive", slow)
+    if start.startswith("cold"):
+        _publish(monkeypatch, {"bytes": _zip_bytes(loadable_members())}, [])
+    else:
+        write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: the cached check, no download
+    stamps: list = []
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        # Stamp on EVERY wake, the last included: the tick that ends a stall is the
+        # one after it, and a ticker that checked `stop` first would exit on that
+        # wake without recording it, hiding a stall that runs up to the load's return.
+        while True:
+            stamps.append(time.perf_counter())
+            if stop.is_set():
+                return
+            await asyncio.sleep(0.001)
+
+    ticker = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.01)
+    try:
+        stops = await static_data.load_subway_stops()
+    finally:
+        stop.set()
+        await ticker
+
+    assert "101N" in stops
+    assert len(windows) == 1 and windows[0][1] - windows[0][0] >= SLOW_VALIDATION_S
+    stall = _stall_within(stamps, windows)
+    assert stall < LOOP_STALL_BOUND_S, (
+        f"the loop stalled {stall * 1000:.0f} ms inside a "
+        f"{(windows[0][1] - windows[0][0]) * 1000:.0f} ms validation"
+    )

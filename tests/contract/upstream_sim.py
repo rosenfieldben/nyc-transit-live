@@ -61,8 +61,8 @@ THE MODES, and what each one models:
            has to be able to prove that ONE byte is still an outage, through the
            same route, in the same app lifetime.
 Static archives take a publication NAME instead (good, headers-only-stops,
-missing-member, corrupt-zip, no-shapes), because "what did upstream publish" is
-the question there, not "is it up".
+missing-member, corrupt-zip, no-shapes, unreadable-trips, damaged-shapes), because
+"what did upstream publish" is the question there, not "is it up".
 
 NJ TRANSIT IS THE ONE UPSTREAM HERE THAT IS NOT A GET (15a). Every RailData
 endpoint is POST multipart/form-data with a token as a form field, and the token
@@ -83,6 +83,7 @@ import csv
 import io
 import json
 import re
+import struct
 import threading
 import time
 import zipfile
@@ -144,7 +145,15 @@ ONE_BYTE_BODY = b"\x00"
 # be shrunk: a scenario has to arrive already stale rather than wait to become so.
 # 300 matches the hermetic suite's own _stale helper.
 STALE_CONTENT_BY_S = 300.0
-PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip", "no-shapes")
+PUBLICATIONS = (
+    "good",
+    "headers-only-stops",
+    "missing-member",
+    "corrupt-zip",
+    "no-shapes",
+    "unreadable-trips",
+    "damaged-shapes",
+)
 
 # What NJ Transit's getGTFS does with the token it is handed. Enumerated and
 # validated for the same reason MODES and PUBLICATIONS are: an unknown name must
@@ -477,7 +486,7 @@ def _subway_transfers(stops: dict) -> str:
     return _csv("from_stop_id,to_stop_id,transfer_type,min_transfer_time", rows)
 
 
-def _zip_of(members: dict[str, str], drop: tuple[str, ...] = ()) -> bytes:
+def _zip_of(members: dict[str, str | bytes], drop: tuple[str, ...] = ()) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, body in members.items():
@@ -858,8 +867,31 @@ def _njt_members(now: float) -> dict[str, str]:
     }
 
 
+def _with_invalid_byte(body: str) -> bytes:
+    """`body` as UTF-8 with one 0xFF in place of the first character of its first data
+    row: a byte no UTF-8 text contains, so the member fails to decode wherever a
+    reader reaches it, and the zip around it is sound (A02's shape)."""
+    raw = bytearray(body.encode("utf-8"))
+    raw[raw.index(b"\n") + 1] = 0xFF
+    return bytes(raw)
+
+
+def _with_damaged_deflate(archive: bytes, member: str) -> bytes:
+    """`archive` with `member`'s first DEFLATE block header set to the block type RFC
+    1951 reserves (BTYPE 11), its stored CRC-32 and sizes untouched. Reading the member
+    raises zlib.error from inflate, not the BadZipFile a CRC mismatch raises (A02b's
+    shape): the error the NJ Transit shapes parse did not catch."""
+    payload = bytearray(archive)
+    with zipfile.ZipFile(BytesIO(archive)) as zf:
+        offset = zf.getinfo(member).header_offset
+    name_len, extra_len = struct.unpack("<HH", payload[offset + 26 : offset + 30])
+    start = offset + 30 + name_len + extra_len
+    payload[start] = (payload[start] & 0b11111001) | 0b00000110
+    return bytes(payload)
+
+
 def _publications(members: dict[str, str]) -> dict[str, bytes]:
-    """The four publications a static upstream can serve.
+    """The publications a static upstream can serve, one per name in PUBLICATIONS.
 
     Written here rather than imported from backend/tests/test_static_shared.py on
     purpose: that module belongs to the C5 hermetic suite and imports the backend's
@@ -888,6 +920,27 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
         # shapes.txt at all gets a body identical to "good", which is honest: there
         # is nothing to drop.
         "no-shapes": _zip_of(members, drop=("shapes.txt",)),
+        # A02: a sound zip whose trips.txt holds one byte that is not UTF-8. Before
+        # claude/a02-publication-validation the subway validator never opened
+        # trips.txt, so this was promoted over a working cache and every warmup
+        # attempt then failed reading it, for the cache's whole life. A member set
+        # with no trips.txt gets a body identical to "good".
+        "unreadable-trips": (
+            _zip_of({**members, "trips.txt": _with_invalid_byte(members["trips.txt"])})
+            if "trips.txt" in members
+            else _zip_of(members)
+        ),
+        # A02b: shapes.txt present, its DEFLATE stream damaged. Like no-shapes, it
+        # means different things per loader, and that is the point: NJ Transit gates
+        # nothing on shapes.txt and must degrade to no route lines; the subway gates it
+        # as decorative, refusing it only over a cache that draws and otherwise
+        # promoting it with shapes.txt named degraded; PATH and the ferry read it and
+        # refuse the publication at validation.
+        "damaged-shapes": (
+            _with_damaged_deflate(_zip_of(members), "shapes.txt")
+            if "shapes.txt" in members
+            else _zip_of(members)
+        ),
     }
 
 

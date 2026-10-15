@@ -47,23 +47,38 @@ NOT DRIVEN BY THIS SCRIPT, left to the ledger as confirmed from source only:
 
 FOUR CHECK GROUPS, each over the real static_shared staged path:
 
-  ARM 1  The deadline that does not preempt.
+  ARM 1  The deadline that did not preempt: CLOSED on claude/a02-publication-validation,
+         and now a regression check on that repair. staged_fetch validates in a worker
+         thread behind an await (static_shared.py), so an expired deadline is
+         delivered at that await, before the promotion, and the loop keeps running
+         while the thread validates.
          1a/1b: the audit's own experiment. A validator that runs the real subway
          validator and then busy-waits to 80 ms, inside asyncio.timeout(0.01), through
          the real staged_fetch and its real default transfer. Measured: elapsed time,
          promotion, whether TimeoutError left the block, how long the event loop was
          held, and what the expired deadline does at the boundary afterwards.
+         BEFORE (this record at d5f6d70): no TimeoutError, the stage promoted after
+         81.5 ms (81.2 to 84.6 across runs), the loop held for all of it; with a
+         suspending await after the stage, the TimeoutError arrived THERE, after the
+         promotion it was meant to stop.
+         AFTER, asserted: the TimeoutError leaves the block during the validation, in
+         well under the validator's 80 ms, nothing is promoted, and the heartbeat
+         keeps ticking; with a suspending await after it, the TimeoutError is still
+         raised inside staged_fetch, before any promotion.
          1c: the PRODUCTION attempt the serving loop runs, with nothing injected into
          the pipeline. The real subway warmup, its whole-attempt deadline set to the
          same 10 ms through the documented test seam, loads a valid publication whose
          transfers.txt has 150,000 rows, so the real validator's own parse is the
-         synchronous work. Measured: whether the publication was promoted before the
-         attempt ended, and how long a 1 ms heartbeat sharing the loop was stalled.
+         CPU work. Measured: whether the publication was promoted before the attempt
+         ended, and how long a 1 ms heartbeat sharing the loop was stalled.
+         BEFORE: the loop stalled for 220 to 280 ms on the validation and the
+         publication was promoted before the deadline was delivered. AFTER, asserted:
+         each of three attempts fails at its deadline with nothing promoted, and the
+         shortest of their longest heartbeat gaps is under a quarter of the same
+         validation timed standalone.
          This is the check that sees a repair made ABOVE staged_fetch (in the subway
          loader or in the warmup), which 1a cannot, because 1a calls staged_fetch on
-         the script's own loop. One level higher is out of its reach: a repair in
-         main.lifespan that ran the whole warmup coroutine on another event loop
-         would leave 1c green, because 1c schedules the warmup itself.
+         the script's own loop.
   ARM 2  No byte ceiling on a transfer. A valid subway publication padded to 512 MiB
          with one stored member, generated as it is served (no upstream file), through
          the real default transfer, the real subway loader and the real validator.
@@ -75,21 +90,24 @@ FOUR CHECK GROUPS, each over the real static_shared staged path:
   ARM 3  No member-count or expanded-size limit at validation. A valid subway archive
          plus 70,000 empty members (past the 65,535 entries of a classic zip, so the
          archive is zip64), and a valid subway archive whose stop_times.txt declares
-         2 GiB expanded from about 2 MB on the wire: its usual header, then 2 GiB of
-         blank lines, so a CSV reader sees the same empty table the small publications
-         carry. The expansion sits on a member the subway code reads, never on an
-         extra one nothing reads, so that a ceiling over the members the code reads
-         turns 3.3 red: the validator requires stop_times.txt (3.0 measures that by
-         rejection) but checks it for presence only, and the routes-per-station loader
-         inflates it whole. Measured: both archives promoted, the member count, and
-         stop_times.txt's declared size and ratio.
-         Two limits of reach. A ceiling only on what validation itself parses
-         (stops.txt and transfers.txt) leaves 3.3 green: it bounds the validator's
-         work, while stop_times.txt is still promoted at 2 GiB, which is what 3.3
-         records; those members are not padded because parsing that much would add
-         seconds to every run. And a repair that made validation PARSE stop_times.txt
-         would spend minutes on its blank lines before 3.3 reports, which is the
-         unbounded work this finding describes, not a harness fault.
+         2 GiB expanded from about 2 MB on the wire: its usual header and one call,
+         then 2 GiB of lines of spaces, rows the subway's reader of the member skips
+         (no trip_id, no stop_id), so it reads the same one-call table the small
+         publications carry. The expansion sits on a member the subway code reads,
+         never on an extra one nothing reads, so that a ceiling over the members the
+         code reads turns 3.3 red: the validator requires stop_times.txt (3.0
+         measures that by rejection) and, since A02, reads all of it through the
+         loader's own generator, and the routes-per-station loader inflates it whole.
+         Measured: both archives promoted, the member count, and stop_times.txt's
+         declared size and ratio.
+         WHY LINES OF SPACES AND NOT BLANK LINES, which is what this padding was
+         until A02's repair made validation read the member. A CSV reader takes about
+         20 times longer over empty lines than over the same bytes as long ones: 2 GiB
+         of blank lines measured about 320 s to read, 2 GiB of 65,535-space lines
+         about 16 s, and the padding exists to declare an expanded size, not to cost
+         the run five minutes. Reading it whole at validation is now the unbounded
+         work this finding describes, so a ceiling on what validation parses (in
+         parse_member, say) reaches stop_times.txt and turns 3.3 red too.
   H      Hermetic and harness checks: the generated-archive builder reads back intact
          at small scale, and no socket was attempted.
 
@@ -116,7 +134,8 @@ WHAT IS INJECTED, and this is the whole of it:
        between chunks like a real socket read, and hard-fails on any URL naming
        njtransit or raildata.
     3. 1a/1b's validator: the real subway validator followed by a busy-wait to 80 ms,
-       standing in for a larger publication's parse time.
+       standing in for a larger publication's parse time. CPU, not a sleep, because a
+       real parse holds the interpreter lock the way a busy-wait does.
     4. 1c: main.STATIC_ATTEMPT_DEADLINE_S set for the one attempt and restored (the
        name main documents as the test seam) to 10 ms, or to a tenth of the
        publication's own standalone validation time where that is shorter, so the
@@ -124,9 +143,10 @@ WHAT IS INJECTED, and this is the whole of it:
        whose state starts "loading", as main.lifespan sets it.
     5. Archives built here: small ones with zipfile, the 512 MiB and 2 GiB ones by a
        short zip writer below that generates them as they are served (stored zeros,
-       and one MiB of blank lines deflated once and repeated after a table's header).
-       H.0 proves that writer's output reads back intact with zipfile.testzip, and
-       that a padded table reads as the unpadded one.
+       and one MiB of lines of spaces deflated once and repeated after a table's
+       header). H.0 proves that writer's output reads back intact with
+       zipfile.testzip, and that the subway's reader of a padded stop_times.txt
+       yields exactly the rows of the unpadded one.
 
 HERMETIC. _hermetic.contain() before the first backend import and verify() after
 it; no credentials; an audit hook refuses any socket connect or name resolution,
@@ -134,14 +154,19 @@ and the run asserts none was attempted. Nothing reaches the network, no NJ Trans
 module is driven, no mint is spent, data/ is never touched. Arm 2 writes one
 512 MiB stage file under the temp directory and the run deletes it. Timing is the
 only wall-clock dependence, and only arm 1 measures it, with bounds that hold by
-construction: 1a's validator itself spends the 80 ms, and 1c compares the stall with
-the same validation timed standalone in the same run.
+construction: 1a's validator itself spends the 80 ms (1a.2 is an ordering, the block
+ending while the validator still runs; 1a.4 bounds the heartbeat's gap at half of it,
+against 4 to 16 ms measured off the loop), and 1c compares the stall, the shortest of
+three attempts' (inline, every attempt's is the whole validation), with the same
+validation timed standalone in the same run.
 
 RUN IT, from the repository root:
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py
 
-RECORDED DISPOSITION: VERIFIED. Exits 0 while A09 behaves as recorded; exits 1,
-naming the failed checks, the moment the code stops matching.
+RECORDED DISPOSITION: VERIFIED, for arms 2 and 3 (no byte ceiling, no member or
+expanded-size ceiling). Arm 1 is closed on claude/a02-publication-validation and pins
+the repair. Exits 0 while A09 behaves as recorded; exits 1, naming the failed checks,
+the moment the code stops matching.
 """
 
 from __future__ import annotations
@@ -195,7 +220,11 @@ sys.addaudithook(_refuse_sockets)
 
 MiB = 1 << 20
 _ZERO_MIB = bytes(MiB)
-_BLANK_LINES_MIB = b"\n" * MiB  # one MiB of empty CSV lines
+# One MiB of lines of spaces: sixteen lines of 65,535 spaces and a newline. A row with
+# no trip_id or stop_id, which the subway's stop_times reader skips; see ARM 3 in the
+# docstring for why not blank lines (a CSV reader is about 20 times slower over them).
+_SPACE_LINES_MIB = (b" " * 65535 + b"\n") * 16
+assert len(_SPACE_LINES_MIB) == MiB
 
 
 def repeated_crc(block: bytes, count: int, crc: int = 0) -> int:
@@ -212,7 +241,7 @@ def deflated_block(data: bytes) -> bytes:
     return comp.compress(data) + comp.flush(zlib.Z_FULL_FLUSH)
 
 
-_DEFLATED_BLANK_LINES_MIB = deflated_block(_BLANK_LINES_MIB)  # about 1,010:1
+_DEFLATED_SPACE_LINES_MIB = deflated_block(_SPACE_LINES_MIB)  # about 1,000:1
 _DEFLATE_END = zlib.compressobj(9, zlib.DEFLATED, -15).flush(zlib.Z_FINISH)  # empty final block
 
 _DOS_DATE = ((2026 - 1980) << 9) | (10 << 5) | 12  # 2026-10-12, 00:00:00
@@ -241,12 +270,13 @@ def member_stored_zeros(name: str, mib: int) -> _Member:
 
 
 def member_padded_table(name: str, text: str, mib: int) -> _Member:
-    """A CSV table `text` followed by `mib` MiB of blank lines, deflated at about
-    1,010:1. A CSV reader skips blank lines, so to any reader this is the same table
-    as `text` alone; only its declared expanded size differs."""
+    """A CSV table `text` followed by `mib` MiB of lines of spaces, deflated at about
+    1,000:1. Those lines carry no trip_id and no stop_id, so the subway's reader of
+    stop_times.txt yields exactly the rows of `text` alone; only the member's declared
+    expanded size differs."""
     head = text.encode("utf-8")
-    body = deflated_block(head) + _DEFLATED_BLANK_LINES_MIB * mib + _DEFLATE_END
-    crc = repeated_crc(_BLANK_LINES_MIB, mib, zlib.crc32(head))
+    body = deflated_block(head) + _DEFLATED_SPACE_LINES_MIB * mib + _DEFLATE_END
+    crc = repeated_crc(_SPACE_LINES_MIB, mib, zlib.crc32(head))
     return _Member(name, zipfile.ZIP_DEFLATED, crc, len(body), len(head) + mib * MiB,
                    lambda: iter((body,)))
 
@@ -453,9 +483,15 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
          "min_transfer_time": "180"}
         for i in range(heavy_transfers)
     )
+    # One trip and one call: since A02 the validator reads trips.txt and stop_times.txt
+    # through the loader's own generators and wants a row from each, so a publication
+    # with headers only there is one it refuses, and every arm here needs one it accepts.
     return {
         "stops.txt": stops,
-        "trips.txt": csv_text(["route_id", "service_id", "trip_id", "shape_id"], []),
+        "trips.txt": csv_text(
+            ["route_id", "service_id", "trip_id", "shape_id"],
+            [{"route_id": "A", "service_id": "wk", "trip_id": "t1", "shape_id": "A..N01R"}],
+        ),
         "shapes.txt": csv_text(
             ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
             [
@@ -466,7 +502,8 @@ def subway_members(tag: str, *, heavy_transfers: int = 0) -> dict[str, str]:
             ],
         ),
         "stop_times.txt": csv_text(
-            ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], []
+            ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"],
+            [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}],
         ),
         "transfers.txt": csv_text(
             ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"], transfers
@@ -486,7 +523,7 @@ def built_archive(tag: str, *, extra_members: int = 0, heavy_transfers: int = 0)
 
 def streamed_archive(tag: str, *, pad_mib: dict[str, int] | None = None,
                      extra: tuple[_Member, ...] = ()) -> Publication:
-    """The subway members (each named in `pad_mib` followed by that many MiB of blank
+    """The subway members (each named in `pad_mib` followed by that many MiB of space
     lines), then the `extra` members, generated as served."""
     pad_mib = pad_mib or {}
     members = [
@@ -514,9 +551,13 @@ def cache_label(pub: Publication) -> str:
 
 
 async def _ticker(stop: asyncio.Event, stamps: list[float]) -> None:
-    """A 1 ms heartbeat: any other coroutine sharing the loop (pollers, /healthz)."""
-    while not stop.is_set():
+    """A 1 ms heartbeat: any other coroutine sharing the loop (pollers, /healthz).
+    It stamps on every wake, the last included, so a stall that runs up to the moment
+    `stop` is set is still closed by a tick and counted."""
+    while True:
         stamps.append(time.perf_counter())
+        if stop.is_set():
+            return
         await asyncio.sleep(0.001)
 
 
@@ -555,13 +596,13 @@ def builder_selfcheck() -> None:
         bad = zf.testzip()
         padded = zf.read(EXPANDED_MEMBER)
         contents_ok = (zf.read("stored.bin") == bytes(3 * MiB)
-                       and padded == plain[EXPANDED_MEMBER].encode() + b"\n" * (2 * MiB))
-    # The padded table, read the way a CSV loader reads it: the same header as the
-    # unpadded one, and the same (zero) rows.
-    padded_rows = csv.DictReader(io.StringIO(padded.decode("utf-8-sig")))
-    plain_rows = csv.DictReader(io.StringIO(plain[EXPANDED_MEMBER]))
-    as_csv = (padded_rows.fieldnames, list(padded_rows))
-    same_table = as_csv == (plain_rows.fieldnames, list(plain_rows))
+                       and padded == plain[EXPANDED_MEMBER].encode() + _SPACE_LINES_MIB * 2)
+    # The padded table, read the way the subway reads it: its own stop_times reader
+    # yields the same rows from the padded member as from the unpadded one.
+    padded_rows = list(static_data._iter_trip_stops(io.BytesIO(padded)))
+    plain_rows = list(static_data._iter_trip_stops(io.BytesIO(plain[EXPANDED_MEMBER].encode())))
+    as_csv = (["trip_id", "stop_id"], padded_rows)
+    same_table = bool(plain_rows) and padded_rows == plain_rows
     # The writer's own encoding of the subway members, unpadded, through the real
     # validator: proves the generated bytes are a publication it accepts. Unpadded so
     # that a size or ratio ceiling (a repair) fails 3.3, not this harness check.
@@ -574,7 +615,7 @@ def builder_selfcheck() -> None:
         verdict = f"REJECTED ({exc})"
     path.unlink()
     check(
-        f"H.0 a generated archive (a {EXPANDED_MEMBER} padded with deflated blank lines, a "
+        f"H.0 a generated archive (a {EXPANDED_MEMBER} padded with deflated lines of spaces, a "
         "stored member of zeros) passes zipfile.testzip, reads back exactly, matches its own "
         "central directory and reads as the unpadded table; unpadded, the real validator "
         "accepts the writer's output",
@@ -596,7 +637,7 @@ def central_directory_of_bytes(data: bytes) -> list[tuple]:
 
 
 # ---------------------------------------------------------------------------
-# ARM 1: the deadline that does not preempt
+# ARM 1: the deadline that did not preempt (closed; pins the repair)
 # ---------------------------------------------------------------------------
 
 DEADLINE_S = 0.010  # the audit's asyncio.timeout(10 ms)
@@ -638,6 +679,10 @@ async def validator_settled(limit_s: float = 2.0) -> None:
 async def run_under_deadline(pub: Publication, *, then_suspend: bool) -> dict:
     """Publish `pub`, then run the real staged_fetch inside asyncio.timeout(10 ms).
 
+    The validator runs in a worker thread since the repair, so it goes on after the
+    deadline; validator_settled waits for it before the next run, and the stage it
+    reads has already been unlinked by staged_fetch.
+
     then_suspend=False: staged_fetch is the last statement in the block.
     then_suspend=True : the block continues with one await that suspends, as the
                         subway warmup's block does (its next await is a to_thread).
@@ -676,6 +721,10 @@ async def run_under_deadline(pub: Publication, *, then_suspend: bool) -> dict:
         except Exception as exc:  # a repair may refuse the stage outright; report it
             outcome = f"raised {type(exc).__name__}: {exc}"
         elapsed = time.perf_counter() - t0
+        # Was the validator still running when the block ended? An ORDERING, not a
+        # duration, so it holds on any machine: inline, the block cannot end before
+        # the validator does; off the loop, the deadline ends it mid-validation.
+        running_at_end = _VALIDATOR["started"] is not None and _VALIDATOR["finished"] is None
         # The boundary afterwards: does the expired deadline reach a later await?
         late = "slept normally"
         try:
@@ -697,6 +746,7 @@ async def run_under_deadline(pub: Publication, *, then_suspend: bool) -> dict:
             "outcome": outcome,
             "returned": returned,
             "elapsed_ms": elapsed * 1000,
+            "running_at_end": running_at_end,
             "validator_start_ms": None if started is None else (started - t0) * 1000,
             "validator_ran_ms": (
                 None
@@ -794,7 +844,7 @@ async def run_warmup_attempt(pub: Publication, deadline_s: float) -> dict:
 
 async def arm1() -> dict:
     print("-" * 78)
-    print("ARM 1  the deadline that does not preempt")
+    print("ARM 1  the deadline that did not preempt (closed; pins the repair)")
     print("-" * 78)
 
     # Control: the same kind of publication, no deadline. Proves the archive is a
@@ -819,58 +869,62 @@ async def arm1() -> dict:
         "not stated (control)",
     )
 
+    # THE REPAIR, PINNED (claude/a02-publication-validation). Each check prints the
+    # recorded BEFORE beside what it measures, so a regression reads as the finding.
+    # 1a.4's bound: inline, the heartbeat's gap is the whole 80 ms validation; off the
+    # loop it is an interpreter switch slice or two (4 to 16 ms measured).
+    half = VALIDATOR_S * 1000 / 2
     a = await run_under_deadline(built_archive("a"), then_suspend=False)
     print(f"  run 1a: {a['attempts']} attempt(s); {validator_note(a)}")
     check(
-        "1a.1 no TimeoutError leaves asyncio.timeout(0.01) around the real staged_fetch",
-        a["outcome"] == "completed",
+        "1a.1 TimeoutError leaves asyncio.timeout(0.01) around the real staged_fetch, "
+        "delivered while the validator runs",
+        a["outcome"] == "TimeoutError" and a["validator_start_ms"] is not None,
         f"block outcome: {a['outcome']}; {validator_note(a)}",
-        "completed ... without a timeout",
+        "BEFORE: completed after 81.5 ms with no TimeoutError (audit: about 81 ms)",
     )
     check(
-        "1a.2 the block took at least the validator's 80 ms",
-        a["elapsed_ms"] >= VALIDATOR_S * 1000,
-        f"{a['elapsed_ms']:.1f} ms against a {DEADLINE_S * 1000:.0f} ms deadline",
-        "after approximately 81 ms",
+        "1a.2 the block ended while the validator was still running, not after it",
+        a["running_at_end"],
+        f"{a['elapsed_ms']:.1f} ms against a {DEADLINE_S * 1000:.0f} ms deadline and the "
+        f"validator's {VALIDATOR_S * 1000:.0f} ms",
+        "BEFORE: 81.5 ms, after the validator had finished",
     )
     check(
-        "1a.3 the stage was promoted over the cache, and status says so",
-        a["cache_after"] == "== published"
-        and a["status"].get("last_promoted_at") is not None
-        and a["status"].get("last_download_error") is None,
-        f"cache {a['cache_after']}, last_download_error={a['status'].get('last_download_error')!r}",
-        "completed and promoted a stage",
+        "1a.3 nothing was promoted: no cache, and status records no promotion",
+        a["cache_after"] == "absent" and a["status"].get("last_promoted_at") is None,
+        f"cache {a['cache_after']}, status {a['status']}",
+        "BEFORE: the stage promoted over the cache ('completed and promoted a stage')",
     )
     check(
-        "1a.4 the event loop was held for the whole validation (1 ms heartbeat gap)",
-        a["max_gap_ms"] >= VALIDATOR_S * 1000,
+        "1a.4 the event loop kept running through the validation (1 ms heartbeat gap under "
+        "half the validation)",
+        a["max_gap_ms"] < half,
         f"longest heartbeat gap {a['max_gap_ms']:.1f} ms",
-        "not stated (Risk: can impair all layers sharing the process)",
+        "BEFORE: held for the whole validation (gap at least 80 ms)",
     )
     check(
-        "1a.5 the expired deadline is discarded at block exit: a later await is not cancelled",
+        "1a.5 the expired deadline is spent by its TimeoutError: a later await is not cancelled",
         a["late"] == "slept normally",
         f"a 5 ms sleep after the block: {a['late']}",
-        "not stated (boundary record)",
+        "not stated (boundary record; unchanged)",
     )
 
     b = await run_under_deadline(built_archive("b"), then_suspend=True)
     print(f"  run 1b: {b['attempts']} attempt(s); block continued with one await that suspends")
     check(
-        "1b.1 with a suspending await after the stage, TimeoutError is raised THERE",
-        b["outcome"] == "TimeoutError" and b["returned"],
+        "1b.1 with a suspending await after the stage, TimeoutError is still raised INSIDE "
+        "staged_fetch, which never returns",
+        b["outcome"] == "TimeoutError" and not b["returned"],
         f"block outcome: {b['outcome']}; staged_fetch had returned: {b['returned']}; "
         f"elapsed {b['elapsed_ms']:.1f} ms; {validator_note(b)}",
-        "not stated (boundary record)",
+        "BEFORE: raised at the later await, after staged_fetch had returned",
     )
     check(
-        "1b.2 ...and the promotion had already happened, so the late timeout undoes nothing",
-        b["cache_at_return"] == "== published"
-        and b["cache_after"] == "== published"
-        and b["status"].get("last_promoted_at") is not None,
-        f"cache when staged_fetch returned: {b['cache_at_return']}; after the TimeoutError: "
-        f"{b['cache_after']}",
-        "not stated (boundary record)",
+        "1b.2 ...so no promotion happened for it to arrive after",
+        b["cache_after"] == "absent" and b["status"].get("last_promoted_at") is None,
+        f"cache after the TimeoutError: {b['cache_after']}; status {b['status']}",
+        "BEFORE: the promotion had already happened, so the late timeout undid nothing",
     )
 
     # 1c: the production attempt, nothing injected into the pipeline.
@@ -897,7 +951,24 @@ async def arm1() -> dict:
     attempt_deadline_s = max(
         ATTEMPT_DEADLINE_FLOOR_S, min(DEADLINE_S, min(standalone) / 1000 / 10)
     )
-    c = await run_warmup_attempt(heavy, attempt_deadline_s)
+    # THREE ATTEMPTS, AND THE SHORTEST OF THEIR LONGEST GAPS. Inline, every attempt's
+    # longest gap is the whole validation, so the shortest of three still is, and 1c.2
+    # still fails by construction. Off the loop, an attempt's longest gap is a few
+    # interpreter switch slices (4 to 24 ms measured), but it also counts anything else
+    # that stops this process for a moment (a garbage collection on the worker thread,
+    # the scheduler), and one such moment in one attempt crossed the bound on a run
+    # of the unmodified tree. Between attempts, the previous attempt's validation is
+    # left to finish on its thread, so it does not share the next attempt's loop.
+    runs = []
+    for _ in range(3):
+        runs.append(await run_warmup_attempt(heavy, attempt_deadline_s))
+        await asyncio.sleep(2 * max(standalone) / 1000)
+    c = dict(runs[0])
+    c["gaps_ms"] = [run["max_gap_ms"] for run in runs]
+    c["max_gap_ms"] = min(c["gaps_ms"])
+    c["all_unpromoted"] = all(
+        run["cache_at_end"] == "absent" and run["status"] == "failed" for run in runs
+    )
     c["deadline_ms"] = attempt_deadline_s * 1000
     time_standalone(1)
     heavy_path.unlink()
@@ -917,23 +988,29 @@ async def arm1() -> dict:
         "not stated (precondition for 1c)",
     )
     check(
-        "1c.1 the production warmup promoted the publication before its expired attempt "
-        "deadline was delivered (cache == publication when the attempt ended)",
-        c["cache_at_end"] == "== published",
-        f"cache when the attempt ended: {c['cache_at_end']}; transfer finished: "
-        f"{c['transfer_done']}",
-        "completed and promoted a stage ... without a timeout",
+        "1c.1 the production warmup's expired attempt deadline was delivered before any "
+        "promotion: each of the three attempts failed and no cache was written",
+        c["all_unpromoted"],
+        "; ".join(
+            f"cache {run['cache_at_end']}, status {run['status']!r}, transfer finished "
+            f"{run['transfer_done']}"
+            for run in runs
+        ),
+        "BEFORE: promoted before the deadline was delivered ('completed and promoted a stage "
+        "... without a timeout')",
     )
-    # A quarter, not the whole: the in-attempt run and the standalone runs see different
-    # moments of machine load. A repair that moves the work off this loop stalls it for
-    # a scheduling slice (1.6 to 9.3 ms measured), not for a validation.
+    # A quarter, as the record's own bound was: the in-attempt run and the standalone runs
+    # see different moments of machine load, and work off this loop costs it a scheduling
+    # slice (1.6 to 9.3 ms measured when the record was taken), not a validation.
     check(
-        "1c.2 the warmup held the loop it shares for the real validation: the 1 ms "
-        "heartbeat stalled for at least a quarter of the shortest standalone validation",
-        c["max_gap_ms"] >= v_ms / 4,
-        f"longest heartbeat gap {c['max_gap_ms']:.1f} ms against {v_ms:.1f} ms standalone "
+        "1c.2 the warmup kept the loop it shares running through the real validation: the "
+        "1 ms heartbeat's longest gap, the shortest of three attempts, is under a quarter of "
+        "the shortest standalone validation",
+        c["max_gap_ms"] < v_ms / 4,
+        f"longest heartbeat gap {c['max_gap_ms']:.1f} ms (attempts "
+        f"{', '.join(f'{g:.1f}' for g in c['gaps_ms'])} ms) against {v_ms:.1f} ms standalone "
         f"({c['max_gap_ms'] / max(v_ms, 1e-9):.2f}x)",
-        "not stated (Risk: can impair all layers sharing the process)",
+        "BEFORE: 220 to 280 ms, the whole validation",
     )
     print()
     return {"a": a, "b": b, "c": c, "v_ms": v_ms}
@@ -1140,11 +1217,13 @@ async def amain() -> int:
         return 1
     a, c = one["a"], one["c"]
     print(
-        "DISPOSITION: VERIFIED  An 80 ms synchronous validator inside asyncio.timeout(10 ms) "
-        f"ran through the real staged_fetch and promoted the stage after {a['elapsed_ms']:.1f} ms "
-        f"with no TimeoutError (audit: about 81 ms), and the production subway warmup under a "
-        f"{c['deadline_ms']:.0f} ms attempt deadline held its event loop {c['max_gap_ms']:.0f} ms on the real "
-        "validation and promoted before the deadline was delivered; the real transfer and "
+        "DISPOSITION: VERIFIED  Arm 1 closed on claude/a02-publication-validation: an 80 ms "
+        "validator inside asyncio.timeout(10 ms) now raises TimeoutError out of the real "
+        f"staged_fetch after {a['elapsed_ms']:.1f} ms with nothing promoted (BEFORE: promoted "
+        f"after 81.5 ms, no TimeoutError), and the production subway warmup under a "
+        f"{c['deadline_ms']:.0f} ms attempt deadline failed at it with nothing promoted while "
+        f"its loop's longest stall was {c['max_gap_ms']:.0f} ms (BEFORE: 220 to 280 ms, then "
+        "promoted). Arms 2 and 3 still stand: the real transfer and "
         f"subway validator accepted and promoted a {two['size']:,}-byte publication, an archive "
         f"of {three['members']:,} members and one whose required {EXPANDED_MEMBER} declares "
         f"{three['expanded']:,} expanded bytes ({three['ratio']:,.0f}:1), so no byte or "

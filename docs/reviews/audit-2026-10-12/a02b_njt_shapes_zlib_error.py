@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A02b (Medium), "Related medium-priority NJT variant" of A02: reproduction.
+"""A02b (Medium), "Related medium-priority NJT variant" of A02: the repair, pinned.
 
 THE ID. The auditor gave this paragraph no ID of its own. It sits inside A02 ("Subway
 archive validation can replace good data with a persistent failure", High) under the
@@ -20,6 +20,33 @@ headed "Related medium-priority NJT variant.", verbatim):
     and backend/njt_static.py:856 (the shapes.txt parse in _parse_shapes_member).
     The article's other three links (backend/static_data.py:142, :232, :438) belong to
     A02's subway case and are not exercised here.
+
+FIXED ON claude/a02-publication-validation, by the first of the two repairs the audit
+offers ("Honor the promised optional-geometry degradation for decompression errors"),
+which is the 15c decision this module was built to: shapes.txt stays optional and stays
+out of the publication gate, and an unreadable one degrades to no route lines, loudly.
+zlib.error joins the except tuple around the shapes parse, so the damaged member costs
+the lines and nothing else; it joins the residual arm's tuple too, so a cached archive
+whose REQUIRED member has damaged DEFLATE data is discarded and re-fetched instead of
+failing every attempt. The two comments that said the publication gate runs the shapes
+parse now say what it opens.
+
+BEFORE (this script's record at d5f6d70): the damaged publication passed
+validate_njt_publication (which never opens shapes.txt) and was promoted as a clean
+success (failed_downloads 0); each of the audit's 3 warmup attempts raised zlib.error out
+of load_njt_static with 0 repair downloads, and so did all 30 attempts sampled across
+the cache's 30-day life; NJ Transit was 'failed' with 0 of 164 stations served. The
+CRC-caught control (BadZipFile) degraded as promised, to 164 stations and 0 lines.
+
+AFTER, asserted: the same publication passes the gate and is promoted (unchanged, by
+the 15c decision), and the warmup reaches ready on attempt 1 with 1 download, 164 of
+164 stations and 0 route lines. WHAT REMAINS, measured and recorded rather than fixed:
+the lines stay gone for the cache's life, because the age policy, not the parse,
+decides when the archive is fetched again (a start 29 days later downloads nothing and
+draws no lines; one 30 days and an hour later re-fetches and the lines return). THE
+RESIDUAL ARM: a cache whose stop_times.txt carries the same damage (it passes the light
+cached-archive validator, which never opens that member) is discarded by the attempt
+that fails on it, and the next attempt downloads and reaches ready.
 
 WHAT IS PRODUCTION CODE HERE (unmodified, called as the app calls it):
   * warmups._warm_njt_static: the real retry loop, its `except Exception` arm,
@@ -116,18 +143,14 @@ THE PROMISE THE FINDING HOLDS THE CODE TO is in the docstring of the shapes.txt 
 (the ledger row quotes it with its line; this script does not read it): an unreadable
 shapes.txt "degrades to no lines, loudly, and the rest of the load carries on."
 
-WHAT "UNCAUGHT" MEANS HERE, measured rather than assumed: neither the shapes.txt
-parse's degradation arm nor load_njt_static's residual arm handles zlib.error, so it
-leaves load_njt_static as an exception. The warmup's generic `except Exception` does
-catch it, records "failed" and schedules the next rung, so the task stays alive and
-retrying (unlike 09-05 F09, where the raise escaped the warmup). What it retries is the
-same cached bytes: the cache passes the light validator and is fresh by mtime, so no
-attempt downloads again until the cache is 30 days old. That persistence is measured,
-not inferred: the drive samples the whole window (item 5) and checks that every attempt
-in it downloads nothing and raises zlib.error, and that the attempt past it downloads.
-The attempt past the window is also the witness that the moved clock reaches the
-loader's own age test: if it did not, that check fails, rather than the in-window
-checks passing for want of time having moved.
+WHAT "UNCAUGHT" MEANT, measured when this was a record of the defect: neither the
+shapes.txt parse's degradation arm nor load_njt_static's residual arm handled
+zlib.error, so it left load_njt_static as an exception; the warmup's generic `except
+Exception` caught it and retried the same cached bytes, fresh by mtime, for 30 days.
+Now the drive of the damaged publication ends at ready on attempt 1, and the 30-day
+window is measured by process starts instead (section 5): a start inside it reads the
+same degraded archive without a download, and the start past it re-fetches, which is
+also the witness that the moved clock reaches the loader's own age test.
 
 HERMETIC: _hermetic.contain() before the first backend import and _hermetic.verify()
 after; every socket connect and DNS lookup raises (the count is printed and must be
@@ -140,15 +163,11 @@ RUN IT (from the repository root):
 
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a02b_njt_shapes_zlib_error.py
 
-Exits 0 while the finding behaves as recorded, 1 with the failed checks named.
+Exits 0 while the repair holds, 1 with every check that moved named.
 
-RECORDED DISPOSITION: VERIFIED. The damaged publication passes the real publication
-gate and is promoted as a success; each of the audit's three warmup attempts then
-raises zlib.error out of load_njt_static with no repair download, and so does every
-attempt sampled across the rest of the cached archive's 30-day life, because the cache
-still passes the light validator and is fresh; the first download after the first
-comes only when the cache ages out; and NJ Transit serves no stations at all, while the
-CRC-caught control degrades to stations without lines.
+RECORDED DISPOSITION: FIXED (claude/a02-publication-validation). The BEFORE paragraph
+above is the record this script used to pin; each check below prints the BEFORE beside
+what it measures.
 """
 
 from __future__ import annotations
@@ -446,6 +465,15 @@ _damaged[SHAPES_START] = (_damaged[SHAPES_START] & 0b11111001) | 0b00000110
 DAMAGED = bytes(_damaged)
 DAMAGED_OFFSET = 0
 
+# DAMAGED_STOP_TIMES: the same block-type damage in stop_times.txt, a REQUIRED member
+# the light cached-archive validator never opens, so a cache carrying it is accepted as
+# usable and fails the load: the residual arm's case (section 6).
+STOP_TIMES = "stop_times.txt"
+STOP_TIMES_START, _ = stream_span(GOOD, STOP_TIMES)
+_damaged_st = bytearray(GOOD)
+_damaged_st[STOP_TIMES_START] = (_damaged_st[STOP_TIMES_START] & 0b11111001) | 0b00000110
+DAMAGED_STOP_TIMES = bytes(_damaged_st)
+
 # CRC-CAUGHT: a byte flipped from the stream's midpoint on, at the first position
 # where inflate completes and the CRC check is what fails. Deterministic: the
 # fixture, the compressor and the search order are all fixed.
@@ -541,10 +569,16 @@ async def _get(path: str) -> httpx.Response:
         return await client.get(path)
 
 
-def reset_world() -> None:
-    """A cold start: no cache, no archive record, and the NJT fields as main.py's
-    lifespan sets them before the warmup runs (the lifespan itself is not run)."""
-    CACHE.unlink(missing_ok=True)
+def reset_world(cache: bytes | None = None, *, keep_cache: bool = False) -> None:
+    """A process start: no archive record, and the NJT fields as main.py's lifespan
+    sets them before the warmup runs (the lifespan itself is not run). The cache is
+    removed (a cold start), kept as it is (a restart over the archive the last process
+    left), or written from `cache` (an archive placed by hand)."""
+    if not keep_cache:
+        CACHE.unlink(missing_ok=True)
+    if cache is not None:
+        CACHE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE.write_bytes(cache)
     if CACHE.parent.exists():
         for orphan in CACHE.parent.glob("*.part"):
             orphan.unlink()
@@ -560,15 +594,23 @@ def reset_world() -> None:
     LOG.drain()
 
 
-async def drive(publication: bytes) -> dict:
-    """Cold-start the real NJT warmup against `publication` and let the same task run
-    until it reaches ready or has failed every attempt the horizon names: the audit's
-    three at the warmup's own cadence, then one at each LATER_AT clock offset."""
-    reset_world()
+async def drive(
+    publication: bytes,
+    *,
+    cache: bytes | None = None,
+    keep_cache: bool = False,
+    start_at: float = 0.0,
+) -> dict:
+    """Start the real NJT warmup against `publication` and let the same task run until
+    it reaches ready or has failed every attempt the horizon names: the audit's three
+    at the warmup's own cadence, then one at each LATER_AT clock offset. A cold start
+    unless `cache` places an archive or `keep_cache` restarts over the last one;
+    `start_at` is how far the clock has moved since the cache was written."""
+    reset_world(cache, keep_cache=keep_cache)
     UPSTREAM.publication = publication
     downloads_before = UPSTREAM.requests
     random.seed(20261012)
-    CLOCK.offset = 0.0
+    CLOCK.offset = start_at
     delays: list[float] = []
     horizon = ATTEMPTS_TO_DRIVE + len(LATER_AT)
     real_sleep = asyncio.sleep
@@ -692,7 +734,7 @@ def validator_verdict(archive: bytes, validator) -> tuple[str, str, list[str]]:
 
 
 async def amain() -> int:
-    rule("A02b  NJT shapes.txt with damaged DEFLATE data: zlib.error, no repair")
+    rule("A02b  NJT shapes.txt with damaged DEFLATE data (the repair)")
     print(f"fixture         : backend/tests/fixtures/njt_gtfs/ ({', '.join(FIXTURE)})")
     print(f"DATA_DIR seam   : {os.environ['DATA_DIR']}")
     print(f"static URL      : {njt_static.NJT_STATIC_URL}  (answered by the in-process fake)")
@@ -776,8 +818,9 @@ async def amain() -> int:
     check(verdicts["GOOD"] == "ACCEPTED", "the GOOD publication passes at the fixed instant",
           verdicts["GOOD"])
     check(verdicts["DAMAGED"] == "ACCEPTED",
-          "the DAMAGED publication passes NJT publication validation",
-          verdicts["DAMAGED"], "passes NJT publication validation")
+          "the DAMAGED publication still passes NJT publication validation (by the 15c "
+          "decision: shapes.txt is optional and stays out of the gate)",
+          verdicts["DAMAGED"], "passes NJT publication validation (unchanged by the repair)")
 
     # ---- 3. baseline -------------------------------------------------------
     rule("3  BASELINE: the GOOD publication through the real warmup, cold start")
@@ -796,85 +839,110 @@ async def amain() -> int:
           "the GOOD publication serves stations and route lines",
           f"{good_stations} stations, {good_lines} route lines")
 
-    # ---- 4. the finding ----------------------------------------------------
+    # ---- 4. the finding, repaired ------------------------------------------
     rule("4  THE FINDING: the DAMAGED publication through the real warmup, cold start")
     bad = await drive(DAMAGED)
     show(bad)
     every = bad["attempts"]
-    attempts = every[:ATTEMPTS_TO_DRIVE]  # the audit's three, at the warmup's own cadence
-    window = every[ATTEMPTS_TO_DRIVE : ATTEMPTS_TO_DRIVE + len(IN_WINDOW_AT)]
-    aged = every[ATTEMPTS_TO_DRIVE + len(IN_WINDOW_AT) :]
-    zlib_raises = [a for a in attempts if isinstance(a["raised"], zlib.error)]
-    repair = sum(a["downloads"] for a in attempts[1:])
+    first = every[0] if every else None
     check(
-        len(attempts) == ATTEMPTS_TO_DRIVE and len(zlib_raises) == ATTEMPTS_TO_DRIVE,
-        "each of the audit's three warmup attempts fails with zlib.error raised out of "
-        "load_njt_static",
-        f"{len(zlib_raises)} of {len(attempts)} attempts raised zlib.error, at "
-        f"{', '.join(fmt_offset(a['at']) for a in attempts)}",
-        "three local attempts failed, zlib.error",
+        len(every) == 1 and first is not None and first["raised"] is None
+        and first["downloads"] == 1 and bad["njt_static"] == "ready",
+        "the warmup reaches ready on attempt 1, one download, nothing raised",
+        f"{len(every)} attempt(s), "
+        f"{outcome(first) if first else 'none'}, {bad['downloads']} download(s), status "
+        f"{bad['njt_static']!r}",
+        "BEFORE: 3 of 3 attempts raised zlib.error, then 30 more across the cache's life",
     )
     check(
-        bool(attempts) and attempts[0]["downloads"] == 1 and repair == 0,
-        "the one download is the publication itself; neither later attempt downloads a repair",
-        f"{attempts[0]['downloads'] if attempts else 0} download(s) on attempt 1, "
-        f"{repair} across the {max(len(attempts) - 1, 0)} later attempt(s)",
-        "zero repair downloads",
-    )
-    window_quiet = [
-        a for a in window if a["downloads"] == 0 and isinstance(a["raised"], zlib.error)
-    ]
-    check(
-        len(window) == len(IN_WINDOW_AT) and len(window_quiet) == len(IN_WINDOW_AT),
-        f"every attempt sampled across the rest of the cache's {FRESH_DAYS}-day life downloads "
-        "nothing and raises zlib.error again",
-        f"{len(window_quiet)} of {len(IN_WINDOW_AT)} sampled attempts "
-        f"({fmt_offset(IN_WINDOW_AT[0])} .. {fmt_offset(IN_WINDOW_AT[-1])}) did; "
-        f"{sum(a['downloads'] for a in window)} download(s) among the {len(window)} run",
-        "not stated (the audit counted three attempts)",
-    )
-    check(
-        len(aged) == 1 and aged[0]["downloads"] == 1,
-        f"once the cache is past {FRESH_DAYS} days old, the next attempt downloads again "
-        "(and so the drive's clock does reach the loader's age test)",
-        (
-            f"{aged[0]['downloads']} download(s) at {fmt_offset(aged[0]['at'])}, "
-            f"then {outcome(aged[0])}"
-        )
-        if aged
-        else "no attempt ran past the window",
+        bad["stations"] == good_stations and bad["route_lines"] == 0,
+        "the damaged shapes.txt costs the route lines and nothing else: every station served",
+        f"{bad['stations']} of {good_stations} stations, {bad['route_lines']} route lines",
+        "BEFORE: 0 of 164 stations, NJ Transit 'failed'",
     )
     check(
         bad["archive"].get("last_promoted_at") is not None
         and bad["archive"].get("last_download_error") is None
-        and bad["archive"].get("failed_downloads") == 0,
-        "/api/status records the damaged publication as a clean promotion",
+        and bad["cache"] == digest(DAMAGED),
+        "the publication was promoted and is the cache (it is servable, so promoting it is "
+        "right)",
         f"promoted={'yes' if bad['archive'].get('last_promoted_at') else 'no'}, "
         f"last_download_error={bad['archive'].get('last_download_error')!r}, "
-        f"failed_downloads={bad['archive'].get('failed_downloads')}",
+        f"cache {bad['cache']}",
+        "BEFORE: promoted as a clean success too, then unservable",
+    )
+
+    # ---- 5. what remains: the age policy -----------------------------------
+    rule("5  WHAT REMAINS: the degraded archive serves without lines for its cache life")
+    print("  A restart over the damaged cache 29 days on, and one 30 days and an hour on,")
+    print("  with a readable publication (GOOD) now upstream.")
+    day29 = await drive(GOOD, keep_cache=True, start_at=29 * DAY)
+    show(day29)
+    aged = await drive(GOOD, keep_cache=True, start_at=AGED_OUT_AT)
+    show(aged)
+    check(
+        day29["downloads"] == 0 and day29["njt_static"] == "ready"
+        and day29["stations"] == good_stations and day29["route_lines"] == 0,
+        "29 days on, a restart downloads nothing and still draws no lines (the age policy, "
+        "not the parse, decides when the archive is fetched again)",
+        f"{day29['downloads']} download(s), status {day29['njt_static']!r}, "
+        f"{day29['stations']} stations, {day29['route_lines']} route lines",
+        "not stated (what remains after the repair, by decision D4)",
     )
     check(
-        bad["cache"] == digest(DAMAGED),
-        "the damaged archive stays in the cache after every failed attempt",
-        f"cache {bad['cache']}, publication {digest(DAMAGED)}",
+        aged["downloads"] == 1 and aged["njt_static"] == "ready"
+        and aged["route_lines"] == good_lines and aged["cache"] == digest(GOOD),
+        f"{FRESH_DAYS} days and an hour on, the restart re-fetches and the lines return (and "
+        "so the drive's clock does reach the loader's age test)",
+        f"{aged['downloads']} download(s), {aged['route_lines']} of {good_lines} route lines, "
+        f"cache {aged['cache']}",
+        "not stated",
+    )
+
+    # ---- 6. the residual arm -----------------------------------------------
+    rule("6  THE RESIDUAL ARM: a cache whose REQUIRED stop_times.txt has the same damage")
+    st_exc = read_outcome(DAMAGED_STOP_TIMES, STOP_TIMES)
+    print(f"  reading stop_times.txt from that archive: {describe(st_exc)}")
+    light = validator_verdict(DAMAGED_STOP_TIMES, njt_static.validate_njt_archive)
+    print(f"  the light cached-archive validator on it: {light[0]} {light[1]}")
+    arm = await drive(GOOD, cache=DAMAGED_STOP_TIMES)
+    show(arm)
+    arm_first = arm["attempts"][0] if arm["attempts"] else None
+    check(
+        isinstance(st_exc, zlib.error) and light[0] == "ACCEPTED",
+        "the premise: stop_times.txt raises zlib.error on read, and the light validator "
+        "accepts the archive as a cache",
+        f"{describe(st_exc)}; light validator {light[0]}",
+        "not stated",
     )
     check(
-        bad["njt_static"] == "failed" and bad["stations"] == 0 and bad["route_lines"] == 0
-        and bad["still_retrying"],
-        "NJ Transit as a whole is down and retrying, not merely without route lines",
-        f"njt_static {bad['njt_static']!r}, {bad['stations']} of {good_stations} stations, "
-        f"{bad['route_lines']} route lines, still retrying {bad['still_retrying']}",
+        arm_first is not None and arm_first["raised"] is None and arm_first["stops"] == 0
+        and arm_first["downloads"] == 0,
+        "the attempt over that cache fails without raising: the residual arm discards it "
+        "and the load returns empty",
+        outcome(arm_first) if arm_first else "no attempt",
+        "BEFORE: zlib.error was outside the residual arm's tuple too, so it escaped and the "
+        "cache was kept",
+    )
+    check(
+        len(arm["attempts"]) == 2 and arm["downloads"] == 1 and arm["njt_static"] == "ready"
+        and arm["cache"] == digest(GOOD) and arm["route_lines"] == good_lines,
+        "the next attempt downloads and reaches ready with the lines",
+        f"{len(arm['attempts'])} attempts, {arm['downloads']} download(s), status "
+        f"{arm['njt_static']!r}, cache {arm['cache']}, {arm['route_lines']} route lines",
+        "not stated",
     )
 
     # ---- 5. the control ----------------------------------------------------
-    rule("5  CONTROL: the same member damaged so the CRC catches it (BadZipFile)")
+    rule("7  CONTROL: the same member damaged so the CRC catches it (BadZipFile)")
     ctl = await drive(CRC_CAUGHT)
     show(ctl)
     check(
         len(ctl["attempts"]) == 1 and ctl["attempts"][0]["raised"] is None
         and ctl["njt_static"] == "ready" and ctl["stations"] == good_stations
         and ctl["route_lines"] == 0,
-        "a BadZipFile shapes.txt degrades as promised: every station, no route lines",
+        "a BadZipFile shapes.txt degrades as promised: every station, no route lines "
+        "(unchanged)",
         f"{len(ctl['attempts'])} attempt(s), status {ctl['njt_static']!r}, "
         f"{ctl['stations']} of {good_stations} stations, {ctl['route_lines']} route lines",
     )
@@ -897,14 +965,18 @@ async def amain() -> int:
         print("DISPOSITION: NOT AS RECORDED, see the failed checks above")
         return 1
     print(
-        "DISPOSITION: VERIFIED  A shapes.txt whose DEFLATE stream inflate rejects passed "
-        "validate_njt_publication and was promoted as a clean success (failed_downloads 0), "
-        f"then all {len(attempts)} warmup attempts raised zlib.error out of load_njt_static "
-        f"with {repair} repair downloads, as did all {len(window_quiet)} sampled across the "
-        f"cache's {FRESH_DAYS}-day life (the next download came only once it aged out), leaving "
-        f"NJ Transit 'failed' with 0 of {good_stations} stations served. The same member damaged "
-        f"so its CRC catches it (BadZipFile) degrades as promised, to {ctl['stations']} stations "
-        "and 0 route lines."
+        "DISPOSITION: FIXED (claude/a02-publication-validation)  BEFORE: a shapes.txt whose "
+        "DEFLATE stream inflate rejects passed validate_njt_publication and was promoted, "
+        "then all 3 warmup attempts raised zlib.error out of load_njt_static with 0 repair "
+        "downloads, as did all 30 sampled across the cache's 30-day life, leaving NJ Transit "
+        "'failed' with 0 of 164 stations. AFTER: the same publication is promoted and "
+        f"reaches ready on attempt 1 with {bad['stations']} of {good_stations} stations and "
+        f"{bad['route_lines']} route lines, the degradation the module promises; the lines "
+        "stay gone for the cache's life by the age policy (a start 29 days on downloads "
+        "nothing, one past 30 days re-fetches); and a cache whose required stop_times.txt "
+        "carries the same damage is discarded by the residual arm and re-fetched on the "
+        "next attempt. The CRC-caught control degrades as before, to "
+        f"{ctl['stations']} stations and 0 route lines."
     )
     return 0
 

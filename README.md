@@ -701,27 +701,36 @@ upstream publication (a truncated zip, an HTML error page saved as `.zip`, a
 `stops.txt` with headers and no rows, a damaged deflate stream) is deleted at the
 stage file and the cached archive keeps serving, byte-untouched.
 
-Each loader carries two validators, and the asymmetry is the point. A **new
-publication** is checked with the full parse of every table the load reads,
-because promoting is irreversible: the archive it replaces is gone. A **cached
-archive** is checked with a lighter parse at load time, because that runs on every
-load and there is nothing behind it to protect anyway. A cached archive that fails
-its check is treated as absent, which forces a fresh staged download rather than
-serving garbage.
+**One rule in every loader** (the subway's since `claude/a02-publication-validation`,
+the other four's since `claude/static-rule-siblings`). The validator is the loader's
+own parser: each member the load reads is read at validation through the reader the
+load uses, so "valid" means "the load will read it", in the parser's own words when it
+will not. The cached check is the publication gate: the archive already on disk passes
+the same gate a new publication must, at every load, off the serving loop, and a cache
+that fails it is treated as absent and re-downloaded rather than served or parsed. A
+decorative member, one whose only reader degrades without it, takes the two-mode rule
+instead of the gate: the subway's `shapes.txt` and NJ Transit's `shapes.txt` (the
+route lines) and the railroads' `stop_times.txt` (the routes-per-station index). The
+residual arm, which discards a cache the load cannot read, is the backstop for bytes
+that changed after their check, never the first line. A cache is fresh while it is
+usable and younger than 30 days, and never when it is dated ahead of the clock.
 
-One member degrades rather than refuses: the subway's `shapes.txt`, which draws
-only the route lines. Its gate refuses a publication when a cached archive that
-serves is there to keep; with none (a cold start, which is every deploy, since the
-data directory does not persist) the publication is promoted, every station serves
-without lines, `static_archives.subway.degraded_members` names `shapes.txt` with the
-parser's reason, and `/healthz` carries `subway-lines-degraded`. Both stay until a
-later promotion whose geometry draws, which in production means the next deploy: a
-running process does not re-fetch an archive it has promoted, so a corrected upstream
-publication is picked up by redeploying, not by waiting. Whether a cache "serves" is
-the loader's own verdict on it at the start of that attempt, so the rule and the
-loader never disagree about the same file. The subway's other tables
-(stations, trips, calls, transfers, and the join the routes-per-station index is
-built from) refuse in every mode.
+**The two-mode rule.** A publication whose decorative member is present and does not
+draw (or index) is refused when a cached archive that serves is there to keep; with
+none (a cold start, which is every deploy, since the data directory does not persist)
+it is promoted, every station serves without what that member gave, and the archive's
+`static_archives` entry names the member under `degraded_members` with the parser's
+reason (for the subway `/healthz` also carries `subway-lines-degraded`). A railroad
+publication without `stop_times.txt`, or an NJ Transit one without `shapes.txt`, is
+promoted and named in either mode, since those loaders have always served one; the
+subway's absent `shapes.txt` takes the rule as a broken one does. The state stays
+until a later promotion whose member reads, which in production means the next
+deploy: a running process does not re-fetch an archive it has promoted, so a
+corrected upstream publication is picked up by redeploying, not by waiting. Whether a
+cache "serves" is the loader's own verdict on it at the start of that attempt, so the
+rule and the loader never disagree about the same file. Every other table (stations,
+trips, calls, transfers, routes, the service calendar, and the joins the indexes are
+built from) refuses in every mode.
 
 That makes one state deliberate and worth recognizing: a group can be `ready`
 while its archive is older than the 30-day refresh threshold. It is reachable
@@ -1032,7 +1041,10 @@ fetches every upstream source and the production deployment (`/api/status`,
 upstream with the **same** production functions the app runs (`feeds._decode_feed`,
 `_decode_railroad_feed`, `_decode_path_feed`, `_decode_alerts`, the
 `path_static` / `ferry_static` / `railroad_static` / `static_data` parsers), so a
-pass means the real code paths still work against today's data. Each check reports
+pass means the real code paths still work against today's data. Each static check
+also runs its loader's own publication gate over the archive it fetched and `FAIL`s
+on a refusal, in the gate's words: that is a publication the next deploy's cold start
+would not serve, so the mode would be off the map until upstream republishes. Each check reports
 `PASS`, `WARN`, or `FAIL`: `FAIL` means a human should look today, `WARN` is
 notable but expected in some conditions. Judgements are banded, not exact, and
 know which emptiness is normal (railroads run thin overnight, the ferry is closed

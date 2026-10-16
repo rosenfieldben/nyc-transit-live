@@ -69,6 +69,22 @@ class StaticValidationError(Exception):
         self.member = member
 
 
+def require_decoration(zf: zipfile.ZipFile, member: str) -> None:
+    """The decorative member must be present: its absence is a failure of the member's
+    gate like an unreadable one, named by member, which the two-mode rule degrades on a
+    cold start and refuses over a cache that draws.
+
+    THE SUBWAY'S BEHAVIOUR, FOR EVERY LOADER (the operator's ruling on
+    claude/static-rule-siblings, 2026-10-16). D3 had made absence degraded in both modes
+    for the railroad's stop_times.txt and NJ Transit's shapes.txt, on the ground that
+    both loaders serve a publication without the member; the rule is now that a
+    publication is promotable when nothing is lost, and one without the member over a
+    cache whose member draws loses the layer as surely as a damaged one. Over a cache
+    that is itself without it, nothing is lost, and it is promoted."""
+    if member not in set(zf.namelist()):
+        raise StaticValidationError(f"{member} is absent from the publication", member=member)
+
+
 # ---------------------------------------------------------------------------
 # Validator helpers. Loaders compose these; the pipeline never calls them itself.
 # ---------------------------------------------------------------------------
@@ -122,6 +138,119 @@ except ImportError:  # a build without liblzma, where zipfile cannot read such a
     pass
 
 
+# THE RESIDUAL ARM'S CLASSES, ONE TUPLE FOR ALL FIVE LOADERS (claude/static-rule-siblings,
+# D1). Each loader wraps its reads of the CACHED archive in an arm that discards the cache
+# on one of these and fails the attempt, so the next attempt downloads instead of failing
+# on the same bytes until MAX_AGE_DAYS. Reaching the arm means the cached check and the
+# load disagree about what is readable. Discarding is right in exactly that case: the file
+# IS the cache, nothing better sits behind it, and keeping it wedges every retry.
+#
+# THE ARCHIVE'S ERRORS ONLY, as the operator ruled on claude/a02-publication-validation:
+# the bytes do not decode, are not CSV, do not inflate (zlib.error, which the ferry's, the
+# PATH's and the railroad's own tuples lacked, so a damaged DEFLATE stream wedged them for
+# a month and, in the railroad, escaped _load_one and took both systems down through its
+# gather), are truncated (EOFError), fail a CRC (BadZipFile) or lack a member (KeyError).
+# OSError is not one: running out of file descriptors or a failing disk says nothing about
+# the archive, so such an error fails the attempt with the cache kept, and the warmup's
+# next rung reads it again. Five loaders kept five copies of this list and they drifted
+# apart (four of them in three different shapes); one tuple is what keeps them equal.
+#
+# NOT QUITE EVERY ARCHIVE ERROR, and why that no longer wedges anything: a member
+# compressed with bzip2 whose stream is damaged raises a plain OSError, one with lzma
+# raises LZMAError, and a bit-rotted central-directory offset raises OSError(EINVAL) on
+# every member read, errno and all, so no test on the class or the errno tells them from
+# the environment. They are caught one step earlier instead. Every loader's cached check
+# runs its PUBLICATION gate (D2 on the same branch), which reads every member the load
+# requires through read_or_refuse and under validate_archive's broad catch, so such a
+# cache is refused at the check, named by member, treated as absent and re-downloaded;
+# it never reaches a load. What reaches this arm is a cache that changed after its check.
+UNREADABLE_AT_LOAD: tuple[type[BaseException], ...] = (
+    UnicodeDecodeError,
+    csv.Error,
+    zipfile.BadZipFile,
+    zlib.error,
+    KeyError,
+    EOFError,
+)
+
+# WHAT READING ONE MEMBER IS KNOWN TO RAISE, the classes read_or_refuse names with the
+# reader's words: the archive's own (above) and the rest (_OTHER_READ_ERRORS: bzip2's
+# plain OSError, LZMAError, a method this build lacks, an encrypted member, EINVAL, and
+# the environment's OSError). NOT EVERYTHING: a zip64 header offset past 2**63 makes the
+# member's seek raise ValueError (OverflowError on BytesIO), found by the review of
+# claude/static-rule-siblings. read_or_refuse names whatever else a read raises by
+# type, and the DECORATIVE members' reads at load (the railroad's stop_times.txt, NJ
+# Transit's shapes.txt) degrade on any Exception, because the gate that promoted the
+# member with it degraded (validate_archive) catches any Exception too.
+UNREADABLE_MEMBER: tuple[type[BaseException], ...] = UNREADABLE_AT_LOAD + _OTHER_READ_ERRORS
+
+
+def read_or_refuse(parse: Callable[[], _Parsed], member: str) -> _Parsed:
+    """Run `parse`, a read of `member`, and return what it yields; whatever reading the
+    member raises becomes a StaticValidationError that NAMES it.
+
+    require_parsed is this plus a floor, and a gate that needs the parsed value rather
+    than a floor (NJ Transit's service calendar) calls this directly, so every member a
+    gate reads is refused under its own name with the same classes, never as "archive".
+
+    THE MESSAGE CARRIES THE READER'S OWN WORDS (A02, D7), because it is what an operator
+    reads on /api/status as last_download_error. The decode and CSV errors say what
+    ("'utf-8' codec can't decode byte 0xff"), and a damaged deflate stream or a CRC
+    mismatch inside the member says which member, which the archive-level catch in
+    validate_archive cannot. Not where: a decode error's "position" counts from the start
+    of the chunk the text reader was decoding, not from the start of the member, so in a
+    large member it does not locate the byte, and a csv.Error carries no line at all. All
+    of it is library text about the archive's bytes, never about our filesystem, so it is
+    safe to publish (describe_failure's rule).
+    """
+    try:
+        return parse()
+    except KeyError as exc:
+        raise StaticValidationError(f"missing required member(s): {member}", member=member) from exc
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise StaticValidationError(
+            f"{member} is not readable as CSV ({exc})", member=member
+        ) from exc
+    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__}: {exc})", member=member
+        ) from exc
+    except _OTHER_READ_ERRORS as exc:
+        # THE REST OF WHAT READING A MEMBER CAN RAISE, named by member so a degraded
+        # member is keyed by its name and not as "archive" (the A02 branch's review, F4):
+        # a bz2 stream the decompressor refuses (a plain OSError with no errno), an
+        # lzma one (LZMAError), a compression method this build lacks, an encrypted
+        # member, a bit-rotted central-directory offset (OSError(EINVAL) on every member
+        # read), and the environment (an OSError with an errno). The TYPE only, as
+        # validate_archive's broad catch does, because an OSError's text can carry a
+        # path of ours and this message is published.
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__})", member=member
+        ) from exc
+    except Exception as exc:
+        # ANYTHING ELSE, by type and under the member's name, so the refusal or the
+        # degraded member says which member rather than "archive": validate_archive would
+        # refuse it anyway (its catch is broad on purpose), only without the name. A zip64
+        # header offset past 2**63 is one such class (ValueError on the seek).
+        raise StaticValidationError(
+            f"{member} is not readable ({type(exc).__name__})", member=member
+        ) from exc
+
+
+def read_as_loaded(parse: Callable[[], _Parsed], member: str) -> _Parsed:
+    """read_or_refuse's twin for the LOAD: the same call shape, and the parser's own
+    errors let through, so the residual arm sees the classes it names.
+
+    A loader whose gate runs its whole parse (_parse_open) takes one of the two as its
+    `read`: the load passes this one, the gate passes read_or_refuse. So the gate and
+    the load run ONE sequence of reads through the loader's own parsers, and a failure
+    at the gate is refused under the member's own name rather than as "unreadable
+    archive (UnicodeDecodeError)", which named no member and was what the ferry's, the
+    PATH's and the railroad's gates said before claude/static-rule-siblings (D2)."""
+    del member  # the load's errors name nothing; the arm logs the exception itself
+    return parse()
+
+
 def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     """The member must parse, THROUGH THE LOADER'S OWN PARSER, to something usable.
 
@@ -143,45 +272,18 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     leave a gap exactly the width of "has rows, none of them usable", and a
     fresh-by-mtime archive sitting in that gap is the wedge R3 was written for.
 
-    The double parse is cheap for the tables most loaders gate here (stops.txt and
-    routes.txt, tens to low thousands of rows). It is not cheap for the subway, whose
-    validator parses every member its load reads, stop_times.txt included (A02).
+    The double parse is cheap for the small tables. It is not cheap for stop_times.txt,
+    which four loaders' gates parse now that the gate is also the cached check
+    (claude/static-rule-siblings, D2): the subway's since A02, PATH's, the ferry's and NJ
+    Transit's since D2. The railroad's publication gate leaves it out: since D3 the member
+    is decorative there, parsed by validate_railroad_stop_times at a download and at the
+    cached check of a usable cache (cached_archive_draws). What each costs is measured
+    per loader in the 2026-10-12 ledger.
 
-    THE MESSAGE NAMES THE MEMBER AND CARRIES THE READER'S OWN WORDS (A02, D7), because
-    it is what an operator reads on /api/status as last_download_error. The decode and
-    CSV errors say what ("'utf-8' codec can't decode byte 0xff"), and a damaged deflate
-    stream or a CRC mismatch inside the member says which member, which the
-    archive-level catch in validate_archive cannot. Not where: a decode error's
-    "position" counts from the start of the chunk the text reader was decoding, not
-    from the start of the member, so in a large member it does not locate the byte,
-    and a csv.Error carries no line at all. All of it is
-    library text about the archive's bytes, never about our filesystem, so it is safe
-    to publish (describe_failure's rule).
+    A read that fails is refused through read_or_refuse, by member and in the reader's
+    own words.
     """
-    try:
-        parsed = parse()
-    except KeyError as exc:
-        raise StaticValidationError(f"missing required member(s): {member}", member=member) from exc
-    except (UnicodeDecodeError, csv.Error) as exc:
-        raise StaticValidationError(
-            f"{member} is not readable as CSV ({exc})", member=member
-        ) from exc
-    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
-        raise StaticValidationError(
-            f"{member} is not readable ({type(exc).__name__}: {exc})", member=member
-        ) from exc
-    except _OTHER_READ_ERRORS as exc:
-        # THE REST OF WHAT READING A MEMBER CAN RAISE, named by member so a degraded
-        # member is keyed by its name and not as "archive" (the branch's review, F4):
-        # a bz2 stream the decompressor refuses (a plain OSError with no errno), an
-        # lzma one (LZMAError), a compression method this build lacks, an encrypted
-        # member, and the environment (an OSError with an errno). The TYPE only, as
-        # validate_archive's broad catch does, because an OSError's text can carry a
-        # path of ours and this message is published.
-        raise StaticValidationError(
-            f"{member} is not readable ({type(exc).__name__})", member=member
-        ) from exc
-    if not parsed:
+    if not read_or_refuse(parse, member):
         raise StaticValidationError(f"{member} yielded no usable {what}", member=member)
 
 
@@ -253,6 +355,38 @@ def cached_archive_is_valid(path: Path, validate: Callable[[zipfile.ZipFile], No
     return True
 
 
+async def cached_archive_draws(
+    path: Path, gate: Callable[[zipfile.ZipFile], None], *, key: str
+) -> bool:
+    """Does the cache at `path`, which the loader has already called usable, pass the
+    DECORATIVE gate (`gate`, the one the loader hands staged_fetch as
+    validate_when_replacing)? Decided off the serving loop, and recorded.
+
+    THE MODE OF THE TWO-MODE RULE IS THE CACHE'S OWN VERDICT AGAINST THE GATE THAT
+    DECIDES IT (the operator's ruling on claude/static-rule-siblings, 2026-10-16). It had
+    been the always-gate's, which does not open the decorative member, so a cache promoted
+    without its lines or index still "served": an equally broken publication was refused
+    over it, and a stale one was downloaded again at every start. Now the loader runs both
+    gates at its cached check, once per attempt, and hands this verdict to staged_fetch as
+    cache_serves: a cache that draws (or indexes) keeps its layer against a broken
+    publication, and one that does not is replaced by any publication the always-gate
+    passes, still degraded if that one is too.
+
+    RECORDED: a failure is written under `key`'s degraded_members, so /api/status says what
+    the cache serves without, a start over a volume that persisted included, until a
+    promotion replaces the entry. A cache that draws clears an existing entry's members and
+    creates no entry of its own. An environment fault while the gate reads the cache reads
+    as "does not draw", as the always-gate's reads as "no cache"."""
+    try:
+        await asyncio.to_thread(validate_archive, path, gate)
+    except StaticValidationError as exc:
+        _record_degraded(key, {exc.member or "archive": str(exc)})
+        return False
+    if key in _ARCHIVE_STATUS:
+        _ARCHIVE_STATUS[key]["degraded_members"] = {}
+    return True
+
+
 async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> bool:
     """Is there a cached archive at `path` we can serve from? Decided OFF the serving loop.
 
@@ -267,6 +401,29 @@ async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFi
     if not path.exists():
         return False
     return await asyncio.to_thread(cached_archive_is_valid, path, validate)
+
+
+def cache_is_fresh(path: Path, *, usable: bool, max_age_days: float) -> bool:
+    """Is the cache at `path` fresh: usable, and written no more than `max_age_days` ago
+    and not in the future? The one freshness test every static loader and the bus route
+    index run (claude/static-rule-siblings, D4), so a loader added later cannot drift.
+
+    THE FLOOR AT ZERO AGE. Age is now minus the file's mtime. An mtime ahead of the
+    clock (the host clock stepped back after a promotion, a file restored with its
+    times) gives a negative age, which `age < MAX_AGE_DAYS` alone called fresh, so such
+    a cache was never re-fetched until real time caught up with it. Here it is stale,
+    and the download that replaces it is stamped with the clock as it now reads.
+
+    THE CLOCK IS READ HERE, AT THE CALL, through time.time: never captured in a default
+    or passed in, so whatever moves time.time (a test, an audit script's virtual clock)
+    moves this. NJ Transit's `now` is its service-date guard's clock, not this one.
+
+    `usable` comes first and short-circuits, so a cache the check refused, or one that
+    is not there, is never stat'ed."""
+    if not usable:
+        return False
+    age = time.time() - path.stat().st_mtime
+    return 0 <= age < max_age_days * 86400
 
 
 # ---------------------------------------------------------------------------
@@ -296,14 +453,8 @@ def reset_archive_status() -> None:
     _ARCHIVE_STATUS.clear()
 
 
-def _record(
-    key: str,
-    *,
-    promoted: bool,
-    error: str | None = None,
-    degraded: dict[str, str] | None = None,
-) -> None:
-    entry = _ARCHIVE_STATUS.setdefault(
+def _entry(key: str) -> dict:
+    return _ARCHIVE_STATUS.setdefault(
         key,
         {
             "last_promoted_at": None,
@@ -312,6 +463,22 @@ def _record(
             "degraded_members": {},
         },
     )
+
+
+def _record_degraded(key: str, degraded: dict[str, str]) -> None:
+    """What the cache being served lacks, found by its own decorative gate at the cached
+    check (cached_archive_draws); the download fields are left as they are."""
+    _entry(key)["degraded_members"] = dict(degraded)
+
+
+def _record(
+    key: str,
+    *,
+    promoted: bool,
+    error: str | None = None,
+    degraded: dict[str, str] | None = None,
+) -> None:
+    entry = _entry(key)
     if promoted:
         entry["last_promoted_at"] = time.time()
         # A promotion clears the error: the operator question these fields answer
@@ -422,30 +589,38 @@ async def staged_fetch(
     a rejection). `validate_when_replacing` is for what is DECORATIVE (the subway's
     route lines): it runs on every publication, and what its failure does depends on
     what the publication would replace.
-      - A cache that passes `validate` is there: the publication is refused and the
-        cache keeps serving, exactly as an always-gate failure would be. Bad geometry
-        never replaces geometry that draws (2026-09-05's F08).
-      - No such cache (a cold start, which on this deployment is every deploy: the
-        data directory does not persist, confirmed against production's promotion
-        stamps of 2026-10-13): the publication is promoted, and the failure is
-        recorded on the archive's status as a degraded member with the parser's
-        reason, published on /api/status. Refusing it would trade every station for
-        the lines, and the loader of the decorative layer degrades to nothing as it
-        always has.
-    NJ Transit passes nothing here: its shapes.txt is outside every gate and degrades
-    in its loader (15c).
+      - A cache that DRAWS is there (it passes `validate` and `validate_when_replacing`
+        both): the publication is refused and the cache keeps serving, exactly as an
+        always-gate failure would be. Bad geometry never replaces geometry the
+        cache's own check found drawing (2026-09-05's F08); a fault on that check
+        reads as "does not draw" (cached_archive_draws), so a fault costs the
+        layer, never the stations.
+      - No such cache: none at all (a cold start, which on this deployment is every
+        deploy: the data directory does not persist, confirmed against production's
+        promotion stamps of 2026-10-13), or one that is itself without the layer. The
+        publication is promoted, since nothing is lost, and the failure is recorded on
+        the archive's status as a degraded member with the parser's reason, published on
+        /api/status. Refusing it would trade every station for the lines, or keep a
+        cache no better than the publication, and the loader of the decorative layer
+        degrades to nothing as it always has.
+    THE SIBLINGS' DECORATIVE MEMBERS take the same rule since claude/static-rule-siblings
+    (D3): the railroad's stop_times.txt (the routes-per-station index) and NJ Transit's
+    shapes.txt (its route lines, where 15c had promoted any publication without usable
+    geometry). An absent member is a gate failure like an unreadable one, as the
+    subway's always was (require_decoration).
 
     WHOSE VERDICT DECIDES THE MODE: the caller's, when it has one. `cache_serves` is
-    what the loader concluded about `dest` with `validate` at the start of this attempt
-    (cached_archive_is_usable), and the subway passes it, so the mode and the loader
-    cannot disagree about the same cache in the same attempt. The branch's review found
-    what a second, independent read here did: a fault while re-reading a cache that
-    serves promoted geometry that draws nothing over lines that draw, and an attempt to
-    tell the environment's faults from the bytes' by errno called "keep" a cache the
-    loader had already called unusable, so the publication was refused, the loader
-    raised and no station served (a bit-rotted end-of-central-directory offset raises
-    OSError(EINVAL), with an errno, from the bytes). Without a verdict (None) the cache
-    is read here with cached_archive_is_usable, the check every loader makes.
+    what the loader concluded about `dest` at the start of this attempt with BOTH gates
+    (cached_archive_is_usable, then cached_archive_draws: the operator's ruling of
+    2026-10-16), so the mode and the loader cannot disagree about the same cache in the
+    same attempt. The A02 branch's review found what a second, independent read here
+    did: a fault while re-reading a cache that serves promoted geometry that draws
+    nothing over lines that draw, and an attempt to tell the environment's faults from
+    the bytes' by errno called "keep" a cache the loader had already called unusable,
+    so the publication was refused, the loader raised and no station served (a
+    bit-rotted end-of-central-directory offset raises OSError(EINVAL), with an errno,
+    from the bytes). Without a verdict (None) the cache is read here with both gates,
+    as every loader reads it.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     for orphan in dest.parent.glob(f"{dest.stem}.*.part"):
@@ -474,13 +649,15 @@ async def staged_fetch(
                 await asyncio.to_thread(validate_archive, stage, validate_when_replacing)
             except StaticValidationError as exc:
                 if cache_serves is None:
-                    cache_serves = await cached_archive_is_usable(dest, validate)
+                    cache_serves = await cached_archive_is_usable(
+                        dest, validate
+                    ) and await cached_archive_is_usable(dest, validate_when_replacing)
                 if cache_serves:
-                    raise  # a cache that serves is there: refuse, as above
+                    raise  # a cache that draws is there: refuse, as above
                 degraded[exc.member or "archive"] = str(exc)
                 logger.warning(
                     "Promoting %s publication with a degraded member (%s): there is no "
-                    "cached archive at %s to keep",
+                    "cached archive at %s whose member draws to keep",
                     label,
                     exc,
                     dest,

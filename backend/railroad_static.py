@@ -16,7 +16,6 @@ import asyncio
 import csv
 import io
 import logging
-import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -25,7 +24,13 @@ import env_seams
 import route_geometry
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
+    cache_is_fresh,
+    cached_archive_draws,
     cached_archive_is_usable,
+    read_as_loaded,
+    read_or_refuse,
+    require_decoration,
     require_members,
     require_parsed,
     staged_fetch,
@@ -61,17 +66,26 @@ MAX_AGE_DAYS = 30
 # lines, routes name them. stop_times.txt is excluded on purpose even though the
 # load reads it: it feeds only the routes-per-station index (H5, popup
 # enrichment), whose absence already yields an empty index, so requiring it would
-# turn a small degradation into a whole system missing from the map.
+# turn a small degradation into a whole system missing from the map. It has a gate
+# of its own, validate_railroad_stop_times, with the two-mode rule that goes with
+# being decorative (claude/static-rule-siblings, D3; see it).
 _REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt")
 
 
 def validate_railroad_archive(zf: zipfile.ZipFile) -> None:
-    """Can we serve one railroad system from this archive? Raises on no.
+    """The first stage of validate_railroad_publication: the members, and the two tables
+    whose emptiness is the failure (stops and routes). Raises StaticValidationError.
+
+    It used to be the cached check on its own (the "light" validator), which left every
+    other member the load reads checked for presence only; since
+    claude/static-rule-siblings (D2) the cached check runs the whole publication gate,
+    and this is only its cheap first half, run first so a missing member or an empty
+    stops table is reported before the expensive parse.
 
     Deliberately STRICTER than _parse_system, which treats routes.txt as optional
-    at parse time. That leniency is about surviving an already-cached archive;
-    this is about whether to accept a NEW publication, and a publication missing
-    its route names is a broken one worth rejecting while the previous archive
+    at parse time. That leniency is about the parser's own tests and hand-built zips;
+    this decides whether an archive may be served from at all, and a publication
+    missing its route names is a broken one worth rejecting while the previous archive
     still serves.
     """
     require_members(zf, _REQUIRED_MEMBERS)
@@ -83,35 +97,103 @@ def validate_railroad_archive(zf: zipfile.ZipFile) -> None:
 
 
 def validate_railroad_publication(zf: zipfile.ZipFile) -> None:
-    """The gate a NEW archive must pass before it may replace the cached one.
+    """THE GATE: a new archive must pass it before it may replace the cached one, and
+    the cached one must pass it to be served (claude/static-rule-siblings, D2).
 
-    Strictly stronger than validate_railroad_archive, and the difference is the
-    whole point: it runs the REAL parse of every table the load reads, so an
-    archive that would fail the load can never be promoted over a working one.
+    It runs the REAL parse of every table the load reads and cannot degrade around, so
+    "the gate passed" means "the load will read every member it requires"; the one it
+    reads and degrades around, stop_times.txt, has a gate of its own with the two-mode
+    rule (validate_railroad_stop_times, D3), and the load reads it around any failure.
+    A publication with clean stops.txt
+    and routes.txt but, say, an undecodable byte in trips.txt used to pass the first
+    stage, be renamed over the last-known-good, and then be deleted by _load_one's
+    residual arm: one bad publication, both archives gone. The cached check had the
+    same hole from the other side until D2: it ran the first stage alone, so a cache
+    that rotted in trips.txt or shapes.txt was "usable" and failed every load until
+    MAX_AGE_DAYS.
 
-    Without this the pipeline had a hole exactly the shape of the bug it exists to
-    fix. A publication with clean stops.txt and routes.txt but, say, an
-    undecodable byte in trips.txt passed the light validator, was renamed over the
-    last-known-good, and was then deleted by _load_one's residual arm: one bad
-    publication, and both the new archive and the good one it replaced were gone.
-    Running the full parse BEFORE the rename closes it.
-
-    The cost lands where it belongs. This runs once per download attempt, while
-    the light validator runs on every load, so the expensive tables are parsed
-    twice only when something is actually being published.
+    What it costs, measured by backend/scripts/measure_static_gates.py on the
+    publications of 2026-10-14 (LIRR) and 2026-10-15 (Metro-North): 599 ms and 514 ms
+    (medians of five), against about 1 ms for the first stage alone. It runs off the
+    serving loop (static_shared.cached_archive_is_usable), at each process start and
+    when the cache is re-checked, one system per thread. With stop_times.txt in it, as
+    D2 first had it, Metro-North's took 1,894 ms; that member now costs its own gate
+    (validate_railroad_stop_times), at a download and at the cached check of a usable
+    cache.
     """
     validate_railroad_archive(zf)
-    _parse_open(zf)
+    _parse_required(zf, read=read_or_refuse)
 
 
-async def _download_zip(system: str) -> None:
-    """Stage, validate, then promote one system's archive (see static_shared)."""
+def validate_railroad_stop_times(zf: zipfile.ZipFile) -> None:
+    """Can the routes-per-station index be built from this archive? Raises
+    StaticValidationError if not. DECORATIVE (claude/static-rule-siblings, D3), so
+    handed to staged_fetch as `validate_when_replacing`: the subway's two-mode rule for
+    its route lines, applied to the one member this loader reads and degrades around.
+
+      - Present and unreadable, reading to no stop times, or indexing nothing, through
+        the load's own reader (_parse_stop_times) and the index's own join
+        (derive_railroad_stop_routes: no stop time whose trip names a route in
+        trips.txt, as when its trip_ids are foreign or its route_ids blank): refused
+        when a cache whose own index builds is there to keep, and otherwise (a cold
+        start, which is every deploy, or a cache that is itself without an index)
+        promoted with stop_times.txt named under degraded_members on /api/status, the
+        system served without the index. Before D3 the publication gate parsed it
+        strictly, so such a publication was refused in both modes and a cold start left
+        the system off the map entirely.
+      - Absent: a failure like any other, refused over an index that builds and
+        degraded on a cold start (the operator's ruling of 2026-10-16, the subway's
+        behaviour). D3 had degraded it in both modes, because this loader has always
+        served a publication without the member; the rule it refines to is that a
+        publication is promotable when nothing is lost.
+
+    THE JOIN, not only the rows (the review of claude/static-rule-siblings): a table that
+    parses and joins nothing builds an empty index as surely as a damaged one, and NJ
+    Transit's geometry gate and the subway's always-gate already ask what their builders
+    build.
+
+    THE MODE IS THE CACHE'S OWN VERDICT AGAINST THIS GATE (the operator's ruling of
+    2026-10-16): _load_one asks it of a usable cache at the cached check
+    (static_shared.cached_archive_draws) and hands staged_fetch the answer. So a cache
+    promoted without an index is no cache to keep, and a newer publication replaces it
+    whether or not its own index builds; and the cache's failure is recorded under
+    degraded_members at every start, including a later one over a volume that persisted.
+    Before the ruling the mode was the publication gate's verdict, which does not open
+    this member, so such a cache "served", an equally broken publication was refused
+    over it, and the stale cache was downloaded again at every start.
+
+    The load reads it through _read_stop_times, which degrades on any read failure, so
+    a promoted archive whose member cannot be read serves every station and train
+    rather than reaching the residual arm.
+
+    It runs at a download and, since the ruling, at the cached check of a usable cache:
+    58 ms on LIRR's publication of 2026-10-14 and 1,448 ms on Metro-North's of
+    2026-10-15, whose stop_times.txt is 470,274 rows (measure_static_gates.py, medians
+    of five, with the join), in a worker thread either way. A deploy starts cold, with
+    no cache to check."""
+    require_decoration(zf, "stop_times.txt")
+    stop_times = read_or_refuse(lambda: _parse_stop_times(zf), "stop_times.txt")
+    require_parsed(lambda: stop_times, "stop_times.txt", "stop times")
+    trips = read_or_refuse(lambda: _parse_trips(zf), "trips.txt")
+    require_parsed(
+        lambda: derive_railroad_stop_routes(trips, stop_times),
+        "stop_times.txt",
+        "routes-per-station index (a stop time whose trip names a route in trips.txt)",
+    )
+
+
+async def _download_zip(system: str, *, cache_serves: bool | None = None) -> None:
+    """Stage, validate, then promote one system's archive (see static_shared). The
+    stop_times.txt gate takes the two-mode rule, whose mode is `cache_serves`: the
+    loader's own verdict on this system's cache, so the two cannot disagree."""
     await staged_fetch(
         RAILROAD_STATIC_URLS[system],
         RAILROAD_STATIC_ZIPS[system],
         validate_railroad_publication,
         key=f"railroad_{system}",
         label=f"{system} static GTFS",
+        validate_when_replacing=validate_railroad_stop_times,
+        cache_serves=cache_serves,
     )
 
 
@@ -259,7 +341,10 @@ def _parse_stop_times(zf: zipfile.ZipFile) -> dict[str, list[str]]:
     unsorted. Railroad stop_ids are flat (no parent/child split), so these join
     straight to the stop markers. Treated as OPTIONAL, like routes.txt: a
     repackaged zip without it yields an empty table so the system still loads
-    (the index just comes up empty), rather than failing the whole load."""
+    (the index just comes up empty), rather than failing the whole load.
+
+    THE ONE READER OF stop_times.txt: the decorative gate (validate_railroad_stop_times)
+    asks it for a nonempty table, and the load reads it through _read_stop_times."""
     trip_stops: dict[str, list[str]] = defaultdict(list)
     try:
         member = zf.open("stop_times.txt")
@@ -274,6 +359,30 @@ def _parse_stop_times(zf: zipfile.ZipFile) -> dict[str, list[str]]:
                 continue
             trip_stops[trip_id].append(stop_id)
     return dict(trip_stops)
+
+
+def _read_stop_times(zf: zipfile.ZipFile, label: str = "railroad") -> dict[str, list[str]]:
+    """The LOAD's read of the decorative member: _parse_stop_times, degrading to an empty
+    index on any Exception, logged, never failing the system. A publication whose
+    stop_times.txt cannot be read is promoted on a cold start (validate_railroad_stop_times),
+    so its load must read around the member; inside the residual arm it would discard
+    the archive it was just given and drop the system. Nothing is discarded here, which
+    is also why the environment's faults may degrade it.
+
+    ANY EXCEPTION, not a list, because the gate that promoted the member degraded catches
+    any (static_shared.validate_archive): a class this arm missed would raise out of
+    _load_one, past its residual arm, and take both railroads down through the gather
+    for the cache's life (a zip64 header offset past 2**63 raises ValueError; the review
+    of claude/static-rule-siblings)."""
+    try:
+        return _parse_stop_times(zf)
+    except Exception as exc:
+        logger.warning(
+            "%s stop_times.txt is unreadable (%s); serving without the routes-per-station index",
+            label,
+            type(exc).__name__ if isinstance(exc, OSError) else exc,
+        )
+        return {}
 
 
 def derive_railroad_stop_routes(
@@ -298,19 +407,29 @@ def _parse_system(zip_path: Path) -> dict:
     already here, and a parser that tolerates a missing optional member stays
     usable by the tests that feed it hand-built zips."""
     with zipfile.ZipFile(zip_path) as zf:
-        return _parse_open(zf)
+        return _parse_open(zf, zip_path.stem)
 
 
-def _parse_open(zf: zipfile.ZipFile) -> dict:
-    """The parse itself, over an already-open archive, so validate_railroad_publication
-    can run the REAL load against a staged file that has no cache path yet."""
+def _parse_required(zf: zipfile.ZipFile, read=read_as_loaded) -> dict:
+    """The parse of every member the load reads and cannot degrade around, over an
+    already-open archive, so validate_railroad_publication can run the REAL load against
+    a staged file that has no cache path yet.
+
+    `read` takes each member's read: the load's default lets a parser's error through
+    to the residual arm, and the gate passes static_shared.read_or_refuse, which refuses
+    it under the member's name. One sequence of reads for both (D2)."""
     return {
-        "stops": _parse_stops(zf),
-        "trips": _parse_trips(zf),
-        "shapes": _parse_shapes(zf),
-        "routes": _parse_routes(zf),
-        "stop_times": _parse_stop_times(zf),
+        "stops": read(lambda: _parse_stops(zf), "stops.txt"),
+        "trips": read(lambda: _parse_trips(zf), "trips.txt"),
+        "shapes": read(lambda: _parse_shapes(zf), "shapes.txt"),
+        "routes": read(lambda: _parse_routes(zf), "routes.txt"),
     }
+
+
+def _parse_open(zf: zipfile.ZipFile, label: str = "railroad") -> dict:
+    """The load's parse: the required members, then the decorative stop_times.txt,
+    which degrades to an empty index rather than failing the system (D3)."""
+    return {**_parse_required(zf), "stop_times": _read_stop_times(zf, label)}
 
 
 def build_railroad_route_shapes(
@@ -368,10 +487,22 @@ def build_railroad_route_shapes(
 
 
 async def _load_one(system: str) -> dict | None:
-    """Ensure/refresh one system's zip and parse it, or None on any failure.
+    """Ensure/refresh one system's zip and parse it, or None when its archive fails.
 
-    Lenient by design: a download or parse failure for this system logs and
-    returns None rather than raising, so one system can never block the other.
+    Lenient by design: a failed download, or a cached archive this system cannot read,
+    logs and returns None rather than raising, so one system's archive can never take
+    the other down through load_railroad_static's gather. The archive's errors are
+    static_shared.UNREADABLE_AT_LOAD, the residual arm every loader shares; before
+    claude/static-rule-siblings this arm named four of them, and a damaged DEFLATE
+    stream in a cached member (zlib.error) escaped it and failed LIRR and Metro-North
+    together.
+
+    AN ENVIRONMENT FAULT IS RAISED, NOT RETURNED AS None (the operator's ruling on
+    claude/a02-publication-validation, kept here): an OSError while reading a cache
+    says nothing about the archive, so the cache is kept and the attempt fails for both
+    systems, and the warmup's next rung reads both caches again. Returning None for it
+    would be worse, not kinder: a partial result reaches ready and the missing system is
+    never retried (F06, A05), so one EMFILE would drop a system until the next deploy.
     """
     zip_path = RAILROAD_STATIC_ZIPS[system]
     # FRESH NOW MEANS VALID AND RECENT (C5). R3's invalidate-on-empty-parse lived
@@ -381,11 +512,25 @@ async def _load_one(system: str) -> dict | None:
     # the general rule from two directions: validate_railroad_archive refuses to
     # promote such a publication at all, and cached_archive_is_valid rejects one
     # already on disk before it is parsed, so the retry re-fetches by itself.
-    usable = await cached_archive_is_usable(zip_path, validate_railroad_archive)
-    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # THE CACHED CHECK IS THE PUBLICATION GATE (D2), so "usable" means the load will
+    # read every member it opens, and a cache that rotted anywhere the load reads is
+    # treated as absent and re-downloaded rather than failing every attempt.
+    usable = await cached_archive_is_usable(zip_path, validate_railroad_publication)
+    # AND ITS INDEX, against the gate that decides the two-mode rule's mode (the
+    # operator's ruling of 2026-10-16): a usable cache whose stop_times.txt builds no
+    # index (rotted, absent, joining nothing) is recorded degraded here, and is no cache
+    # to keep against a publication that is no worse.
+    indexes = usable and await cached_archive_draws(
+        zip_path, validate_railroad_stop_times, key=f"railroad_{system}"
+    )
+    fresh = cache_is_fresh(zip_path, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
-            await _download_zip(system)
+            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache whose
+            # index builds keeps it through a bad stop_times.txt, and one whose index does
+            # not (or no usable cache at all) is no cache to keep, whatever a second read
+            # would say.
+            await _download_zip(system, cache_serves=indexes)
         except Exception as exc:
             if not usable:
                 logger.warning("%s static GTFS download failed (%s); no cached copy", system, exc)
@@ -399,15 +544,14 @@ async def _load_one(system: str) -> dict | None:
             )
     try:
         data = _parse_system(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
-        # The residual below the CACHED-archive validator, which is lighter than the
-        # one every publication passes. Reaching here means the bytes on disk were
-        # fully parseable when they were promoted and are not now (rot, a truncated
-        # write) or predate C5 entirely. Unlink is right in exactly that case and
-        # only that case: this file IS the cache, nothing better sits behind it, and
-        # keeping it would wedge every retry on the same bytes. A freshly promoted
-        # archive cannot land here, because validate_railroad_publication ran this
-        # same parse before the rename.
+    except UNREADABLE_AT_LOAD as exc:
+        # THE RESIDUAL ARM, the backstop below a check that already parsed this same
+        # archive with this same parse (validate_railroad_publication, at the cached
+        # check and before any promotion). Reaching here means the bytes changed after
+        # the check (rot, a torn write). Unlink is right in exactly that case: this
+        # file IS the cache, nothing better sits behind it, and keeping it would wedge
+        # every retry on the same bytes. The classes are the ones every loader shares
+        # (static_shared.UNREADABLE_AT_LOAD); see the docstring for what is raised.
         logger.warning("Cached %s static GTFS is unparseable (%s); discarding", system, exc)
         zip_path.unlink(missing_ok=True)
         return None
@@ -430,8 +574,10 @@ async def load_railroad_static() -> dict[str, dict | None]:
     for one leaves it None without raising or affecting the other, so this never
     raises on a single-system failure even though placement consumes it. The
     systems load concurrently to keep cold-start under the healthcheck window;
-    _load_one swallows its own exceptions and returns None, so a plain gather
-    (no return_exceptions) preserves the per-system None semantics.
+    _load_one turns its own archive's failures into None, so a plain gather (no
+    return_exceptions) preserves the per-system None semantics. What it raises is an
+    environment fault, which fails the attempt for both systems on purpose (see
+    _load_one): the warmup retries it with both caches kept.
 
     NOTE the caller now reads the AGGREGATE (warmups._warm_railroad_static, R3): a
     result where EVERY system came back unusable (None, or parsed but carrying no

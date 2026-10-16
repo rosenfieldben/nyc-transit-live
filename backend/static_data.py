@@ -6,9 +6,7 @@ import csv
 import io
 import logging
 import re
-import time
 import zipfile
-import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -17,7 +15,10 @@ from typing import IO
 import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
+    UNREADABLE_AT_LOAD,
     StaticValidationError,
+    cache_is_fresh,
+    cached_archive_draws,
     cached_archive_is_usable,
     parse_member,
     require_members,
@@ -224,10 +225,13 @@ def _first_station_route(zf: zipfile.ZipFile) -> tuple[str, str] | None:
 def validate_subway_geometry(zf: zipfile.ZipFile) -> None:
     """Can the route lines be drawn from this archive? Raises StaticValidationError if
     not. DECORATIVE, so handed to staged_fetch as `validate_when_replacing`: a failure
-    refuses the publication only when a cache that passes validate_subway_archive is
-    there to keep serving, and otherwise the publication is promoted with shapes.txt
-    named as a degraded member on /api/status (static_shared.staged_fetch, the two-mode
-    rule; 2026-09-05's F08 is the first mode, a cold start the second).
+    refuses the publication only when a cache whose own lines draw is there to keep (it
+    passes validate_subway_archive and this gate, both asked at the cached check since
+    the operator's ruling of 2026-10-16), and otherwise the publication is promoted with
+    shapes.txt named as a degraded member on /api/status (static_shared.staged_fetch,
+    the two-mode rule; 2026-09-05's F08 is the first mode, a cold start or a cache
+    without lines the second). An absent shapes.txt is a failure like any other, the
+    behaviour every loader's decorative gate now shares.
 
     shapes.txt is read whole through _iter_shape_points, the one reader the route-shapes
     loader uses, and must yield at least one drawable shape: two points of one shape
@@ -263,36 +267,25 @@ def _drained(zf: zipfile.ZipFile, member: str, rows: Callable[[IO[bytes]], Itera
     return parse_member(zf, member, lambda raw: sum(1 for _ in rows(raw)))
 
 
-# THE RESIDUAL ARM (A02, decision D3), the NJ Transit loader's, for the subway.
+# THE RESIDUAL ARM (A02, decision D3), the NJ Transit loader's, for the subway, and since
+# claude/static-rule-siblings the one all five loaders share: its classes and why OSError
+# is not among them are at static_shared.UNREADABLE_AT_LOAD.
 #
-# The parse-class errors reading an archive can raise. One of them out of a load over
-# an archive the validator accepted means the two disagree about what is readable,
-# which they have done three times before (MR2's F1, F08, A02): the cache answers
-# "valid and fresh" at every attempt while every attempt fails, until MAX_AGE_DAYS.
-# Discarding is right in exactly this case: this file IS the cache, nothing better
-# sits behind it (a previous archive was replaced when this one was promoted), and
-# keeping it wedges every retry on the same bytes. With the file gone the next attempt
-# downloads. The validator parses every member the load reads, so nothing should reach
-# this arm; it is here because a backstop that is never reached costs less than a
-# month of a failed subway static group.
+# One of them out of a load over an archive the validator accepted means the two disagree
+# about what is readable, which they have done three times before (MR2's F1, F08, A02):
+# the cache answers "valid and fresh" at every attempt while every attempt fails, until
+# MAX_AGE_DAYS. The validator parses every member the load reads, so nothing should reach
+# this arm except a cache that changed after it was checked; it is here because a
+# backstop that is never reached costs less than a month of a failed subway static group.
 #
-# THE ARCHIVE'S ERRORS ONLY, NOT THE ENVIRONMENT'S (the operator's ruling on the
-# branch's review). Every class here says something about the bytes: they do not
-# decode, are not CSV, do not inflate, are truncated, or lack a member. OSError is not
-# one of them: running out of file descriptors or a failing disk says nothing about the
-# archive, and discarding a good cache over it turned a transient fault into a failed
-# group whenever upstream was down at the same moment. Such an error now fails the
-# attempt with the cache kept, and the next attempt reads it again.
-#
-# NOT QUITE EVERY ARCHIVE ERROR, as the branch's review measured: a member compressed
-# with bzip2 whose stream is damaged raises a plain OSError, one with lzma raises
-# LZMAError, and a bit-rotted central-directory offset raises OSError(EINVAL), errno and
-# all, none of them caught here. For the subway that is moot: the
-# cached check runs validate_subway_archive under validate_archive's broad catch, and it
-# reads every member the reads wrapped here read, so such a cache is refused before any
-# load (shapes.txt is not one of them, and its loader degrades on any exception). The
-# ledger's live list carries it for NJ Transit, where it is not moot.
-_UNREADABLE = (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, zlib.error, KeyError, EOFError)
+# NOT QUITE EVERY ARCHIVE ERROR: a member compressed with bzip2 whose stream is damaged
+# raises a plain OSError, one with lzma raises LZMAError, and a bit-rotted
+# central-directory offset raises OSError(EINVAL), errno and all, none of them caught
+# here. For the subway that is moot: the cached check runs validate_subway_archive under
+# validate_archive's broad catch, and it reads every member the reads wrapped here read,
+# so such a cache is refused before any load (shapes.txt is not one of them, and its
+# loader degrades on any exception).
+_UNREADABLE = UNREADABLE_AT_LOAD
 
 
 @contextmanager
@@ -400,13 +393,21 @@ async def load_subway_stops() -> dict[str, dict]:
     # This replaces the old parse-then-recover arm below it: nothing can reach the
     # parse except an archive that already passed the same gates.
     usable = await cached_archive_is_usable(SUBWAY_GTFS_ZIP, validate_subway_archive)
-    fresh = usable and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # AND ITS LINES, against the gate that decides the two-mode rule's mode (the
+    # operator's ruling of 2026-10-16): a usable cache whose geometry draws nothing is
+    # recorded degraded here, and is no cache to keep against a publication that is
+    # no worse.
+    draws = usable and await cached_archive_draws(
+        SUBWAY_GTFS_ZIP, validate_subway_geometry, key="subway"
+    )
+    fresh = cache_is_fresh(SUBWAY_GTFS_ZIP, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
             # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache
-            # this check called usable keeps serving through bad geometry, and one it
-            # called unusable is no cache to keep, whatever a second read would say.
-            await _download_zip(cache_serves=usable)
+            # whose lines draw keeps them through bad geometry, and one whose lines do
+            # not (or no usable cache at all) is no cache to keep, whatever a second
+            # read would say.
+            await _download_zip(cache_serves=draws)
         except Exception as exc:
             if not usable:
                 # No valid cache AND a failing download: failed-and-retrying, never
@@ -502,8 +503,9 @@ def load_subway_route_shapes() -> list[dict]:
     after load_subway_stops succeeds). Route lines are decorative, so any
     parse problem logs and returns [] rather than raising. That arm is reached
     two ways: a cache that changed after it was checked, and, by design, an
-    archive promoted on a cold start with shapes.txt failing
-    validate_subway_geometry, which /api/status names as a degraded member.
+    archive promoted with shapes.txt failing validate_subway_geometry, on a cold
+    start or over a cache whose own lines did not draw (the operator's ruling of
+    2026-10-16), which /api/status names as a degraded member.
     """
     try:
         shapes: dict[str, list] = defaultdict(list)

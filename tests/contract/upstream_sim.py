@@ -914,12 +914,13 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
         # 15c: the archive with no shapes.txt. It is here rather than in the NJT
         # branch alone because the same drop means DIFFERENT THINGS per loader, and
         # being able to say both is the point: NJ Transit treats shapes.txt as
-        # optional (route lines are additive, so the group still reaches ready and
-        # serves an empty /api/njt-routes), while PATH and the ferry both list it
-        # among the members they READ and cannot degrade around, so for them this is
-        # a missing REQUIRED member and the load fails. A member set that has no
-        # shapes.txt at all gets a body identical to "good", which is honest: there
-        # is nothing to drop.
+        # decorative (route lines are additive, so on a cold start the group still
+        # reaches ready, serves an empty /api/njt-routes and names shapes.txt degraded,
+        # and over a cache whose lines draw it is refused), while PATH and the ferry
+        # both list it among the members they READ and cannot degrade around, so for
+        # them this is a missing REQUIRED member and the load fails. A member set that
+        # has no shapes.txt at all gets a body identical to "good", which is honest:
+        # there is nothing to drop.
         "no-shapes": _zip_of(members, drop=("shapes.txt",)),
         # A02: a sound zip whose trips.txt holds one byte that is not UTF-8. Before
         # claude/a02-publication-validation the subway validator never opened

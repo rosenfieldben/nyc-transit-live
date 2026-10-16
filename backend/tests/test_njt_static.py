@@ -1798,11 +1798,12 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
 #
 # 15c promoted every publication whose geometry could not be drawn, so a damaged
 # shapes.txt replaced lines that drew with none for the cache's life. The member's gate,
-# validate_njt_geometry, now refuses such a publication when a cache that serves is there
-# to keep, and otherwise (a cold start, every deploy) promotes it with shapes.txt named
-# degraded; a publication without the member is degraded in both modes, as 15c decided it
-# was legitimate. Driven through the real staged path and load_njt_static, with the token
-# door answered by the fake transport (no mint reaches NJ Transit).
+# validate_njt_geometry, now refuses such a publication when a cache whose own lines
+# draw is there to keep, and otherwise (a cold start, every deploy, or a cache itself
+# without lines) promotes it with shapes.txt named degraded; since the operator's ruling
+# of 2026-10-16 a publication without the member takes the same rule. Driven through the
+# real staged path and load_njt_static, with the token door answered by the fake
+# transport (no mint reaches NJ Transit).
 
 
 def _fixture_with_shapes(body: str) -> bytes:
@@ -1851,6 +1852,20 @@ UNDRAWABLE = {
         _shapes_no_trip_references,
         "shapes.txt yielded no usable route lines",
     ),
+    # ABSENT IS A GATE FAILURE LIKE ANY OTHER (the operator's ruling of 2026-10-16, the
+    # subway's behaviour, refining 15c): promotable when nothing is lost, so refused over
+    # lines that draw and degraded on a cold start. D3 had made it degraded in both modes.
+    "absent": (
+        lambda: _zip_bytes(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(FIXTURE_DIR.iterdir())
+                if path.suffix == ".txt"
+            },
+            drop=("shapes.txt",),
+        ),
+        "shapes.txt is absent from the publication",
+    ),
     # A class outside every list the load used to name (ValueError on the seek): degraded
     # at a download, it raised out of every load after it (the review's F1).
     "offset past the seek": (
@@ -1858,7 +1873,6 @@ UNDRAWABLE = {
         "shapes.txt is not readable (ValueError)",
     ),
 }
-_ABSENT = "shapes.txt is absent from the publication, which is served without it"
 
 
 @pytest.fixture
@@ -1944,34 +1958,6 @@ async def test_a_shapes_txt_that_draws_nothing_is_promoted_and_named_on_a_cold_s
     assert len(again["stops"]) == 164 and _drawn(again) == []
     assert njt_published["cache"].read_bytes() == publication, "nothing discarded"
     assert njt_published["calls"] == ["getToken", "getGTFS"], "one mint, one download"
-
-
-@golden
-@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
-async def test_a_publication_without_shapes_is_degraded_and_never_refused(njt_published, cache):
-    """15c's own decision, kept: a publication without shapes.txt is legitimate, so it is
-    promoted in BOTH modes, over a cache that draws too, with the member named."""
-    import os
-
-    if cache == "a cache that serves":
-        njt_published["cache"].write_bytes(_fixture_bytes())
-        old = njt_published["cache"].stat().st_mtime - (njt_static.MAX_AGE_DAYS + 10) * 86400
-        os.utime(njt_published["cache"], (old, old))
-    members = {
-        path.name: path.read_text(encoding="utf-8")
-        for path in sorted(FIXTURE_DIR.iterdir())
-        if path.suffix == ".txt"
-    }
-    publication = _zip_bytes(members, drop=("shapes.txt",))
-    njt_published["bytes"] = publication
-
-    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
-
-    assert len(data["stops"]) == 164 and data["shapes"] == {}
-    assert njt_published["cache"].read_bytes() == publication
-    entry = static_shared.archive_status()["njt"]
-    assert entry["last_download_error"] is None
-    assert entry["degraded_members"] == {"shapes.txt": _ABSENT}
 
 
 def _fixture_with_unopenable_shapes(kind: str) -> bytes:

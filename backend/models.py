@@ -930,10 +930,13 @@ class StaticArchiveStatus(BaseModel):
     failed_downloads: int
     # The members of the archive now serving that failed a DECORATIVE gate, by name,
     # each with the parser's own reason (static_shared.staged_fetch's two-mode rule).
-    # Nonempty only when a publication was promoted over no cache it could have been
-    # refused in favor of: the archive serves, and this says what it serves without.
-    # Replaced at every promotion; a refused download leaves it describing the archive
-    # still serving. ADDITIVE, so a client of the older shape reads it as absent.
+    # Written when a publication is promoted over no cache that draws (the archive
+    # serves, and this says what it serves without), and by the cached check of a cache
+    # that fails its decorative gate (static_shared.cached_archive_draws), so a start
+    # over a volume that persisted names it with no promotion. Replaced at every
+    # promotion and emptied by a cached check that draws; a refused download leaves it
+    # describing the archive still serving. ADDITIVE, so a client of the older shape
+    # reads it as absent.
     degraded_members: dict[str, str] = {}
 
 
@@ -1073,8 +1076,9 @@ class StatusResponse(BaseModel):
     # plain strings the contract monitor reads by name, and a group is not an
     # archive anyway (the railroad group covers two). Read together they answer
     # "ready, serving an archive from Tuesday, three failed publications since".
-    # A key appears only once its archive has been downloaded at least once in
-    # this process, so the map is empty on a cold boot with a warm cache.
+    # A key appears once its archive has been downloaded in this process, or once a
+    # cached check found the cache without its decorative member (its degraded_members
+    # say which), so on a boot with a warm cache the map holds only those.
     static_archives: dict[str, StaticArchiveStatus] = {}
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).
     # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;

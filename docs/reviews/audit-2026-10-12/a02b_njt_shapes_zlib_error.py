@@ -42,11 +42,14 @@ AFTER, asserted: the same publication passes the gate and is promoted on a cold 
 and the warmup reaches ready on attempt 1 with 1 download, 164 of 164 stations and 0
 route lines. SINCE claude/static-rule-siblings (D3) THE TWO-MODE RULE REFINES 15c: a
 second gate, validate_njt_geometry, asks whether shapes.txt draws a line, and its
-verdict depends on the cache. With no cache that serves (this cold start) the
-publication is promoted as before and /api/status names shapes.txt in the archive's
-degraded_members, so the lost lines are reported rather than silent; over a cache that
-draws, the same publication is refused and the lines riders have keep drawing (section
-6). WHAT REMAINS, measured and recorded rather than fixed:
+verdict depends on the cache: the cache's own verdict against that same gate, asked at
+the cached check (the operator's ruling of 2026-10-16). With no cache whose lines draw
+(this cold start) the publication is promoted as before and /api/status names
+shapes.txt in the archive's degraded_members, so the lost lines are reported rather
+than silent; over a cache that draws, the same publication is refused and the lines
+riders have keep drawing; over a cache already without lines it is promoted, nothing
+being lost (section 6); and a start over the degraded archive names shapes.txt too,
+with no download (section 5). WHAT REMAINS, measured and recorded rather than fixed:
 the lines stay gone for the cache's life, because the age policy, not the parse,
 decides when the archive is fetched again (a start 29 days later downloads nothing and
 draws no lines; one 30 days and an hour later re-fetches and the lines return). A CACHE
@@ -930,6 +933,18 @@ async def amain() -> int:
         f"{day29['stations']} stations, {day29['route_lines']} route lines",
         "not stated (what remains after the repair, by decision D4)",
     )
+    named29 = day29["archive"].get("degraded_members") or {}
+    check(
+        list(named29) == [SHAPES]
+        and named29[SHAPES].startswith("shapes.txt is not readable (error: ")
+        and day29["archive"].get("last_promoted_at") is None,
+        "and that start, with no download, still names shapes.txt degraded: the cached check "
+        "asks the geometry gate of the cache and records its failure (the operator's ruling "
+        "of 2026-10-16)",
+        f"degraded_members={named29!r}",
+        "BEFORE (claude/static-rule-siblings before the ruling): a start over the archive "
+        "named nothing, since only a promotion recorded a degraded member",
+    )
     check(
         aged["downloads"] == 1 and aged["njt_static"] == "ready"
         and aged["route_lines"] == good_lines and aged["cache"] == digest(GOOD),
@@ -941,9 +956,9 @@ async def amain() -> int:
     )
 
     # ---- 6. the two-mode rule's other mode -----------------------------------
-    rule("6  OVER A CACHE THAT SERVES: the DAMAGED publication is refused")
-    print("  Restarts past the age window, so each downloads, with DAMAGED upstream: one")
-    print("  over a GOOD cache (lines drawn), one over a DAMAGED cache (stations, no lines).")
+    rule("6  OVER A CACHE: refused over lines that draw, promoted over a cache without them")
+    print("  Starts past the age window, so each downloads, with DAMAGED upstream: one over a")
+    print("  GOOD cache (lines drawn), one over a DAMAGED cache (stations, no lines).")
     over = await drive(DAMAGED, cache=GOOD, start_at=AGED_OUT_AT)
     show(over)
     over_error = over["archive"].get("last_download_error") or ""
@@ -966,19 +981,23 @@ async def amain() -> int:
     same = await drive(DAMAGED, cache=DAMAGED, start_at=AGED_OUT_AT)
     show(same)
     same_error = same["archive"].get("last_download_error") or ""
+    same_named = same["archive"].get("degraded_members") or {}
     check(
         len(same["attempts"]) == 1 and same["downloads"] == 1 and same["njt_static"] == "ready"
         and same["stations"] == good_stations and same["route_lines"] == 0
         and same["cache"] == digest(DAMAGED)
-        and same["archive"].get("last_promoted_at") is None
-        and same_error.startswith("invalid archive: shapes.txt is not readable (error: "),
-        "over a cache already without lines the same damage is refused too, since that cache "
-        "serves by the loader's verdict: nothing riders see changes, and each start past "
-        "the window downloads once more until the publication draws",
+        and same["archive"].get("last_promoted_at") is not None and not same_error
+        and list(same_named) == [SHAPES],
+        "over a cache already without lines the same damage is promoted, still named "
+        "degraded: that cache does not draw, so nothing is lost and there is nothing to keep "
+        "(the operator's ruling of 2026-10-16)",
         f"{same['downloads']} download(s), status {same['njt_static']!r}, "
         f"{same['stations']} stations, {same['route_lines']} route lines, "
-        f"cache {same['cache']}, last_download_error={same_error!r}",
-        "not stated (what the rule does, recorded)",
+        f"promoted={'yes' if same['archive'].get('last_promoted_at') else 'no'}, "
+        f"last_download_error={same_error!r}, degraded_members={sorted(same_named)}",
+        "BEFORE (claude/static-rule-siblings before the ruling): refused, since that cache "
+        "served by the always-gate's verdict, and every start past the window downloaded "
+        "again",
     )
 
     # ---- 7. a cache the check refuses ---------------------------------------
@@ -1055,10 +1074,11 @@ async def amain() -> int:
         f"promoted and reaches ready on attempt 1 with {bad['stations']} of {good_stations} "
         f"stations and {bad['route_lines']} route lines, the degradation the module "
         "promises, with shapes.txt named degraded on /api/status; over a cache that draws it "
-        "is refused and the lines keep drawing (the two-mode rule, claude/static-rule-"
-        "siblings, which refines 15c); the lines of a degraded cache stay gone for its life "
-        "by the age policy (a start 29 days on downloads nothing, one past 30 days "
-        "re-fetches); and a cache whose required stop_times.txt "
+        "is refused and the lines keep drawing, and over a cache already without lines it is "
+        "promoted, still named (the two-mode rule, claude/static-rule-siblings, which refines "
+        "15c, its mode the cache's own geometry verdict); the lines of a degraded cache stay "
+        "gone for its life by the age policy (a start 29 days on downloads nothing and names "
+        "shapes.txt, one past 30 days re-fetches); and a cache whose required stop_times.txt "
         "carries the same damage is refused at the cached check, which is the publication "
         "gate since claude/static-rule-siblings, and re-fetched on attempt 1. The "
         "CRC-caught control degrades as before, to "

@@ -2706,8 +2706,14 @@ async def test_the_subway_route_shapes_parse_runs_off_the_serving_loop(monkeypat
     done = asyncio.Event()
 
     async def heartbeat():
-        while not done.is_set():
+        # Stamp on EVERY wake, the last included, as test_static_data's heartbeat does:
+        # an inline block that runs up to the attempt's return is closed by the wake
+        # after it, and a ticker that checked `done` first exited on that wake without
+        # recording it, so the block went uncounted (the inline mutant passed).
+        while True:
             stamps.append(time.perf_counter())
+            if done.is_set():
+                return
             await asyncio.sleep(0.005)
 
     ticker = asyncio.create_task(heartbeat())

@@ -671,9 +671,10 @@ async def test_an_environment_fault_in_one_system_fails_the_attempt_for_both(
 #
 # The member feeds only the routes-per-station index, so it is DECORATIVE: its gate
 # (validate_railroad_stop_times) refuses a publication whose stop_times.txt cannot build
-# the index when a cache that serves is there to keep, and otherwise promotes it with the
-# member named degraded; an absent one is degraded in both modes. Driven through the real
-# staged_fetch, the real gates and the real _load_one, with only the transfer injected.
+# the index, absent included since the operator's ruling of 2026-10-16, when a cache whose
+# own index builds is there to keep, and otherwise promotes it with the member named
+# degraded. Driven through the real staged_fetch, the real gates and the real _load_one,
+# with only the transfer injected.
 
 INDEX_STOP_TIME_ROWS = [
     {"trip_id": "GO5_1", "stop_id": "8", "stop_sequence": "1"},
@@ -719,6 +720,15 @@ def _with_member(archive: bytes, member: str, text: str) -> bytes:
     return buf.getvalue()
 
 
+def _without_member(archive: bytes, member: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(buf, "w") as target:
+        for info in source.infolist():
+            if info.filename != member:
+                target.writestr(info.filename, source.read(info.filename))
+    return buf.getvalue()
+
+
 _JOINS_NOTHING = "stop_times.txt yielded no usable routes-per-station index"
 
 # Each publication's stop_times.txt cannot build the index, and the gate says why in the
@@ -756,6 +766,13 @@ UNINDEXABLE = {
             ),
         ),
         _JOINS_NOTHING,
+    ),
+    # ABSENT IS A GATE FAILURE LIKE ANY OTHER (the operator's ruling of 2026-10-16, the
+    # subway's behaviour): promotable when nothing is lost, so refused over an index that
+    # builds and degraded on a cold start. D3 had made it degraded in both modes.
+    "absent": (
+        lambda good: _without_member(good, "stop_times.txt"),
+        "stop_times.txt is absent from the publication",
     ),
     "trips without routes": (
         lambda good: _with_member(
@@ -822,9 +839,11 @@ async def test_a_stop_times_that_cannot_index_is_promoted_and_named_on_a_cold_st
     publication is promoted, the system serves every stop and train with an empty
     routes-per-station index, and /api/status names stop_times.txt degraded with the
     gate's words. Before D3 it was refused, and the system was absent from the map until
-    upstream republished. The next load reads the promoted archive again (the cached
-    check does not open the member, and the load reads around it) with no download and
-    nothing discarded: a damaged index member never reaches the residual arm."""
+    upstream republished. The next load, in a fresh process's status, reads the promoted
+    archive again (the cached check opens the member only through its decorative gate,
+    which names it again and discards nothing, and the load reads around it) with no
+    download and nothing discarded: a damaged index member never reaches the residual
+    arm."""
     damage, reason = UNINDEXABLE[kind]
     publication = damage(railroad_archive())
     published["bytes"] = publication
@@ -839,34 +858,16 @@ async def test_a_stop_times_that_cannot_index_is_promoted_and_named_on_a_cold_st
     assert list(entry["degraded_members"]) == ["stop_times.txt"]
     assert entry["degraded_members"]["stop_times.txt"].startswith(reason)
 
+    static_shared.reset_archive_status()
     again = await railroad_static._load_one("LIRR")
 
     assert again is not None and set(again["stops"]) == {"8", "12"}
     assert rail_paths["LIRR"].read_bytes() == publication, "nothing discarded"
     assert published["downloads"] == ["gtfs_lirr"]
-
-
-@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
-async def test_an_absent_stop_times_is_degraded_and_never_refused(rail_paths, published, cache):
-    """Absence is a legitimate publication for this loader (it always served one without
-    the index), so it is degraded in BOTH modes: promoted over a cache that serves, too,
-    with the member named."""
-    if cache == "a cache that serves":
-        rail_paths["LIRR"].write_bytes(railroad_archive())
-        age_file(rail_paths["LIRR"], days=40)
-    publication = railroad_archive(stop_times=False)
-    published["bytes"] = publication
-
-    data = await railroad_static._load_one("LIRR")
-
-    assert data is not None and data["stop_times"] == {}
-    assert rail_paths["LIRR"].read_bytes() == publication
     entry = static_shared.archive_status()["railroad_LIRR"]
-    assert entry["last_download_error"] is None
-    assert entry["degraded_members"] == {
-        "stop_times.txt": "stop_times.txt is absent from the publication, which is served "
-        "without it"
-    }
+    assert entry["last_promoted_at"] is None
+    assert list(entry["degraded_members"]) == ["stop_times.txt"]
+    assert entry["degraded_members"]["stop_times.txt"].startswith(reason)
 
 
 # ---------------- build_railroad_route_shapes (synthetic parsed tables) ----------------

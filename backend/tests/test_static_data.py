@@ -1355,11 +1355,13 @@ async def test_the_loader_hands_the_two_mode_rule_its_own_verdict(
     gtfs_zip, monkeypatch, fresh_archive_status, cache
 ):
     """ONE VERDICT PER ATTEMPT (the branch's second review round). load_subway_stops
-    judges the cache once, and the two-mode rule acts on that judgment rather than
-    reading the cache again: a stale cache that serves is kept through bad geometry,
-    and a cache the always-gate refuses (platform rows only, no station) is no cache
-    to keep, so the publication is promoted with its lines degraded and every station
-    serves. The always-gate is counted: it is asked about the cache exactly once."""
+    judges the cache once, with both gates since the operator's ruling of 2026-10-16,
+    and the two-mode rule acts on that judgment rather than reading the cache again: a
+    stale cache whose lines draw is kept through bad geometry, and a cache the
+    always-gate refuses (platform rows only, no station) is no cache to keep, so the
+    publication is promoted with its lines degraded and every station serves. Both gates
+    are counted: each is asked about the cache at most once, the geometry gate only of a
+    cache the always-gate passed."""
     platforms_only = [row for row in ROUTE_STOP_ROWS if row["location_type"] != "1"]
     stops = ROUTE_STOP_ROWS if cache == "serving" else platforms_only
     write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=stops))
@@ -1375,12 +1377,22 @@ async def test_the_loader_hands_the_two_mode_rule_its_own_verdict(
         return real(zf)
 
     monkeypatch.setattr(static_data, "validate_subway_archive", counting)
+    drawn: list = []
+    real_geometry = static_data.validate_subway_geometry
+
+    def counting_geometry(zf):
+        if Path(zf.filename) == gtfs_zip:
+            drawn.append(zf.filename)
+        return real_geometry(zf)
+
+    monkeypatch.setattr(static_data, "validate_subway_geometry", counting_geometry)
     publication = _zip_bytes(_geometry_members("header only", stop_rows=ROUTE_STOP_ROWS))
     _publish(monkeypatch, {"bytes": publication}, [])
 
     await static_data.load_subway_stops()
 
     assert len(asked) == 1, f"the cache was judged {len(asked)} times in one attempt"
+    assert len(drawn) == (1 if cache == "serving" else 0), f"its lines {len(drawn)} times"
     entry = static_shared.archive_status()["subway"]
     if cache == "serving":
         assert gtfs_zip.read_bytes() == before, "kept through bad geometry"

@@ -69,27 +69,20 @@ class StaticValidationError(Exception):
         self.member = member
 
 
-class DecorationAbsent(StaticValidationError):
-    """A DECORATIVE member the publication does not carry, raised by a loader's
-    `validate_when_replacing` gate through require_decoration.
-
-    staged_fetch records it as a degraded member in BOTH modes and never refuses over
-    it (claude/static-rule-siblings, D3): the loaders that raise it (the railroad's
-    stop_times.txt, NJ Transit's shapes.txt) document an archive without the member as
-    a legitimate publication, served without the layer the member draws, and a gate
-    that refused one over a cache would be calling legitimate what it then rejects.
-    A member that is present and unreadable, or reads to nothing, is the two-mode
-    rule's ordinary case and raises a plain StaticValidationError."""
-
-
 def require_decoration(zf: zipfile.ZipFile, member: str) -> None:
-    """The decorative member must be present, or the publication is served without it:
-    DecorationAbsent, which staged_fetch records as degraded in either mode."""
+    """The decorative member must be present: its absence is a failure of the member's
+    gate like an unreadable one, named by member, which the two-mode rule degrades on a
+    cold start and refuses over a cache that draws.
+
+    THE SUBWAY'S BEHAVIOUR, FOR EVERY LOADER (the operator's ruling on
+    claude/static-rule-siblings, 2026-10-16). D3 had made absence degraded in both modes
+    for the railroad's stop_times.txt and NJ Transit's shapes.txt, on the ground that
+    both loaders serve a publication without the member; the rule is now that a
+    publication is promotable when nothing is lost, and one without the member over a
+    cache whose member draws loses the layer as surely as a damaged one. Over a cache
+    that is itself without it, nothing is lost, and it is promoted."""
     if member not in set(zf.namelist()):
-        raise DecorationAbsent(
-            f"{member} is absent from the publication, which is served without it",
-            member=member,
-        )
+        raise StaticValidationError(f"{member} is absent from the publication", member=member)
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +275,10 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
     The double parse is cheap for the small tables. It is not cheap for stop_times.txt,
     which four loaders' gates parse now that the gate is also the cached check
     (claude/static-rule-siblings, D2): the subway's since A02, PATH's, the ferry's and NJ
-    Transit's since D2. The railroad's cached check leaves it out: since D3 the member is
-    decorative there and parsed only at a download, by validate_railroad_stop_times. What
-    each costs is measured per loader in the 2026-10-12 ledger.
+    Transit's since D2. The railroad's publication gate leaves it out: since D3 the member
+    is decorative there, parsed by validate_railroad_stop_times at a download and at the
+    cached check of a usable cache (cached_archive_draws). What each costs is measured
+    per loader in the 2026-10-12 ledger.
 
     A read that fails is refused through read_or_refuse, by member and in the reader's
     own words.
@@ -361,6 +355,38 @@ def cached_archive_is_valid(path: Path, validate: Callable[[zipfile.ZipFile], No
     return True
 
 
+async def cached_archive_draws(
+    path: Path, gate: Callable[[zipfile.ZipFile], None], *, key: str
+) -> bool:
+    """Does the cache at `path`, which the loader has already called usable, pass the
+    DECORATIVE gate (`gate`, the one the loader hands staged_fetch as
+    validate_when_replacing)? Decided off the serving loop, and recorded.
+
+    THE MODE OF THE TWO-MODE RULE IS THE CACHE'S OWN VERDICT AGAINST THE GATE THAT
+    DECIDES IT (the operator's ruling on claude/static-rule-siblings, 2026-10-16). It had
+    been the always-gate's, which does not open the decorative member, so a cache promoted
+    without its lines or index still "served": an equally broken publication was refused
+    over it, and a stale one was downloaded again at every start. Now the loader runs both
+    gates at its cached check, once per attempt, and hands this verdict to staged_fetch as
+    cache_serves: a cache that draws (or indexes) keeps its layer against a broken
+    publication, and one that does not is replaced by any publication the always-gate
+    passes, still degraded if that one is too.
+
+    RECORDED: a failure is written under `key`'s degraded_members, so /api/status says what
+    the cache serves without, a start over a volume that persisted included, until a
+    promotion replaces the entry. A cache that draws clears an existing entry's members and
+    creates no entry of its own. An environment fault while the gate reads the cache reads
+    as "does not draw", as the always-gate's reads as "no cache"."""
+    try:
+        await asyncio.to_thread(validate_archive, path, gate)
+    except StaticValidationError as exc:
+        _record_degraded(key, {exc.member or "archive": str(exc)})
+        return False
+    if key in _ARCHIVE_STATUS:
+        _ARCHIVE_STATUS[key]["degraded_members"] = {}
+    return True
+
+
 async def cached_archive_is_usable(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> bool:
     """Is there a cached archive at `path` we can serve from? Decided OFF the serving loop.
 
@@ -427,14 +453,8 @@ def reset_archive_status() -> None:
     _ARCHIVE_STATUS.clear()
 
 
-def _record(
-    key: str,
-    *,
-    promoted: bool,
-    error: str | None = None,
-    degraded: dict[str, str] | None = None,
-) -> None:
-    entry = _ARCHIVE_STATUS.setdefault(
+def _entry(key: str) -> dict:
+    return _ARCHIVE_STATUS.setdefault(
         key,
         {
             "last_promoted_at": None,
@@ -443,6 +463,22 @@ def _record(
             "degraded_members": {},
         },
     )
+
+
+def _record_degraded(key: str, degraded: dict[str, str]) -> None:
+    """What the cache being served lacks, found by its own decorative gate at the cached
+    check (cached_archive_draws); the download fields are left as they are."""
+    _entry(key)["degraded_members"] = dict(degraded)
+
+
+def _record(
+    key: str,
+    *,
+    promoted: bool,
+    error: str | None = None,
+    degraded: dict[str, str] | None = None,
+) -> None:
+    entry = _entry(key)
     if promoted:
         entry["last_promoted_at"] = time.time()
         # A promotion clears the error: the operator question these fields answer
@@ -553,35 +589,38 @@ async def staged_fetch(
     a rejection). `validate_when_replacing` is for what is DECORATIVE (the subway's
     route lines): it runs on every publication, and what its failure does depends on
     what the publication would replace.
-      - A cache that passes `validate` is there: the publication is refused and the
-        cache keeps serving, exactly as an always-gate failure would be. Bad geometry
-        never replaces geometry that draws (2026-09-05's F08).
-      - No such cache (a cold start, which on this deployment is every deploy: the
-        data directory does not persist, confirmed against production's promotion
-        stamps of 2026-10-13): the publication is promoted, and the failure is
-        recorded on the archive's status as a degraded member with the parser's
-        reason, published on /api/status. Refusing it would trade every station for
-        the lines, and the loader of the decorative layer degrades to nothing as it
-        always has.
+      - A cache that DRAWS is there (it passes `validate` and `validate_when_replacing`
+        both): the publication is refused and the cache keeps serving, exactly as an
+        always-gate failure would be. Bad geometry never replaces geometry the
+        cache's own check found drawing (2026-09-05's F08); a fault on that check
+        reads as "does not draw" (cached_archive_draws), so a fault costs the
+        layer, never the stations.
+      - No such cache: none at all (a cold start, which on this deployment is every
+        deploy: the data directory does not persist, confirmed against production's
+        promotion stamps of 2026-10-13), or one that is itself without the layer. The
+        publication is promoted, since nothing is lost, and the failure is recorded on
+        the archive's status as a degraded member with the parser's reason, published on
+        /api/status. Refusing it would trade every station for the lines, or keep a
+        cache no better than the publication, and the loader of the decorative layer
+        degrades to nothing as it always has.
     THE SIBLINGS' DECORATIVE MEMBERS take the same rule since claude/static-rule-siblings
     (D3): the railroad's stop_times.txt (the routes-per-station index) and NJ Transit's
     shapes.txt (its route lines, where 15c had promoted any publication without usable
-    geometry). One difference from the subway's gate, decided for those two: a member
-    the publication does not carry at all raises DecorationAbsent, which is degraded in
-    BOTH modes and never refused, because both loaders document its absence as a
-    legitimate publication.
+    geometry). An absent member is a gate failure like an unreadable one, as the
+    subway's always was (require_decoration).
 
     WHOSE VERDICT DECIDES THE MODE: the caller's, when it has one. `cache_serves` is
-    what the loader concluded about `dest` with `validate` at the start of this attempt
-    (cached_archive_is_usable), and the subway passes it, so the mode and the loader
-    cannot disagree about the same cache in the same attempt. The branch's review found
-    what a second, independent read here did: a fault while re-reading a cache that
-    serves promoted geometry that draws nothing over lines that draw, and an attempt to
-    tell the environment's faults from the bytes' by errno called "keep" a cache the
-    loader had already called unusable, so the publication was refused, the loader
-    raised and no station served (a bit-rotted end-of-central-directory offset raises
-    OSError(EINVAL), with an errno, from the bytes). Without a verdict (None) the cache
-    is read here with cached_archive_is_usable, the check every loader makes.
+    what the loader concluded about `dest` at the start of this attempt with BOTH gates
+    (cached_archive_is_usable, then cached_archive_draws: the operator's ruling of
+    2026-10-16), so the mode and the loader cannot disagree about the same cache in the
+    same attempt. The A02 branch's review found what a second, independent read here
+    did: a fault while re-reading a cache that serves promoted geometry that draws
+    nothing over lines that draw, and an attempt to tell the environment's faults from
+    the bytes' by errno called "keep" a cache the loader had already called unusable,
+    so the publication was refused, the loader raised and no station served (a
+    bit-rotted end-of-central-directory offset raises OSError(EINVAL), with an errno,
+    from the bytes). Without a verdict (None) the cache is read here with both gates,
+    as every loader reads it.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     for orphan in dest.parent.glob(f"{dest.stem}.*.part"):
@@ -608,20 +647,17 @@ async def staged_fetch(
         if validate_when_replacing is not None:
             try:
                 await asyncio.to_thread(validate_archive, stage, validate_when_replacing)
-            except DecorationAbsent as exc:
-                # Legitimate without it (see DecorationAbsent): degraded, whatever the
-                # cache, and named on the status like any other degraded member.
-                degraded[exc.member or "archive"] = str(exc)
-                logger.info("Promoting %s publication without a decorative member (%s)", label, exc)
             except StaticValidationError as exc:
                 if cache_serves is None:
-                    cache_serves = await cached_archive_is_usable(dest, validate)
+                    cache_serves = await cached_archive_is_usable(
+                        dest, validate
+                    ) and await cached_archive_is_usable(dest, validate_when_replacing)
                 if cache_serves:
-                    raise  # a cache that serves is there: refuse, as above
+                    raise  # a cache that draws is there: refuse, as above
                 degraded[exc.member or "archive"] = str(exc)
                 logger.warning(
                     "Promoting %s publication with a degraded member (%s): there is no "
-                    "cached archive at %s to keep",
+                    "cached archive at %s whose member draws to keep",
                     label,
                     exc,
                     dest,

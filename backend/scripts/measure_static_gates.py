@@ -18,8 +18,9 @@ WHAT IT PRINTS, one block per archive:
   the checks       wall time of static_shared.validate_archive with the light validator
                    (the cached check before D2), with the publication gate (the cached
                    check after D2), and with the decorative gate where the loader has one
-                   (asked of a download, never of the cache), best, median and worst of
-                   --runs runs, the archive opened each time
+                   (asked of every download and, since the operator's ruling of
+                   2026-10-16, of a usable cache at the cached check), best, median and
+                   worst of --runs runs, the archive opened each time
 
 THE ARCHIVES. LIRR, Metro-North, PATH and NYC Ferry are fetched once each, through
 production's own transfer (static_shared._stream_to_file, which follows the ferry's

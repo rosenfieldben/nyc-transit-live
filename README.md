@@ -715,30 +715,26 @@ residual arm, which discards a cache the load cannot read, is the backstop for b
 that changed after their check, never the first line. A cache is fresh while it is
 usable and younger than 30 days, and never when it is dated ahead of the clock.
 
-**The two-mode rule.** A publication whose decorative member is present and does not
-draw (or index) is refused when a cached archive that serves is there to keep; with
-none (a cold start, which is every deploy, since the data directory does not persist)
-it is promoted, every station serves without what that member gave, and the archive's
+**The two-mode rule.** A publication whose decorative member does not draw (or index),
+or is absent, is refused when a cached archive whose own member draws is there to keep;
+otherwise (a cold start, which is every deploy, since the data directory does not
+persist, or a cache that is itself without the layer) it is promoted, since nothing is
+lost: every station serves without what that member gave, and the archive's
 `static_archives` entry names the member under `degraded_members` with the parser's
-reason (for the subway `/healthz` also carries `subway-lines-degraded`). A railroad
-publication without `stop_times.txt`, or an NJ Transit one without `shapes.txt`, is
-promoted and named in either mode, since those loaders have always served one; the
-subway's absent `shapes.txt` takes the rule as a broken one does. The state stays
-until a later promotion whose member reads, which in production means the next
-deploy: a running process does not re-fetch an archive it has promoted, so a
-corrected upstream publication is picked up by redeploying, not by waiting. Whether a
-cache "serves" is the loader's own verdict on it at the start of that attempt (its
-cached check, which does not open the decorative member), so the rule and the loader
-never disagree about the same file; a cache promoted without its lines or index still
-serves by that verdict, so an equally broken publication is refused over it, and on a
-volume that persisted, a stale one would be downloaded again at each process start
-until upstream repaired the member. Every other table (stations, trips, calls,
-transfers, routes, the service calendar) refuses in every mode when the load cannot
-read it, and the floors past that differ by loader: the subway also refuses an empty
-calls table and one that does not join (one call of a routed trip at a stop that folds
-to a station), NJ Transit an empty one, and PATH and the ferry only ask that theirs
-read, so a calls table that reads and joins nothing is promoted there with an empty
-routes-per-station index.
+reason (for the subway `/healthz` also carries `subway-lines-degraded`). The cached
+check asks the decorative gate of the cache too and records its failure there, so a
+later start over such a cache still says what it serves without. The state stays until
+a later promotion whose member reads, which in production means the next deploy: a
+running process does not re-fetch an archive it has promoted, so a corrected upstream
+publication is picked up by redeploying, not by waiting. Whether a cache draws is the
+loader's own verdict on it at the start of that attempt, read once with both gates, so
+the rule and the loader never disagree about the same file. Every other table
+(stations, trips, calls, transfers, routes, the service calendar) refuses in every mode
+when the load cannot read it, and the floors past that differ by loader: the subway
+also refuses an empty calls table and one that does not join (one call of a routed trip
+at a stop that folds to a station), NJ Transit an empty one, and PATH and the ferry
+only ask that theirs read, so a calls table that reads and joins nothing is promoted
+there with an empty routes-per-station index.
 
 That makes one state deliberate and worth recognizing: a group can be `ready`
 while its archive is older than the 30-day refresh threshold. It is reachable
@@ -760,12 +756,14 @@ has a **fourth** state, `not-configured`, which is what a deployment without NJ
 Transit credentials reports: no credentials means no network attempt of any kind, so
 nothing is failing and nothing is retrying, and an operator reading `failed` would
 otherwise go looking for a broken upstream that does not exist. Beside those,
-`static_archives` reports each downloaded ARCHIVE (`subway`, `railroad_LIRR`,
-`railroad_MNR`, `path`, `ferry`, `njt`): when a download last passed validation and was
-promoted, why the last one was rejected, how many have been rejected since, and,
-for the subway, which members the archive now serving was promoted without
-(`degraded_members`; every other archive reports it empty, NJ Transit's included,
-whose `shapes.txt` degrades inside its loader rather than at promotion).
+`static_archives` reports each ARCHIVE downloaded in this process (`subway`,
+`railroad_LIRR`, `railroad_MNR`, `path`, `ferry`, `njt`), and any whose cache the cached
+check found without its decorative member: when a download last passed validation and
+was promoted, why the last one was rejected, how many have been rejected since, and
+which decorative members the archive now serving lacks (`degraded_members`: the
+subway's `shapes.txt`, each railroad's `stop_times.txt`, NJ Transit's `shapes.txt`,
+named at the promotion that took them degraded and at the cached check of a cache that
+fails its decorative gate; PATH and the ferry have none and report it empty).
 A group state answers "can I serve this system"; these answer "how old is the
 archive I am serving it from, and why", which together make the deliberate
 ready-but-stale state legible. The `alerts` entry reports the alert poll's `age_s`, its

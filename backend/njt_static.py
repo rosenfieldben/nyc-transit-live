@@ -65,11 +65,15 @@ two bounds rather than loaded whole:
     promoted every publication whose geometry could not be drawn, so a damaged
     shapes.txt replaced lines that drew with none for the cache's life. Now the
     member has a gate of its own, validate_njt_geometry, handed to staged_fetch as
-    `validate_when_replacing`: a publication whose shapes.txt is present and draws
-    nothing is refused when a cache that serves is there to keep, and otherwise (a
-    cold start, which is every deploy) promoted with shapes.txt named under
-    degraded_members on /api/status. A publication WITHOUT the member is what 15c
-    decided it was, legitimate: degraded in both modes, never refused.
+    `validate_when_replacing`: a publication whose shapes.txt draws nothing is refused
+    when a cache whose own lines draw is there to keep, and otherwise (a cold start,
+    which is every deploy, or a cache that is itself without lines) promoted with
+    shapes.txt named under degraded_members on /api/status. The cache's verdict is
+    asked of this same gate at the cached check, and recorded (the operator's ruling of
+    2026-10-16). A publication WITHOUT the member takes the same rule since that ruling,
+    the subway's behaviour: 15c called it legitimate, so D3 degraded it in both modes,
+    and the rule 15c now refines to is that a publication is promotable when nothing is
+    lost. One without shapes.txt over lines that draw loses them.
 
     THIS IS THIS FEED'S OWN RULE AND NOT AN INHERITED ONE, which is worth stating
     because the obvious citation is backwards. The ferry and PATH loaders both
@@ -116,6 +120,7 @@ from static_shared import (
     UNREADABLE_AT_LOAD,
     StaticValidationError,
     cache_is_fresh,
+    cached_archive_draws,
     cached_archive_is_usable,
     parse_member,
     read_or_refuse,
@@ -151,8 +156,10 @@ MAX_AGE_DAYS = 30
 # calendar.txt and feed_info.txt are ABSENT BY DESIGN in this feed (see the module
 # docstring) and requiring either would reject every valid publication. shapes.txt
 # is present upstream and, since 15c, parsed, but it is STILL NOT REQUIRED: route
-# lines are additive, so a publication that dropped it serves stations and trains
-# exactly as before with an empty routes list. Note that the ferry and PATH loaders
+# lines are additive, so a publication that dropped it is promoted when nothing is
+# lost (no cache, or a cache whose lines do not draw) and serves stations and trains
+# with an empty routes list and shapes.txt named degraded; over a cache whose lines
+# draw it is refused (the two-mode rule, which refines 15c). Note that the ferry and PATH loaders
 # REQUIRE their shapes.txt and this one deliberately does not; the module docstring
 # says why the two feeds differ rather than leaving the divergence to look like an
 # oversight. Its gate is validate_njt_geometry, with the two-mode rule (D3).
@@ -694,19 +701,18 @@ def validate_njt_geometry(zf: zipfile.ZipFile) -> None:
     `validate_when_replacing`: the subway's two-mode rule for its route lines, refining
     15c's "a publication without usable geometry is still promoted".
 
-      - Present and drawing nothing: refused when a cache that serves is there to keep,
-        so a damaged shapes.txt no longer replaces lines that draw with none for the
-        cache's life (A02b's publication did exactly that under 15c), and otherwise, on
-        a cold start (every deploy), promoted with shapes.txt named under
-        degraded_members on /api/status, every station and train served without lines.
-        "A cache that serves" is the cached check's verdict, which does not open this
-        member, so it may itself be one promoted without lines; refusing over it keeps
-        an archive no better than the publication, and a stale one is downloaded again
-        at each process start until upstream's lines draw (D3 as ruled, the subway's
-        rule since PR #126; production's data directory does not persist, so every
-        start is a cold start there).
-      - Absent: degraded in both modes, never refused (DecorationAbsent), because 15c
-        decided a publication without the member is legitimate.
+      - Drawing nothing, or absent: refused when a cache whose own lines draw is there
+        to keep, so a damaged or missing shapes.txt no longer replaces lines that draw
+        with none for the cache's life (A02b's publication did exactly that under 15c),
+        and otherwise (a cold start, which is every deploy, or a cache that is itself
+        without lines) promoted with shapes.txt named under degraded_members on
+        /api/status, every station and train served without lines.
+      - The cache's verdict is this same gate's, asked at the cached check
+        (static_shared.cached_archive_draws) and recorded there, so a start over a cache
+        without lines says so, and such a cache is no cache to keep (the operator's
+        ruling of 2026-10-16). Absence was degraded in both modes under D3, on 15c's
+        word that a publication without the member is legitimate; promotable when
+        nothing is lost is the rule now.
 
     Read through the load's own reader, bounded the way the load bounds it
     (_parse_shapes over the trips' shape_ids), and asked what the line builder asks:
@@ -715,8 +721,9 @@ def validate_njt_geometry(zf: zipfile.ZipFile) -> None:
     no trip references, or one point per shape, draws nothing and fails as an empty
     table does, which is the lesson the subway's gate learned from one point per shape.
 
-    It runs at a download, never at the cached check: 11 ms on the committed fixture
-    (measure_static_gates.py, median of five), in staged_fetch's thread.
+    It runs at a download and, since the ruling, at the cached check of a usable cache:
+    11 ms on the committed fixture (measure_static_gates.py, median of five), in a
+    worker thread either way. A deploy starts cold, with no cache to check.
     """
     require_decoration(zf, "shapes.txt")
     trips = read_or_refuse(lambda: parse_member(zf, "trips.txt", _parse_trips), "trips.txt")
@@ -910,7 +917,8 @@ def _parse_open(zf: zipfile.ZipFile) -> dict:
 def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[str, list]:
     """shapes.txt if the archive carries one, bounded by the trips' shape_ids.
 
-    ABSENT IS A VALID PUBLICATION, not an error: {} here means the routes list ends
+    ABSENT IS SERVED, not an error, once such a publication is promoted (on a cold start,
+    or over a cache that is itself without lines): {} here means the routes list ends
     up empty and every other layer is untouched. The KeyError arm is the ferry
     loader's idiom for the same situation.
 
@@ -941,13 +949,13 @@ def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[st
     truncated-member case.
 
     WHERE A DAMAGED shapes.txt COMES FROM, since the two-mode rule (D3). The member's
-    gate, validate_njt_geometry, runs on a download: over a cache that serves it
-    refuses a publication whose lines cannot be drawn, and on a cold start it promotes
-    one, naming shapes.txt as a degraded member. That promoted archive is read here,
-    and so is a cache whose shapes.txt rotted after it was promoted (the cached check
-    is the publication gate, which does not open this member). Either way the lines
-    stay gone until a later promotion whose geometry draws, which in production is the
-    next deploy or the age policy's re-fetch at MAX_AGE_DAYS.
+    gate, validate_njt_geometry, runs on a download: over a cache whose lines draw it
+    refuses a publication whose lines cannot be drawn, and otherwise it promotes one,
+    naming shapes.txt as a degraded member. That promoted archive is read here, and so
+    is a cache whose shapes.txt rotted after it was promoted, which the cached check
+    names degraded (it asks the same gate of the cache). Either way the lines stay gone
+    until a later promotion whose geometry draws, which in production is the next
+    deploy or the age policy's re-fetch at MAX_AGE_DAYS.
 
     THE ONE TIMED PARSE IN THIS APP. Not because the bound is known to be a large
     saving (that depends on how much of a publication's geometry its trips
@@ -1115,14 +1123,18 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     # IS THE PUBLICATION GATE (D2), so "usable" also means the load will read every
     # required member it opens.
     usable = await cached_archive_is_usable(zip_path, validate)
+    # AND ITS LINES, against the gate that decides the two-mode rule's mode (the
+    # operator's ruling of 2026-10-16): a usable cache whose shapes.txt draws nothing
+    # (or is absent) is recorded degraded here, and is no cache to keep against a
+    # publication that is no worse.
+    draws = usable and await cached_archive_draws(zip_path, validate_njt_geometry, key="njt")
     fresh = cache_is_fresh(zip_path, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
-            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache this
-            # check called usable is kept through a shapes.txt that draws nothing (whether
-            # or not its own lines draw: the check does not open that member), and one it
-            # called unusable is no cache to keep.
-            await _download_zip(now=now, cache_serves=usable)
+            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache whose
+            # lines draw keeps them through a shapes.txt that draws nothing, and one whose
+            # lines do not (or no usable cache at all) is no cache to keep.
+            await _download_zip(now=now, cache_serves=draws)
         except njt_auth.NjtNotConfigured:
             # Cannot happen behind the guard above, and re-raised rather than
             # swallowed if it somehow does: turning it into an empty result here
@@ -1169,9 +1181,10 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         # every REQUIRED member, at the cached check and before any promotion, so this
         # arm sees a required member only from a cache that changed after it was
         # checked. shapes.txt, the one optional member, is not the publication gate's:
-        # its own gate (validate_njt_geometry) runs on a download only, and any open
-        # or read failure at load is caught in _parse_shapes_member and degrades to no
-        # route lines.
+        # its own gate (validate_njt_geometry) runs on a download and at the cached
+        # check of a usable cache, where a failure is named degraded and nothing is
+        # discarded, and any open or read failure at load is caught in
+        # _parse_shapes_member and degrades to no route lines.
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

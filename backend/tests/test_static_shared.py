@@ -278,8 +278,9 @@ async def test_good_publication_is_promoted_and_recorded(tmp_path):
 # ---------------------------------------------------------------------------
 #
 # The operator's ruling on the A02 branch's review: a DECORATIVE gate (the subway's route
-# lines) refuses a publication only when a cache that passes the always-gate is there to
-# keep serving; with none, the publication is promoted and the failure is published on
+# lines) refuses a publication only when a cache that passes both gates, one that draws
+# (the ruling of 2026-10-16), is there to keep serving; with none, the publication is
+# promoted and the failure is published on
 # the archive's status as a degraded member, by name, with the parser's reason. Generic
 # validators here, so the rule is pinned apart from any loader's tables.
 
@@ -294,6 +295,20 @@ def refuse_geometry(member: str | None = "shapes.txt"):
         raise static_shared.StaticValidationError(GEOMETRY_REASON, member=member)
 
     validate.calls = calls
+    return validate
+
+
+def geometry_without(marker: str = "routes.txt"):
+    """A decorative gate that refuses an archive lacking `marker`, so one test can hold a
+    cache that draws (good_archive()) beside a publication that does not
+    (good_archive(drop=(marker,))): the mode is the cache's own verdict against this same
+    gate (the operator's ruling of 2026-10-16), so a gate that refused everything would
+    call the cache undrawn too."""
+
+    def validate(zf):
+        if marker not in zf.namelist():
+            raise static_shared.StaticValidationError(GEOMETRY_REASON, member="shapes.txt")
+
     return validate
 
 
@@ -324,15 +339,15 @@ async def test_a_decorative_failure_with_no_cache_is_promoted_and_named(tmp_path
     assert entry["degraded_members"] == {key: GEOMETRY_REASON}
 
 
-async def test_a_decorative_failure_over_a_cache_that_serves_is_refused(tmp_path):
-    """2026-09-05's F08: bad geometry never replaces an archive that passes the always-gate.
+async def test_a_decorative_failure_over_a_cache_that_draws_is_refused(tmp_path):
+    """2026-09-05's F08: bad geometry never replaces an archive whose geometry draws.
     Refused exactly as an always-gate failure is: the cache byte-identical, the failure
     counted and named, and nothing degraded about the archive still serving."""
     dest = tmp_path / "gtfs.zip"
     dest.write_bytes(good_archive())
     before = sha(dest)
     with pytest.raises(static_shared.StaticValidationError):
-        await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), refuse_geometry())
+        await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), geometry_without())
     assert sha(dest) == before
     assert not list(tmp_path.glob("*.part"))
     entry = static_shared.archive_status()["k"]
@@ -341,23 +356,23 @@ async def test_a_decorative_failure_over_a_cache_that_serves_is_refused(tmp_path
     assert entry["degraded_members"] == {}
 
 
-@pytest.mark.parametrize("cache", ["a cache that serves", "no cache"])
-async def test_an_absent_decorative_member_is_degraded_in_both_modes(tmp_path, cache):
-    """DecorationAbsent (claude/static-rule-siblings, D3): the railroad's stop_times.txt
-    and NJ Transit's shapes.txt are members their loaders document as legitimately
-    absent, so a publication without one is promoted whatever the cache, never refused,
-    and the member is named degraded with the gate's words. Over a cache that serves,
-    the ordinary failure (present and unreadable) is refused, the case above; absence
-    is not that case."""
+@pytest.mark.parametrize("cache", ["a cache that draws", "no cache"])
+async def test_an_absent_decorative_member_is_a_gate_failure_like_any_other(tmp_path, cache):
+    """THE SUBWAY'S BEHAVIOUR FOR EVERY LOADER (the operator's ruling of 2026-10-16): a
+    publication without its decorative member (require_decoration) is refused over a
+    cache that draws, and promoted with the member named degraded when there is none to
+    keep. D3 had promoted it in both modes, calling absence legitimate; promotable when
+    nothing is lost is the rule now."""
     dest = tmp_path / "gtfs.zip"
-    if cache == "a cache that serves":
+    if cache == "a cache that draws":
         dest.write_bytes(good_archive())
+    before = dest.read_bytes() if dest.exists() else None
 
     def decoration(zf):
         static_shared.require_decoration(zf, "stop_times.txt")
 
     payload = good_archive(drop=("stop_times.txt",))
-    await static_shared.staged_fetch(
+    fetch = static_shared.staged_fetch(
         "https://example.invalid/gtfs.zip",
         dest,
         accept_all,
@@ -365,25 +380,33 @@ async def test_an_absent_decorative_member_is_degraded_in_both_modes(tmp_path, c
         label="test archive",
         download=publisher(payload),
         validate_when_replacing=decoration,
-        cache_serves=cache == "a cache that serves",
+        cache_serves=cache == "a cache that draws",
     )
-    assert dest.read_bytes() == payload
-    entry = static_shared.archive_status()["k"]
-    assert entry["last_download_error"] is None and entry["failed_downloads"] == 0
-    assert entry["degraded_members"] == {
-        "stop_times.txt": "stop_times.txt is absent from the publication, which is served "
-        "without it"
-    }
+    absent = "stop_times.txt is absent from the publication"
+    entry_of = lambda: static_shared.archive_status()["k"]  # noqa: E731
+    if cache == "a cache that draws":
+        with pytest.raises(static_shared.StaticValidationError, match=absent):
+            await fetch
+        assert dest.read_bytes() == before
+        assert entry_of()["last_download_error"] == f"invalid archive: {absent}"
+        assert entry_of()["degraded_members"] == {}
+    else:
+        await fetch
+        assert dest.read_bytes() == payload
+        assert entry_of()["last_download_error"] is None
+        assert entry_of()["degraded_members"] == {"stop_times.txt": absent}
 
 
-async def test_a_cache_the_always_gate_refuses_is_no_cache_to_keep(tmp_path):
-    """The rule asks whether the cache PASSES the always-gate, not whether a file exists:
-    an unreadable one is nothing to keep serving, so the publication is promoted over it
-    with the degraded member named."""
+async def test_an_unreadable_cache_is_no_cache_to_keep(tmp_path):
+    """The rule asks whether the cache passes its gates, not whether a file exists: an
+    unreadable one is nothing to keep serving, so the publication is promoted over it
+    with the degraded member named. Every gate refuses a file that does not open, so
+    this pins neither gate apart from the other: the valid-zip converse below pins the
+    always-gate."""
     dest = tmp_path / "gtfs.zip"
     dest.write_bytes(b"<!doctype html> not a zip")
-    payload = good_archive()
-    await _fetch_with_geometry(dest, payload, refuse_geometry())
+    payload = good_archive(drop=("routes.txt",))
+    await _fetch_with_geometry(dest, payload, geometry_without())
     assert dest.read_bytes() == payload
     assert static_shared.archive_status()["k"]["degraded_members"] == {
         "shapes.txt": GEOMETRY_REASON
@@ -405,13 +428,15 @@ async def test_a_valid_zip_the_always_gate_refuses_is_no_cache_to_keep(tmp_path)
     """The converse of the unreadable cache above, with the zip itself readable: the rule
     asks the always-gate, not whether the file opens, so a cache it refuses on its bytes
     is promoted over (the branch's review, F5: the old test's cache was not a zip at all,
-    so a re-check that only opened the file passed it too)."""
+    so a re-check that only opened the file passed it too). The cache draws by the
+    decorative gate, so the always-gate's refusal is the only thing that can promote over
+    it."""
     dest = tmp_path / "gtfs.zip"
-    dest.write_bytes(good_archive(drop=("routes.txt",)))
-    payload = good_archive()
+    dest.write_bytes(good_archive())
+    payload = good_archive(drop=("routes.txt",))
     refusal = static_shared.StaticValidationError("stops.txt yielded no usable parent stations")
     await _fetch_with_geometry(
-        dest, payload, refuse_geometry(), validate=_refusing_the_cache(dest, refusal)
+        dest, payload, geometry_without(), validate=_refusing_the_cache(dest, refusal)
     )
     assert dest.read_bytes() == payload
     assert static_shared.archive_status()["k"]["degraded_members"] == {
@@ -478,29 +503,87 @@ async def test_without_a_verdict_an_environment_fault_reads_as_no_cache(tmp_path
     payload = good_archive(drop=("routes.txt",))
     fault = OSError(errno.EMFILE, "Too many open files")
     await _fetch_with_geometry(
-        dest, payload, refuse_geometry(), validate=_refusing_the_cache(dest, fault)
+        dest, payload, geometry_without(), validate=_refusing_the_cache(dest, fault)
     )
     assert dest.read_bytes() == payload
 
 
 async def test_degraded_members_describe_the_archive_now_serving(tmp_path):
-    """Replaced at every promotion, left alone by a refusal: a cold promotion names the
-    member; a later bad publication is refused over that archive (which passes the
-    always-gate) and the name stays, because the archive it describes is still serving;
-    a clean publication then clears it."""
+    """Replaced at every promotion, left alone by a refusal. A cold promotion of a
+    publication that does not draw names the member; an equally broken newer one is
+    promoted over it (the cache does not draw either, the operator's ruling of
+    2026-10-16) and the name stays; a publication that draws clears it; and a broken one
+    is then refused over that archive, whose name stays clear, because it is still the
+    one serving."""
     dest = tmp_path / "gtfs.zip"
-    await _fetch_with_geometry(dest, good_archive(), refuse_geometry())
-    assert static_shared.archive_status()["k"]["degraded_members"] == {
-        "shapes.txt": GEOMETRY_REASON
-    }
+    gate = geometry_without()
+    broken = good_archive(drop=("routes.txt",))
+    entry_of = lambda: static_shared.archive_status()["k"]  # noqa: E731
+
+    await _fetch_with_geometry(dest, broken, gate)
+    assert entry_of()["degraded_members"] == {"shapes.txt": GEOMETRY_REASON}
+
+    newer = good_archive(drop=("routes.txt", "agency.txt"))
+    await _fetch_with_geometry(dest, newer, gate)
+    assert dest.read_bytes() == newer
+    assert entry_of()["degraded_members"] == {"shapes.txt": GEOMETRY_REASON}
+    assert entry_of()["last_download_error"] is None
+
+    await _fetch_with_geometry(dest, good_archive(), gate)
+    assert entry_of()["degraded_members"] == {} and entry_of()["last_download_error"] is None
+
     with pytest.raises(static_shared.StaticValidationError):
-        await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), refuse_geometry())
+        await _fetch_with_geometry(dest, broken, gate)
+    assert dest.read_bytes() == good_archive()
+    assert entry_of()["degraded_members"] == {}
+
+
+async def test_the_caches_own_decorative_verdict_is_recorded(tmp_path):
+    """cached_archive_draws, the cached check's second gate (the operator's ruling of
+    2026-10-16): a cache whose decorative member fails is called undrawn and its failure
+    is written under the archive's degraded_members, so a start over it reports what it
+    serves without; a cache that draws creates no entry, and clears an existing one's
+    members without touching its download fields. Those carry an earlier refusal here,
+    as when the warmup retries after an environment fault (the railroad's both-systems
+    rule) and the cached check runs again over an entry that already counts one."""
+    dest = tmp_path / "gtfs.zip"
+    gate = geometry_without()
+    dest.write_bytes(good_archive(drop=("routes.txt",)))
+    static_shared._record("k", promoted=False, error="invalid archive: earlier")
+    download = {
+        "last_promoted_at": None,
+        "last_download_error": "invalid archive: earlier",
+        "failed_downloads": 1,
+    }
+
+    assert await static_shared.cached_archive_draws(dest, gate, key="k") is False
+    assert static_shared.archive_status() == {
+        "k": {**download, "degraded_members": {"shapes.txt": GEOMETRY_REASON}}
+    }
+
+    dest.write_bytes(good_archive())
+    assert await static_shared.cached_archive_draws(dest, gate, key="k") is True
+    assert static_shared.archive_status() == {"k": {**download, "degraded_members": {}}}
+
+    static_shared.reset_archive_status()
+    assert await static_shared.cached_archive_draws(dest, gate, key="k") is True
+    assert static_shared.archive_status() == {}
+
+
+async def test_without_a_verdict_the_cache_is_read_with_both_gates(tmp_path):
+    """A caller that passes no cache_serves gets the loaders' rule read here: a cache that
+    passes the always-gate but not the decorative one is no cache to keep, so an equally
+    broken publication is promoted over it, still degraded."""
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive(drop=("routes.txt",)))
+    newer = good_archive(drop=("routes.txt", "agency.txt"))
+
+    await _fetch_with_geometry(dest, newer, geometry_without())
+
+    assert dest.read_bytes() == newer
     assert static_shared.archive_status()["k"]["degraded_members"] == {
         "shapes.txt": GEOMETRY_REASON
     }
-    await _fetch_with_geometry(dest, good_archive(drop=("routes.txt",)), accept_all)
-    entry = static_shared.archive_status()["k"]
-    assert entry["degraded_members"] == {} and entry["last_download_error"] is None
 
 
 async def test_an_always_gate_failure_is_refused_before_the_decorative_gate_is_asked(tmp_path):
@@ -1112,6 +1195,126 @@ async def _drive_to_ready(app, field):
             break
         await asyncio.sleep(0.001)
     return seen
+
+
+# THE TWO-MODE RULE'S THREE OUTCOMES, in each loader with a decorative gate (the
+# operator's ruling on claude/static-rule-siblings, 2026-10-16): the mode is the cache's
+# own verdict against that gate, read at the cached check, not the always-gate's. Each
+# publication's decorative member is header-only where it is broken; good_archive draws
+# (subway, NJ Transit) and indexes (the railroad) for all three.
+DECORATIVE_MEMBER = {"subway": "shapes.txt", "railroad": "stop_times.txt", "njt": "shapes.txt"}
+DECORATIVE_LOADERS = [loader for loader in FIVE_LOADERS if loader.name in DECORATIVE_MEMBER]
+DECORATIVE_IDS = [loader.name for loader in DECORATIVE_LOADERS]
+UNDRAWN_REASON = {
+    "subway": "shapes.txt yielded no usable drawable route shapes",
+    "railroad": "stop_times.txt yielded no usable stop times",
+    "njt": "shapes.txt yielded no usable route lines",
+}
+REFUSED = "a drawing cache refuses a broken publication"
+STILL_DEGRADED = "a degraded cache takes an equally broken newer one"
+CLEARED = "a degraded cache takes a drawing one"
+
+
+def _header_only(archive: bytes, member: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(buf, "w") as target:
+        for info in source.infolist():
+            body = source.read(info.filename)
+            if info.filename == member:
+                body = body.split(b"\n", 1)[0] + b"\n"
+            target.writestr(info.filename, body)
+    return buf.getvalue()
+
+
+def _newer() -> bytes:
+    """A later publication: the same tables, a route renamed, so its promotion shows."""
+    return good_archive(routes=[{**_ROUTE_ROWS[0], "route_long_name": "Alpha Line, newer"}])
+
+
+@pytest.mark.parametrize("outcome", [REFUSED, STILL_DEGRADED, CLEARED])
+@pytest.mark.parametrize("loader", DECORATIVE_LOADERS, ids=DECORATIVE_IDS)
+async def test_the_two_mode_rule_reads_the_caches_own_decoration(
+    tmp_path, monkeypatch, loader, outcome
+):
+    """The mode keyed on the always-gate alone (mutation M8) refused the second outcome:
+    a cache promoted without its lines or index still "served", so an equally broken
+    newer publication was refused over it and the stale cache was downloaded again at
+    every start. Now that cache is no cache to keep, the newer publication is promoted
+    still degraded, and one that draws clears the degradation."""
+    member, reason = DECORATIVE_MEMBER[loader.name], UNDRAWN_REASON[loader.name]
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cached = good_archive() if outcome == REFUSED else _header_only(good_archive(), member)
+    cache.write_bytes(cached)
+    age(cache, days=static_data.MAX_AGE_DAYS + 10)
+    publication = _newer() if outcome == CLEARED else _header_only(_newer(), member)
+    calls: list[Path] = []
+    _patch_download(monkeypatch, loader.module, publication, calls=calls)
+
+    assert loader.served(await loader.load())
+
+    assert calls == [cache]
+    entry = static_shared.archive_status()[loader.key]
+    if outcome == REFUSED:
+        assert cache.read_bytes() == cached
+        assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+        assert entry["last_download_error"].startswith(f"invalid archive: {reason}")
+        assert entry["degraded_members"] == {}
+    else:
+        assert cache.read_bytes() == publication
+        assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+        if outcome == STILL_DEGRADED:
+            assert list(entry["degraded_members"]) == [member]
+            assert entry["degraded_members"][member].startswith(reason)
+        else:
+            assert entry["degraded_members"] == {}
+
+
+@pytest.mark.parametrize("loader", DECORATIVE_LOADERS, ids=DECORATIVE_IDS)
+async def test_a_cache_the_publication_gate_refuses_is_never_one_to_keep(
+    tmp_path, monkeypatch, loader
+):
+    """The decorative verdict is asked only of a usable cache (`usable and` before
+    cached_archive_draws). This cache's decorative member draws and its stops.txt is a
+    header, so the publication gate refuses it: it is no cache at all, and a publication
+    without its decoration is promoted over it, degraded, and served. Asked of the
+    unusable cache too, the verdict called it one to keep: the publication was refused,
+    and with the cache unusable the system served nothing at every attempt (the review
+    of the rulings commit)."""
+    member, reason = DECORATIVE_MEMBER[loader.name], UNDRAWN_REASON[loader.name]
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive(stops=[]))
+    age(cache, days=static_data.MAX_AGE_DAYS + 10)
+    publication = _header_only(_newer(), member)
+    calls: list[Path] = []
+    _patch_download(monkeypatch, loader.module, publication, calls=calls)
+
+    assert loader.served(await loader.load())
+
+    assert calls == [cache] and cache.read_bytes() == publication
+    entry = static_shared.archive_status()[loader.key]
+    assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+    assert list(entry["degraded_members"]) == [member]
+    assert entry["degraded_members"][member].startswith(reason)
+
+
+@pytest.mark.parametrize("loader", DECORATIVE_LOADERS, ids=DECORATIVE_IDS)
+async def test_a_start_over_a_degraded_cache_reports_it(tmp_path, monkeypatch, loader):
+    """The cached check records the cache's own decorative failure, so a start over a
+    fresh cache promoted without its lines or index (a later start on a volume that
+    persisted) serves it with no download and still says what it serves without."""
+    member, reason = DECORATIVE_MEMBER[loader.name], UNDRAWN_REASON[loader.name]
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(_header_only(good_archive(), member))
+    calls: list[Path] = []
+    _patch_download(monkeypatch, loader.module, good_archive(), calls=calls)
+
+    assert loader.served(await loader.load())
+
+    assert calls == []
+    entry = static_shared.archive_status()[loader.key]
+    assert entry["last_promoted_at"] is None and entry["last_download_error"] is None
+    assert list(entry["degraded_members"]) == [member]
+    assert entry["degraded_members"][member].startswith(reason)
 
 
 # Every (loader, member) whose load REQUIRES the member, so a rotted cache there used to

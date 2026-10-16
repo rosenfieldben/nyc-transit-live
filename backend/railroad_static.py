@@ -26,6 +26,7 @@ from static_routes import fold_stop_routes
 from static_shared import (
     UNREADABLE_AT_LOAD,
     cache_is_fresh,
+    cached_archive_draws,
     cached_archive_is_usable,
     read_as_loaded,
     read_or_refuse,
@@ -116,8 +117,9 @@ def validate_railroad_publication(zf: zipfile.ZipFile) -> None:
     (medians of five), against about 1 ms for the first stage alone. It runs off the
     serving loop (static_shared.cached_archive_is_usable), at each process start and
     when the cache is re-checked, one system per thread. With stop_times.txt in it, as
-    D2 first had it, Metro-North's took 1,894 ms; that member now costs its own gate,
-    at a download only.
+    D2 first had it, Metro-North's took 1,894 ms; that member now costs its own gate
+    (validate_railroad_stop_times), at a download and at the cached check of a usable
+    cache.
     """
     validate_railroad_archive(zf)
     _parse_required(zf, read=read_or_refuse)
@@ -133,35 +135,42 @@ def validate_railroad_stop_times(zf: zipfile.ZipFile) -> None:
         the load's own reader (_parse_stop_times) and the index's own join
         (derive_railroad_stop_routes: no stop time whose trip names a route in
         trips.txt, as when its trip_ids are foreign or its route_ids blank): refused
-        when a cache the loader calls usable is there to keep, and otherwise, on a cold
-        start (every deploy), promoted with stop_times.txt named under degraded_members
-        on /api/status, the system served without the index. Before D3 the publication
-        gate parsed it strictly, so such a publication was refused in both modes and a
-        cold start left the system off the map entirely.
+        when a cache whose own index builds is there to keep, and otherwise (a cold
+        start, which is every deploy, or a cache that is itself without an index)
+        promoted with stop_times.txt named under degraded_members on /api/status, the
+        system served without the index. Before D3 the publication gate parsed it
+        strictly, so such a publication was refused in both modes and a cold start left
+        the system off the map entirely.
+      - Absent: a failure like any other, refused over an index that builds and
+        degraded on a cold start (the operator's ruling of 2026-10-16, the subway's
+        behaviour). D3 had degraded it in both modes, because this loader has always
+        served a publication without the member; the rule it refines to is that a
+        publication is promotable when nothing is lost.
 
     THE JOIN, not only the rows (the review of claude/static-rule-siblings): a table that
     parses and joins nothing builds an empty index as surely as a damaged one, and NJ
     Transit's geometry gate and the subway's always-gate already ask what their builders
     build.
 
-    "A CACHE THE LOADER CALLS USABLE" is the cached check's verdict, which does not open
-    this member, so the cache kept may itself be one promoted without an index; refusing
-    over it then keeps an archive no better than the publication refused, and a stale
-    one is downloaded again at each process start until upstream's index builds. That is
-    D3's rule as ruled (the subway's lines have had it since PR #126); in production the
-    data directory does not persist, so every start is a cold start and the case does
-    not arise.
-      - Absent: degraded in both modes, never refused (DecorationAbsent), because a
-        publication without the member is one this loader has always served.
+    THE MODE IS THE CACHE'S OWN VERDICT AGAINST THIS GATE (the operator's ruling of
+    2026-10-16): _load_one asks it of a usable cache at the cached check
+    (static_shared.cached_archive_draws) and hands staged_fetch the answer. So a cache
+    promoted without an index is no cache to keep, and a newer publication replaces it
+    whether or not its own index builds; and the cache's failure is recorded under
+    degraded_members at every start, including a later one over a volume that persisted.
+    Before the ruling the mode was the publication gate's verdict, which does not open
+    this member, so such a cache "served", an equally broken publication was refused
+    over it, and the stale cache was downloaded again at every start.
 
     The load reads it through _read_stop_times, which degrades on any read failure, so
     a promoted archive whose member cannot be read serves every station and train
     rather than reaching the residual arm.
 
-    It runs at a download, never at the cached check: 58 ms on LIRR's publication of
-    2026-10-14 and 1,448 ms on Metro-North's of 2026-10-15, whose stop_times.txt is
-    470,274 rows (measure_static_gates.py, medians of five, with the join), in
-    staged_fetch's thread."""
+    It runs at a download and, since the ruling, at the cached check of a usable cache:
+    58 ms on LIRR's publication of 2026-10-14 and 1,448 ms on Metro-North's of
+    2026-10-15, whose stop_times.txt is 470,274 rows (measure_static_gates.py, medians
+    of five, with the join), in a worker thread either way. A deploy starts cold, with
+    no cache to check."""
     require_decoration(zf, "stop_times.txt")
     stop_times = read_or_refuse(lambda: _parse_stop_times(zf), "stop_times.txt")
     require_parsed(lambda: stop_times, "stop_times.txt", "stop times")
@@ -507,14 +516,21 @@ async def _load_one(system: str) -> dict | None:
     # read every member it opens, and a cache that rotted anywhere the load reads is
     # treated as absent and re-downloaded rather than failing every attempt.
     usable = await cached_archive_is_usable(zip_path, validate_railroad_publication)
+    # AND ITS INDEX, against the gate that decides the two-mode rule's mode (the
+    # operator's ruling of 2026-10-16): a usable cache whose stop_times.txt builds no
+    # index (rotted, absent, joining nothing) is recorded degraded here, and is no cache
+    # to keep against a publication that is no worse.
+    indexes = usable and await cached_archive_draws(
+        zip_path, validate_railroad_stop_times, key=f"railroad_{system}"
+    )
     fresh = cache_is_fresh(zip_path, usable=usable, max_age_days=MAX_AGE_DAYS)
     if not fresh:
         try:
-            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache this
-            # check called usable is kept through a bad stop_times.txt (whether or not its
-            # own index builds: the check does not open that member), and one it called
-            # unusable is no cache to keep, whatever a second read would say.
-            await _download_zip(system, cache_serves=usable)
+            # THE VERDICT THIS ATTEMPT ACTS ON, handed to the two-mode rule: a cache whose
+            # index builds keeps it through a bad stop_times.txt, and one whose index does
+            # not (or no usable cache at all) is no cache to keep, whatever a second read
+            # would say.
+            await _download_zip(system, cache_serves=indexes)
         except Exception as exc:
             if not usable:
                 logger.warning("%s static GTFS download failed (%s); no cached copy", system, exc)

@@ -28,7 +28,6 @@ but one day per fixture.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import re
 import struct
@@ -43,9 +42,16 @@ import pytest
 import njt_auth
 import njt_static
 import route_geometry
+import static_shared
 from conftest import golden_fixture_guard
 from feeds.shared import NYC_TZ
-from static_shared import StaticValidationError
+from static_shared import StaticValidationError, validate_archive
+from tests.archive_damage import (
+    bad_central_directory_offset,
+    damaged_stream,
+    offset_past_the_seek,
+    rot_after_the_check,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -307,7 +313,7 @@ def test_a_removals_only_calendar_dates_is_fine_when_calendar_carries_the_span()
     )
     with _open(members) as zf:
         njt_static.validate_njt_archive(zf, now=NOW)
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 400)
 
 
 def test_a_conventional_calendar_dates_is_judged_on_calendars_end_date():
@@ -338,7 +344,7 @@ def test_the_span_is_the_later_of_the_two_calendars():
             "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 30)},1\n",
         }
     )
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 400)
     # And the other direction: calendar_dates reaching past calendar's end wins.
     members = _members(
         **{
@@ -346,7 +352,7 @@ def test_the_span_is_the_later_of_the_two_calendars():
             "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 300)},1\n",
         }
     )
-    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 300)
+    assert njt_static.service_span(_open(members)) == _ny_date(NOW, 300)
 
 
 def test_a_calendar_with_no_usable_end_date_contributes_nothing():
@@ -450,12 +456,12 @@ def test_a_missing_required_member_fails_validation(member):
 def test_headers_only_table_fails_the_light_validator(member, what):
     """FINDING 4, FROM BIRTH. A headers-only table is structurally perfect and
     parses cleanly to nothing; promoting one reaches "ready" with an empty map and
-    nothing retrying. Three tables are gated on every load, not just stops: a feed
+    nothing retrying. Three tables are gated in the first stage, not just stops: a feed
     with stops and no trips places markers that can never carry a train, which is
     the same silent lie one table over.
 
     stop_times.txt is deliberately NOT in this list; it is the expensive table and
-    the publication gate owns it. See the pair of tests below, which pin both halves
+    the second stage owns it. See the pair of tests below, which pin both halves
     of that split."""
     headers_only = _members()[member].splitlines()[0] + "\n"
     with _open(_members(**{member: headers_only})) as zf:
@@ -466,11 +472,12 @@ def test_headers_only_table_fails_the_light_validator(member, what):
 def test_a_headers_only_stop_times_passes_the_light_validator():
     """THE FIRST HALF OF THE SPLIT, and it is an ACCEPTANCE test on purpose.
 
-    validate_njt_archive runs on every load of the cached archive, so it pays only
-    for the three cheap tables; stop_times.txt is the one table it does not open.
-    Asserting that it passes here is what makes the next test's rejection mean
-    something: without this, the two validators could be identical again and nobody
-    would notice.
+    validate_njt_archive is the publication gate's first stage, and stop_times.txt is
+    the one table it does not open. It used to be the cached check on its own, which is
+    why a cache that rotted in stop_times.txt was "usable"; since
+    claude/static-rule-siblings (D2) the check runs the whole gate. Asserting that the
+    first stage passes here is what makes the next test's rejection mean something:
+    without this, the two validators could be identical again and nobody would notice.
     """
     headers_only = STOP_TIMES.splitlines()[0] + "\n"
     with _open(_members(**{"stop_times.txt": headers_only})) as zf:
@@ -484,7 +491,7 @@ def test_a_headers_only_stop_times_fails_the_publication_gate():
     validate_njt_publication and this is what goes red."""
     headers_only = STOP_TIMES.splitlines()[0] + "\n"
     with _open(_members(**{"stop_times.txt": headers_only})) as zf:
-        njt_static.validate_njt_archive(zf, now=NOW)  # the light gate still passes
+        njt_static.validate_njt_archive(zf, now=NOW)  # the first stage still passes
         with pytest.raises(StaticValidationError):
             njt_static.validate_njt_publication(zf, now=NOW)
 
@@ -1722,6 +1729,17 @@ def test_golden_the_bounded_parse_reaches_every_shape_the_committed_trips_refere
 _FIXTURE_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=NYC_TZ).timestamp()
 
 
+def _fixture_bytes() -> bytes:
+    """The committed fixture as one archive, every member DEFLATED (see _zip_bytes)."""
+    return _zip_bytes(
+        {
+            path.name: path.read_text(encoding="utf-8")
+            for path in sorted(FIXTURE_DIR.iterdir())
+            if path.suffix == ".txt"
+        }
+    )
+
+
 def _fixture_with_damaged_deflate(member: str) -> bytes:
     """The committed fixture zipped with ZIP_DEFLATED, `member`'s first deflate block
     header rewritten to BTYPE 11, its stored CRC-32 and sizes untouched. Reading the
@@ -1753,9 +1771,12 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
     monkeypatch, tmp_path
 ):
     """THE PROMISE, at the site the finding named: a publication whose optional
-    shapes.txt raises zlib.error passes the gate (15c: shapes.txt stays out of it),
-    is promoted, and loads every station with no route lines, rather than failing
-    the whole system. Through the real staged path and load_njt_static."""
+    shapes.txt raises zlib.error passes the publication gate (shapes.txt stays out of
+    it), is promoted on this cold start with shapes.txt degraded (the geometry gate's
+    second mode, claude/static-rule-siblings D3), and loads every station with no
+    route lines, rather than failing the whole system. Through the real staged path
+    and load_njt_static. Over a cache that draws, the same publication is refused
+    (test_a_shapes_txt_that_draws_nothing_is_refused_over_lines_that_draw)."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
@@ -1769,6 +1790,174 @@ async def test_a_shapes_txt_that_will_not_inflate_costs_the_lines_and_nothing_el
     assert data["shapes"] == {}
     assert njt_static.build_njt_route_shapes(data["trips"], data["shapes"], data["routes"]) == []
     assert zip_path.read_bytes() == publication, "a servable publication is promoted"
+
+
+# ---------------------------------------------------------------------------
+# shapes.txt: the two-mode rule (claude/static-rule-siblings, D3), refining 15c
+# ---------------------------------------------------------------------------
+#
+# 15c promoted every publication whose geometry could not be drawn, so a damaged
+# shapes.txt replaced lines that drew with none for the cache's life. The member's gate,
+# validate_njt_geometry, now refuses such a publication when a cache whose own lines
+# draw is there to keep, and otherwise (a cold start, every deploy, or a cache itself
+# without lines) promotes it with shapes.txt named degraded; since the operator's ruling
+# of 2026-10-16 a publication without the member takes the same rule. Driven through the
+# real staged path and load_njt_static, with the token door answered by the fake
+# transport (no mint reaches NJ Transit).
+
+
+def _fixture_with_shapes(body: str) -> bytes:
+    members = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(FIXTURE_DIR.iterdir())
+        if path.suffix == ".txt"
+    }
+    return _zip_bytes({**members, "shapes.txt": body})
+
+
+def _fixture_shapes_rows() -> tuple[str, list[str]]:
+    header, *rows = (FIXTURE_DIR / "shapes.txt").read_text(encoding="utf-8").splitlines()
+    return header, rows
+
+
+def _one_point_per_shape() -> bytes:
+    header, rows = _fixture_shapes_rows()
+    first: dict[str, str] = {}
+    for row in rows:
+        first.setdefault(row.split(",", 1)[0], row)
+    return _fixture_with_shapes("\n".join([header, *first.values()]) + "\n")
+
+
+def _shapes_no_trip_references() -> bytes:
+    header, rows = _fixture_shapes_rows()
+    return _fixture_with_shapes("\n".join([header, *("X" + row for row in rows)]) + "\n")
+
+
+# Each publication's shapes.txt draws nothing, and the gate says why in the member's name.
+UNDRAWABLE = {
+    "deflate damaged": (
+        lambda: _fixture_with_damaged_deflate("shapes.txt"),
+        "shapes.txt is not readable (error: ",
+    ),
+    "lzma damaged": (
+        lambda: damaged_stream(_fixture_bytes(), "shapes.txt", zipfile.ZIP_LZMA),
+        "shapes.txt is not readable (LZMAError)",
+    ),
+    "header only": (
+        lambda: _fixture_with_shapes(_fixture_shapes_rows()[0] + "\n"),
+        "shapes.txt yielded no usable route lines",
+    ),
+    "one point per shape": (_one_point_per_shape, "shapes.txt yielded no usable route lines"),
+    "no shape a trip references": (
+        _shapes_no_trip_references,
+        "shapes.txt yielded no usable route lines",
+    ),
+    # ABSENT IS A GATE FAILURE LIKE ANY OTHER (the operator's ruling of 2026-10-16, the
+    # subway's behaviour, refining 15c): promotable when nothing is lost, so refused over
+    # lines that draw and degraded on a cold start. D3 had made it degraded in both modes.
+    "absent": (
+        lambda: _zip_bytes(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(FIXTURE_DIR.iterdir())
+                if path.suffix == ".txt"
+            },
+            drop=("shapes.txt",),
+        ),
+        "shapes.txt is absent from the publication",
+    ),
+    # A class outside every list the load used to name (ValueError on the seek): degraded
+    # at a download, it raised out of every load after it (the review's F1).
+    "offset past the seek": (
+        lambda: offset_past_the_seek(_fixture_bytes(), "shapes.txt"),
+        "shapes.txt is not readable (ValueError)",
+    ),
+}
+
+
+@pytest.fixture
+def njt_published(monkeypatch, tmp_path):
+    """NJ Transit configured, its cache in tmp_path, and every download answered by the
+    fake transport with the bytes in njt_published["bytes"], counted."""
+    static_shared.reset_archive_status()
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    state: dict = {"bytes": None, "calls": [], "cache": zip_path}
+
+    async def transport(url, form, timeout_s):
+        state["calls"].append(url.rsplit("/", 1)[-1])
+        if url.endswith("getToken"):
+            return 200, b'{"UserToken":"t1"}'
+        return 200, state["bytes"]
+
+    monkeypatch.setattr(njt_auth, "_httpx_post", transport)
+    yield state
+    static_shared.reset_archive_status()
+
+
+def _drawn(data: dict) -> list:
+    return njt_static.build_njt_route_shapes(data["trips"], data["shapes"], data["routes"])
+
+
+@golden_shapes
+@pytest.mark.parametrize("kind", sorted(UNDRAWABLE))
+async def test_a_shapes_txt_that_draws_nothing_is_refused_over_lines_that_draw(njt_published, kind):
+    """THE FIRST MODE, never worse than what riders have. A cache whose lines draw is
+    there (stale, so a download is genuinely attempted), so the publication is refused:
+    the cache byte-identical, its 11 lines still drawn, the refusal named, nothing
+    recorded degraded. Under 15c this publication was promoted, and the lines were gone
+    until the cache aged out."""
+    import os
+
+    good = _fixture_bytes()
+    cache = njt_published["cache"]
+    cache.write_bytes(good)
+    old = cache.stat().st_mtime - (njt_static.MAX_AGE_DAYS + 10) * 86400
+    os.utime(cache, (old, old))
+    damage, reason = UNDRAWABLE[kind]
+    njt_published["bytes"] = damage()
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164 and len(_drawn(data)) == 11
+    assert cache.read_bytes() == good
+    entry = static_shared.archive_status()["njt"]
+    assert entry["last_promoted_at"] is None and entry["failed_downloads"] == 1
+    assert entry["last_download_error"].startswith(f"invalid archive: {reason}")
+    assert entry["degraded_members"] == {}
+
+
+@golden_shapes
+@pytest.mark.parametrize("kind", sorted(UNDRAWABLE))
+async def test_a_shapes_txt_that_draws_nothing_is_promoted_and_named_on_a_cold_start(
+    njt_published, kind
+):
+    """THE SECOND MODE, never dark over decoration: what 15c did, now named. No cache, so
+    the publication is promoted, every one of the 164 stations served with no route
+    line, and /api/status names shapes.txt degraded with the gate's words. The next load
+    over that cache serves it again with nothing sent to NJ Transit and nothing
+    discarded: the load reads around the member on every class a read can raise (the
+    lzma case raised LZMAError out of the load before claude/static-rule-siblings)."""
+    damage, reason = UNDRAWABLE[kind]
+    publication = damage()
+    njt_published["bytes"] = publication
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(data["stops"]) == 164 and _drawn(data) == []
+    assert njt_published["cache"].read_bytes() == publication
+    entry = static_shared.archive_status()["njt"]
+    assert entry["last_promoted_at"] is not None and entry["last_download_error"] is None
+    assert list(entry["degraded_members"]) == ["shapes.txt"]
+    assert entry["degraded_members"]["shapes.txt"].startswith(reason)
+
+    again = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert len(again["stops"]) == 164 and _drawn(again) == []
+    assert njt_published["cache"].read_bytes() == publication, "nothing discarded"
+    assert njt_published["calls"] == ["getToken", "getGTFS"], "one mint, one download"
 
 
 def _fixture_with_unopenable_shapes(kind: str) -> bytes:
@@ -1818,10 +2007,11 @@ def _fixture_with_unopenable_shapes(kind: str) -> bytes:
 async def test_a_shapes_txt_that_will_not_open_costs_the_lines_and_nothing_else(
     monkeypatch, tmp_path, kind
 ):
-    """THE SAME PROMISE AT THE OPEN, which the read's tuple cannot see (found by the
+    """THE SAME PROMISE AT THE OPEN, which a read's arm cannot see (found by the
     review of claude/a02-publication-validation): ZipFile.open raises before the parse
-    starts. The gate never opens shapes.txt, so such a publication is promoted; the
-    load must still serve every station with no route lines, and keep the cache."""
+    starts. The publication gate never opens shapes.txt and the geometry gate refuses
+    it, so on this cold start such a publication is promoted with shapes.txt degraded;
+    the load must still serve every station with no route lines, and keep the cache."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
@@ -1840,32 +2030,98 @@ async def test_a_shapes_txt_that_will_not_open_costs_the_lines_and_nothing_else(
 async def test_a_cached_archive_whose_required_member_will_not_inflate_is_discarded(
     monkeypatch, tmp_path
 ):
-    """THE RESIDUAL ARM, with the same damage in a REQUIRED member. stop_times.txt is
-    one the light cached-archive validator never opens, so a cache carrying it is
-    accepted as usable and fresh and fails the parse; the arm must discard it so the
-    next attempt downloads, rather than letting zlib.error escape and the same bytes
-    fail every attempt until MAX_AGE_DAYS. No network is allowed: a fresh cache
-    downloads nothing."""
+    """THE RESIDUAL ARM, with the same damage in a REQUIRED member, in a cache that
+    passed its check and then rotted, the one way a load meets bytes its check did not
+    see. The arm must discard it so the next attempt downloads, rather than letting
+    zlib.error escape and the same bytes fail every attempt until MAX_AGE_DAYS. The
+    first attempt sends nothing to NJ Transit (the cache was fresh); the second mints
+    once and fetches once, through the fake transport, and serves."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
-    zip_path.write_bytes(_fixture_with_damaged_deflate("stop_times.txt"))
+    good = _fixture_bytes()
+    zip_path.write_bytes(good)
     monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
-    monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
-    with zipfile.ZipFile(zip_path) as zf:
-        njt_static.validate_njt_archive(zf, now=_FIXTURE_NOW)  # the premise: accepted
+    rot_after_the_check(
+        monkeypatch, njt_static, zip_path, _fixture_with_damaged_deflate("stop_times.txt")
+    )
+    calls: list = []
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(good, calls))
 
     assert await njt_static.load_njt_static(now=_FIXTURE_NOW) == {}
     assert not zip_path.exists(), "an archive the load cannot read must not stay the cache"
+    assert calls == []
+
+    data = await njt_static.load_njt_static(now=_FIXTURE_NOW)
+
+    assert [url.rsplit("/", 1)[-1] for url, _form in calls] == ["getToken", "getGTFS"]
+    assert len(data["stops"]) == 164
+
+
+# THE CACHES THE LIGHT CHECK CALLED USABLE (the ledger's live-list aside on the A02
+# branch, closed by D2 on claude/static-rule-siblings). Each raises, at the first read of
+# the member it damages, a class the residual arm does not name: bzip2's plain OSError,
+# lzma's LZMAError, and a bit-rotted central-directory offset's OSError(EINVAL) on every
+# member read. The first two sit in stop_times.txt, the required member the light check
+# never opened, so such a cache was "usable" and raised at every load for its 30 days.
+UNREADABLE_CACHES = {
+    "bzip2 stop_times.txt": (
+        lambda good: damaged_stream(good, "stop_times.txt", zipfile.ZIP_BZIP2),
+        "stop_times.txt is not readable (OSError)",
+    ),
+    "lzma stop_times.txt": (
+        lambda good: damaged_stream(good, "stop_times.txt", zipfile.ZIP_LZMA),
+        "stop_times.txt is not readable (LZMAError)",
+    ),
+    # Every member read fails, so the first member the gate reads is the one named; the
+    # light check read stops.txt too and refused this one, but the class is the
+    # environment's and the arm could never have told it from a fault.
+    "central-directory offset": (
+        bad_central_directory_offset,
+        "stops.txt is not readable (OSError)",
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(UNREADABLE_CACHES))
+async def test_a_cache_the_residual_arm_cannot_name_is_refused_at_the_check(
+    monkeypatch, tmp_path, kind
+):
+    """D2 FOR NJ TRANSIT. Each damaged cache is refused at the cached check (the
+    publication gate), named by member through require_parsed's classes, treated as
+    absent and re-downloaded: one mint and one fetch through the fake transport, and the
+    good archive served. Before D2 the first two were called usable and every load
+    raised past the residual arm."""
+    damage, refusal = UNREADABLE_CACHES[kind]
+    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
+    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
+    zip_path = tmp_path / "gtfs_njt.zip"
+    good = _zip_bytes(_members())
+    zip_path.write_bytes(damage(good))
+    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
+    with pytest.raises(StaticValidationError) as refused:
+        validate_archive(zip_path, lambda zf: njt_static.validate_njt_publication(zf, now=NOW))
+    assert str(refused.value) == refusal
+    assert refused.value.member == refusal.split(" ", 1)[0]
+    calls: list = []
+    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(good, calls))
+
+    data = await njt_static.load_njt_static(now=NOW)
+
+    assert set(data["stops"]) == {"109", "112", "38", "125"}
+    assert [url.rsplit("/", 1)[-1] for url, _form in calls] == ["getToken", "getGTFS"]
+    assert zip_path.read_bytes() == good
 
 
 async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_path):
     """D5 AT NJ TRANSIT'S CALL SITE (audit 2026-10-12, A02 and A09), the twin of
     test_static_shared.py's test for the other four loaders: with a valid, fresh cache
     and no network allowed, load_njt_static's cached check must run
-    validate_njt_archive on a thread other than the one running this event loop, as
+    validate_njt_publication (the publication gate, since claude/static-rule-siblings,
+    D2) on a thread other than the one running this event loop, as
     static_shared.cached_archive_is_usable does. Put back on the synchronous check, it
-    runs here, on the loop's thread, and fails."""
+    runs here, on the loop's thread, and fails; put back on the first stage alone,
+    validate_njt_archive, it never runs the gate, and fails too."""
     monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
     monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
     zip_path = tmp_path / "gtfs_njt.zip"
@@ -1873,79 +2129,16 @@ async def test_the_cached_check_validates_off_the_serving_loop(monkeypatch, tmp_
     monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
     monkeypatch.setattr(njt_auth, "_httpx_post", _explodes())
     threads = []
-    real = njt_static.validate_njt_archive
+    real = njt_static.validate_njt_publication
 
     def recording(zf, *, now=None):
         threads.append(threading.get_ident())
         real(zf, now=now)
 
-    monkeypatch.setattr(njt_static, "validate_njt_archive", recording)
+    monkeypatch.setattr(njt_static, "validate_njt_publication", recording)
 
     data = await njt_static.load_njt_static(now=NOW)
 
     assert set(data["stops"]) == {"109", "112", "38", "125"}
     assert threads, "the cached check must have run the validator"
     assert threading.get_ident() not in threads
-
-
-async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
-    monkeypatch, tmp_path
-):
-    """THE RESIDUAL ARM IS THE ARCHIVE'S (the operator's ruling on the A02 branch's
-    review): OSError left its tuple. Through the real NJ Transit warmup, an environment
-    error while parsing a valid, fresh cache fails the attempt with the cache kept, and
-    the next attempt reads the same cache and reaches ready with nothing sent to NJ
-    Transit: no mint, no download. The committed fixture, so the archive is in service
-    on the real clock the warmup reads."""
-    import errno
-    import types
-
-    import main as app_module
-    import warmups
-
-    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
-    monkeypatch.setenv(njt_auth.USERNAME_VAR, "rider")
-    monkeypatch.setenv(njt_auth.PASSWORD_VAR, "secret")
-    zip_path = tmp_path / "gtfs_njt.zip"
-    zip_path.write_bytes(
-        _zip_bytes(
-            {
-                path.name: path.read_text(encoding="utf-8")
-                for path in sorted(FIXTURE_DIR.iterdir())
-                if path.suffix == ".txt"
-            }
-        )
-    )
-    cached = zip_path.read_bytes()
-    monkeypatch.setattr(njt_static, "NJT_STATIC_ZIP", zip_path)
-    calls: list = []
-    monkeypatch.setattr(njt_auth, "_httpx_post", _fake_transport(b"", calls))
-    real_parse = njt_static._parse_zip
-    faults = {"left": 1}
-
-    def failing_once(path):
-        if faults["left"]:
-            faults["left"] -= 1
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_parse(path)
-
-    monkeypatch.setattr(njt_static, "_parse_zip", failing_once)
-    app = types.SimpleNamespace(state=types.SimpleNamespace(njt_static_status="loading"))
-    seen: list = []
-    task = asyncio.create_task(warmups._warm_njt_static(app))
-    try:
-        for _ in range(2000):
-            status = app.state.njt_static_status
-            if not seen or seen[-1] != status:
-                seen.append(status)
-            if status == "ready":
-                break
-            await asyncio.sleep(0.001)
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert seen == ["loading", "failed", "ready"]
-    assert faults["left"] == 0
-    assert zip_path.read_bytes() == cached, "the cache is kept"
-    assert calls == [], "nothing was sent to NJ Transit"
-    assert len(app.state.njt_stops) == 164

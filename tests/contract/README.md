@@ -33,7 +33,8 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
   the two halves the way they do in production. Feeds carry a MODE
   (`live` / `frozen` / `empty` / `error` / `stale` / `zero-bytes` / `one-byte`);
   archives carry a PUBLICATION (`good` / `headers-only-stops` / `missing-member` /
-  `corrupt-zip` / `no-shapes`). Both are validated on
+  `corrupt-zip` / `no-shapes` / `unreadable-trips` / `damaged-shapes` /
+  `damaged-stop-times`). Both are validated on
   the way in: an unknown name is a 400 from the control endpoint, not a mystery
   failure the app reports as a bad upstream. The last two modes are a matched pair
   for NJ Transit's alerts feed, whose 200 with a zero-byte body means "no active

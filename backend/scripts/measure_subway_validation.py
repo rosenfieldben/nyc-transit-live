@@ -28,8 +28,9 @@ WHAT IT PRINTS, as one table:
                    warmup runs after validation is visible as that loader's. A stall
                    AT validation is the whole uninterrupted stretch the loop could not
                    run, which includes whatever runs inline before the next await
-                   (the stops, route shapes and station loaders): that is what the
-                   other coroutines feel, so it is what is reported. Beside it, the
+                   (the stops and station loaders, and the route shapes until
+                   claude/static-rule-siblings moved them to a worker thread): that
+                   is what the other coroutines feel, so it is what is reported. Beside it, the
                    same stretch clipped to the validation window, which is what the
                    validation itself holds the loop for.
 
@@ -350,7 +351,7 @@ async def one_attempt(modules: dict, validate, *, cached: bool, archive: Path) -
     targets = (
         (static_data, "validate_subway_archive", "validation"),
         (static_data, "_parse_stops", "stops"),
-        (main, "load_subway_route_shapes", "shapes"),
+        (main, "load_subway_route_shapes", "shapes*"),
         (main, "load_subway_stations", "stations"),
         (main, "load_subway_station_routes", "routes*"),
         (main, "load_subway_station_complexes", "complexes"),

@@ -3,6 +3,8 @@
 import csv
 import io
 import json
+import os
+import time
 import zipfile
 
 import pytest
@@ -275,3 +277,37 @@ def test_build_index_aborts_without_manifest_on_shutdown(tmp_path, monkeypatch):
         assert not (cache / "_manifest.json").exists()
     finally:
         bus_static._stop.clear()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("offset_s", "rebuilds"),
+    [(86400, True), (-86400, False)],
+    ids=["a day ahead of the clock", "a day old"],
+)
+async def test_a_manifest_dated_ahead_of_the_clock_is_stale(
+    tmp_path, monkeypatch, offset_s, rebuilds
+):
+    """The bus route index takes the static loaders' freshness test
+    (static_shared.cache_is_fresh, claude/static-rule-siblings D4): a complete manifest
+    dated ahead of the clock is stale and the index is rebuilt; one a day old is
+    served as it is."""
+    manifest = tmp_path / "_manifest.json"
+    manifest.write_text(json.dumps({"routes": ["M15"], "failed": []}))
+    dated = time.time() + offset_s
+    os.utime(manifest, (dated, dated))
+    monkeypatch.setattr(bus_static, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(bus_static, "_status", "missing")
+    monkeypatch.setattr(bus_static, "_partial", False)
+    builds = []
+
+    def build():
+        builds.append(True)
+        return {"M15"}
+
+    monkeypatch.setattr(bus_static, "_build_index_sync", build)
+
+    await bus_static.ensure_index()
+
+    assert builds == ([True] if rebuilds else [])
+    assert bus_static.status() == "ready"

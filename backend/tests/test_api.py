@@ -2679,6 +2679,61 @@ async def test_subway_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.subway_station_complexes == {"101": "101"}  # complexes wired
 
 
+async def test_the_subway_route_shapes_parse_runs_off_the_serving_loop(monkeypatch):
+    """D5 (claude/static-rule-siblings), A09's route-shapes arm: load_subway_route_shapes
+    runs in a worker thread, as the station-route index does, so every coroutine sharing
+    the loop (the pollers, /healthz) keeps running while it parses. Measured the way
+    A09's arm and backend/scripts/measure_subway_validation.py measure it, with a
+    heartbeat on the loop: the stand-in loader holds its thread for 0.3 s, and the
+    heartbeat's longest gap across the whole attempt stays far under that. Inline, the
+    gap is the whole block."""
+    block_s = 0.3
+    routes = [{"route": "1", "polylines": []}]
+
+    async def fake_stops():
+        return SUBWAY_STOPS
+
+    def slow_shapes():
+        time.sleep(block_s)  # the parse, as a coroutine waiting on the loop would feel it
+        return routes
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", slow_shapes)
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {"101": ["1"]})
+    monkeypatch.setattr(app_module, "load_subway_station_complexes", lambda: {"101": "101"})
+    stamps: list[float] = []
+    done = asyncio.Event()
+
+    async def heartbeat():
+        # Stamp on EVERY wake, the last included, as test_static_data's heartbeat does:
+        # an inline block that runs up to the attempt's return is closed by the wake
+        # after it, and a ticker that checked `done` first exited on that wake without
+        # recording it, so the block went uncounted (the inline mutant passed).
+        while True:
+            stamps.append(time.perf_counter())
+            if done.is_set():
+                return
+            await asyncio.sleep(0.005)
+
+    ticker = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.02)
+    app = _fake_app(subway_static_status="loading")
+    started = time.perf_counter()
+    try:
+        await app_module._warm_subway_static(app)
+    finally:
+        elapsed = time.perf_counter() - started
+        done.set()
+        await ticker
+
+    assert app.state.subway_static_status == "ready"
+    assert app.state.subway_routes == routes
+    assert elapsed >= block_s, "the stand-in loader ran"
+    longest = max(b - a for a, b in zip(stamps, stamps[1:], strict=False))
+    assert longest < block_s / 2, f"the loop stalled {longest * 1000:.0f} ms during the attempt"
+
+
 async def test_subway_static_failed_reload_keeps_the_previous_station_routes(monkeypatch):
     """F1's third part: the last-known-good rule applied to the routes-per-station
     index. Now that a parse problem in stop_times.txt is a FAILED load rather than an

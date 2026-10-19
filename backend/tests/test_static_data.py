@@ -1355,11 +1355,13 @@ async def test_the_loader_hands_the_two_mode_rule_its_own_verdict(
     gtfs_zip, monkeypatch, fresh_archive_status, cache
 ):
     """ONE VERDICT PER ATTEMPT (the branch's second review round). load_subway_stops
-    judges the cache once, and the two-mode rule acts on that judgment rather than
-    reading the cache again: a stale cache that serves is kept through bad geometry,
-    and a cache the always-gate refuses (platform rows only, no station) is no cache
-    to keep, so the publication is promoted with its lines degraded and every station
-    serves. The always-gate is counted: it is asked about the cache exactly once."""
+    judges the cache once, with both gates since the operator's ruling of 2026-10-16,
+    and the two-mode rule acts on that judgment rather than reading the cache again: a
+    stale cache whose lines draw is kept through bad geometry, and a cache the
+    always-gate refuses (platform rows only, no station) is no cache to keep, so the
+    publication is promoted with its lines degraded and every station serves. Both gates
+    are counted: each is asked about the cache at most once, the geometry gate only of a
+    cache the always-gate passed."""
     platforms_only = [row for row in ROUTE_STOP_ROWS if row["location_type"] != "1"]
     stops = ROUTE_STOP_ROWS if cache == "serving" else platforms_only
     write_gtfs_zip(gtfs_zip, members=loadable_members(stop_rows=stops))
@@ -1375,12 +1377,22 @@ async def test_the_loader_hands_the_two_mode_rule_its_own_verdict(
         return real(zf)
 
     monkeypatch.setattr(static_data, "validate_subway_archive", counting)
+    drawn: list = []
+    real_geometry = static_data.validate_subway_geometry
+
+    def counting_geometry(zf):
+        if Path(zf.filename) == gtfs_zip:
+            drawn.append(zf.filename)
+        return real_geometry(zf)
+
+    monkeypatch.setattr(static_data, "validate_subway_geometry", counting_geometry)
     publication = _zip_bytes(_geometry_members("header only", stop_rows=ROUTE_STOP_ROWS))
     _publish(monkeypatch, {"bytes": publication}, [])
 
     await static_data.load_subway_stops()
 
     assert len(asked) == 1, f"the cache was judged {len(asked)} times in one attempt"
+    assert len(drawn) == (1 if cache == "serving" else 0), f"its lines {len(drawn)} times"
     entry = static_shared.archive_status()["subway"]
     if cache == "serving":
         assert gtfs_zip.read_bytes() == before, "kept through bad geometry"
@@ -1488,60 +1500,6 @@ async def test_an_archive_that_passes_validation_and_fails_the_load_is_discarded
     # Exactly one download, made after the failed attempt discarded the cache.
     assert seen_at_download == [(False, "failed")]
     assert app.state.subway_station_routes == {"101": ["1"]}
-
-
-async def test_an_environment_error_at_load_keeps_the_cache_and_downloads_nothing(
-    gtfs_zip, monkeypatch
-):
-    """D3 NARROWED (the operator's ruling on the branch's review): the residual arm
-    discards for the ARCHIVE's errors only. Out of file descriptors while reading a
-    valid, fresh cache says nothing about its bytes, so through the real warmup the
-    attempt fails with the cache kept, and the next attempt reads the same cache and
-    reaches ready without a download. Discarding there used to leave the group failed
-    whenever the download that followed failed too."""
-    import errno
-    import types
-
-    import main as app_module
-    import warmups
-
-    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
-    write_loadable_gtfs_zip(gtfs_zip)  # valid and fresh: no download is needed
-    cached = gtfs_zip.read_bytes()
-    real_reader = static_data._parse_stops_rows
-    faults = {"left": 1}
-
-    def failing_once(raw):
-        if faults["left"]:
-            faults["left"] -= 1
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_reader(raw)
-
-    monkeypatch.setattr(static_data, "_parse_stops_rows", failing_once)
-    downloads: list = []
-
-    async def fetch(url, dest, validate, **kwargs):
-        downloads.append(url)
-
-    monkeypatch.setattr(static_data, "staged_fetch", fetch)
-    app = types.SimpleNamespace(state=types.SimpleNamespace(subway_static_status="loading"))
-    seen: list = []
-    task = asyncio.create_task(warmups._warm_subway_static(app))
-    try:
-        for _ in range(2000):
-            status = app.state.subway_static_status
-            if not seen or seen[-1] != status:
-                seen.append(status)
-            if status == "ready":
-                break
-            await asyncio.sleep(0.001)
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert seen == ["loading", "failed", "ready"]
-    assert faults["left"] == 0
-    assert gtfs_zip.read_bytes() == cached, "the cache is kept"
-    assert downloads == []
 
 
 RESIDUAL_SITES = {

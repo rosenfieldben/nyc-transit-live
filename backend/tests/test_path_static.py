@@ -17,6 +17,7 @@ import io
 import os
 import time
 import zipfile
+import zlib
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -24,6 +25,7 @@ import pytest
 
 import path_static
 from conftest import golden_fixture_guard
+from tests.archive_damage import damaged_stream, rot_after_the_check
 
 pytestmark = pytest.mark.anyio
 
@@ -176,7 +178,7 @@ DEFAULT_STOP_TIME_ROWS = [{"trip_id": "t1", "stop_id": "781718", "stop_sequence"
 
 
 def write_loadable_path_zip(path, **kwargs):
-    """Write a zip that passes validate_path_archive (C5 seam).
+    """Write a zip that passes validate_path_publication, the gate the cached check runs.
 
     The validator requires stop_times.txt, which 13d's advance matching walks, so
     every archive a cache-lifecycle test hands load_path_static carries one. The
@@ -754,6 +756,39 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(
     data = await path_static.load_path_static()
     assert calls == [True]  # exactly one re-download
     assert "26733" in data["stops"]
+
+
+async def test_a_cache_that_rots_after_its_check_is_discarded_and_refetched(
+    path_paths, monkeypatch
+):
+    """D1 ON claude/static-rule-siblings. The cache passes its check and then rots (a
+    damaged DEFLATE stream in trips.txt, which the load reads), so the load's read raises
+    zlib.error. This loader's residual arm named BadZipFile, KeyError, UnicodeDecodeError
+    and csv.Error and not zlib.error, so the error escaped load_path_static on every
+    attempt and the cache stayed for its 30 days. With the shared arm
+    (static_shared.UNREADABLE_AT_LOAD) the cache is discarded, the attempt yields {}, and
+    the next attempt downloads instead of failing on the same bytes."""
+    write_loadable_path_zip(path_paths)
+    rotted = damaged_stream(path_paths.read_bytes(), "trips.txt")
+    with zipfile.ZipFile(io.BytesIO(rotted)) as zf, pytest.raises(zlib.error):
+        zf.read("trips.txt")  # the premise: inflate refuses it, not the CRC check
+    rot_after_the_check(monkeypatch, path_static, path_paths, rotted)
+    calls = []
+
+    async def fake_download(**_kwargs):
+        calls.append(True)
+        write_loadable_path_zip(path_paths)
+
+    monkeypatch.setattr(path_static, "_download_zip", fake_download)
+
+    assert await path_static.load_path_static() == {}
+    assert not path_paths.exists(), "the unreadable cache is discarded"
+    assert calls == []
+
+    data = await path_static.load_path_static()
+
+    assert calls == [True]
+    assert data["stops"] and data["trips"]
 
 
 async def test_unusable_cache_and_failed_redownload_returns_empty(path_paths):

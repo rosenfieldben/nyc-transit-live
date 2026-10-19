@@ -153,6 +153,7 @@ PUBLICATIONS = (
     "no-shapes",
     "unreadable-trips",
     "damaged-shapes",
+    "damaged-stop-times",
 )
 
 # What NJ Transit's getGTFS does with the token it is handed. Enumerated and
@@ -913,12 +914,13 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
         # 15c: the archive with no shapes.txt. It is here rather than in the NJT
         # branch alone because the same drop means DIFFERENT THINGS per loader, and
         # being able to say both is the point: NJ Transit treats shapes.txt as
-        # optional (route lines are additive, so the group still reaches ready and
-        # serves an empty /api/njt-routes), while PATH and the ferry both list it
-        # among the members they READ and cannot degrade around, so for them this is
-        # a missing REQUIRED member and the load fails. A member set that has no
-        # shapes.txt at all gets a body identical to "good", which is honest: there
-        # is nothing to drop.
+        # decorative (route lines are additive, so on a cold start the group still
+        # reaches ready, serves an empty /api/njt-routes and names shapes.txt degraded,
+        # and over a cache whose lines draw it is refused), while PATH and the ferry
+        # both list it among the members they READ and cannot degrade around, so for
+        # them this is a missing REQUIRED member and the load fails. A member set that
+        # has no shapes.txt at all gets a body identical to "good", which is honest:
+        # there is nothing to drop.
         "no-shapes": _zip_of(members, drop=("shapes.txt",)),
         # A02: a sound zip whose trips.txt holds one byte that is not UTF-8. Before
         # claude/a02-publication-validation the subway validator never opened
@@ -931,14 +933,22 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
             else _zip_of(members)
         ),
         # A02b: shapes.txt present, its DEFLATE stream damaged. Like no-shapes, it
-        # means different things per loader, and that is the point: NJ Transit gates
-        # nothing on shapes.txt and must degrade to no route lines; the subway gates it
-        # as decorative, refusing it only over a cache that draws and otherwise
-        # promoting it with shapes.txt named degraded; PATH and the ferry read it and
-        # refuse the publication at validation.
+        # means different things per loader, and that is the point: the subway and,
+        # since claude/static-rule-siblings, NJ Transit gate it as decorative, refusing
+        # it only over a cache that draws and otherwise promoting it with shapes.txt
+        # named degraded; PATH and the ferry read it and refuse the publication at
+        # validation.
         "damaged-shapes": (
             _with_damaged_deflate(_zip_of(members), "shapes.txt")
             if "shapes.txt" in members
+            else _zip_of(members)
+        ),
+        # The same damage in stop_times.txt, which is DECORATIVE for the railroads (it
+        # feeds only the routes-per-station index; claude/static-rule-siblings, D3) and
+        # required everywhere else, where it is refused at validation.
+        "damaged-stop-times": (
+            _with_damaged_deflate(_zip_of(members), "stop_times.txt")
+            if "stop_times.txt" in members
             else _zip_of(members)
         ),
     }

@@ -20,6 +20,7 @@ import os
 import threading
 import time
 import zipfile
+import zlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -27,6 +28,7 @@ import pytest
 
 import ferry_static
 from conftest import golden_fixture_guard
+from tests.archive_damage import damaged_stream, rot_after_the_check
 
 pytestmark = pytest.mark.anyio
 
@@ -169,7 +171,7 @@ DEFAULT_STOP_TIME_ROWS = [
 
 
 def write_loadable_ferry_zip(path, **kwargs):
-    """Write a zip that passes validate_ferry_archive (C5 seam).
+    """Write a zip that passes validate_ferry_publication, the gate the cached check runs.
 
     The validator requires stop_times.txt, which H5's routes-per-dock index needs
     to route a route-scoped alert to a dock, so every archive a cache-lifecycle
@@ -533,6 +535,39 @@ async def test_fresh_but_empty_cache_redownloads_and_recovers(ferry_paths, monke
     data = await ferry_static.load_ferry_static()
     assert calls == [True]
     assert "18" in data["stops"]
+
+
+async def test_a_cache_that_rots_after_its_check_is_discarded_and_refetched(
+    ferry_paths, monkeypatch
+):
+    """D1 ON claude/static-rule-siblings. The cache passes its check and then rots (a
+    damaged DEFLATE stream in trips.txt, which the load reads), so the load's read raises
+    zlib.error. This loader's residual arm named BadZipFile, KeyError, UnicodeDecodeError
+    and csv.Error and not zlib.error, so the error escaped load_ferry_static on every
+    attempt and the cache stayed for its 30 days. With the shared arm
+    (static_shared.UNREADABLE_AT_LOAD) the cache is discarded, the attempt yields {}, and
+    the next attempt downloads instead of failing on the same bytes."""
+    write_loadable_ferry_zip(ferry_paths)
+    rotted = damaged_stream(ferry_paths.read_bytes(), "trips.txt")
+    with zipfile.ZipFile(io.BytesIO(rotted)) as zf, pytest.raises(zlib.error):
+        zf.read("trips.txt")  # the premise: inflate refuses it, not the CRC check
+    rot_after_the_check(monkeypatch, ferry_static, ferry_paths, rotted)
+    calls = []
+
+    async def fake_download(**_kwargs):
+        calls.append(True)
+        write_loadable_ferry_zip(ferry_paths)
+
+    monkeypatch.setattr(ferry_static, "_download_zip", fake_download)
+
+    assert await ferry_static.load_ferry_static() == {}
+    assert not ferry_paths.exists(), "the unreadable cache is discarded"
+    assert calls == []
+
+    data = await ferry_static.load_ferry_static()
+
+    assert calls == [True]
+    assert data["stops"] and data["trips"]
 
 
 async def test_unusable_cache_and_failed_redownload_returns_empty(ferry_paths):

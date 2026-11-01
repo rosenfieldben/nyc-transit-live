@@ -88,6 +88,23 @@ closed the same way, every earlier fix was re-run against the tightened script, 
 the cells mark them **Adversarial round**. What a script still cannot see is stated in
 its docstring and, where it matters, in its cell as a **known limit**.
 
+## Harness repairs
+
+A repair to how a script runs, never to what it measures, recorded here so a script's
+history tells the two apart (the 2026-09-05 directory's precedent, PR #117).
+
+- **A03, on `claude/pytest-9-2-restore`, 2026-11-01.** pytest 9.2.0 (published
+  2026-10-27) stopped the script at `KeyError: 'subway_station_routes'` before it measured
+  anything, in the undo of its `MonkeyPatch`. `run_world` patched
+  `main.app.state.subway_station_routes` on the same `MonkeyPatch` that `f03_world` had
+  already patched it on, and from 9.2.0 `MonkeyPatch.setattr` takes the old value from the
+  target's `__dict__`, where Starlette's `State` keeps nothing (it holds its attributes in
+  `_state`), so both patches recorded the name as absent and the second undo deleted it
+  again. The script now assigns the value after the world's patch, and the world's own undo
+  clears it. **No check changed**: the same 27 checks with the same labels, and the
+  repaired script's output under pytest 9.2.0 is byte-identical to the original's under
+  9.1.1, `DISPOSITION` line included.
+
 ## The scripts
 
 | Script | Finding | What it drives | Killed by (change made in a scratch copy, exit observed) |

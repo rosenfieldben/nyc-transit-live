@@ -728,7 +728,19 @@ a later promotion whose member reads, which in production means the next deploy:
 running process does not re-fetch an archive it has promoted, so a corrected upstream
 publication is picked up by redeploying, not by waiting. Whether a cache draws is the
 loader's own verdict on it at the start of that attempt, read once with both gates, so
-the rule and the loader never disagree about the same file. Every other table
+the rule and the loader never disagree about the same file. That verdict does not tell
+a bad archive from a bad machine: `validate_archive` turns every exception raised while
+it reads an archive, `OSError` included, into a validation failure, so a disk or
+filesystem fault during the check reads as "the cache does not draw" at the decorative
+gate and as "no cache" at the always-gate (`cached_archive_draws`,
+`backend/static_shared.py`). Today that costs nothing, because there is no cache across
+a deploy to lose. **A note for the branch that gives the data directory a persistent
+volume:** there the cache is the thing worth keeping, and a transient fault at the
+check would force a download over a good cache (at the always-gate) or decide the mode
+against it (at the decorative gate), so that a publication whose decorative member does
+not draw is promoted over a cache whose member does. That branch has to tell the
+archive's own errors from the environment's at the check before it trusts the mode.
+Every other table
 (stations, trips, calls, transfers, routes, the service calendar) refuses in every mode
 when the load cannot read it, and the floors past that differ by loader: the subway
 also refuses an empty calls table and one that does not join (one call of a routed trip

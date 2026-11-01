@@ -266,7 +266,7 @@ The map follows one rule: **animate the journey, never the adjustment.**
 
 axe reports a third category besides pass and fail: **incomplete**, meaning it
 needs a human. A green "zero violations" says nothing about those, so the gate
-asserts them too. The list is closed: an incomplete finding outside these nine
+asserts them too. The list is closed: an incomplete finding outside these eleven
 shapes fails the build. Each entry names the test that answers the question axe
 declined, and `a11y.spec.js A1z` **asserts that pairing**, so an exception cannot
 quietly become a suppression with a sentence attached.
@@ -282,6 +282,23 @@ quietly become a suppression with a sentence attached.
 | Contrast of a station name label, which sits directly on map tiles | a station's name is a permanent Leaflet tooltip with no background of its own: it is ink over live imagery with a halo of stacked text-shadows, so there is no single colour to compute against | `a11y.spec.js A1z3` composites the halo over **both** extremes a tile can be, black and white, measures the label's own ink against the worse of the two and requires AA, in both themes; it also asserts that every tooltip on the page is a station label, which is what keeps the exception from widening. What it does not claim: a text-shadow is a spread rather than a fill, so this is the answer at a character's edge, where legibility is decided, and optimistic in the counters of an "o" |
 | Contrast of a commuter rail tag's type, overlapped by a neighbouring tag | a rail train's mark is a two-part tag 35 to 45px wide where the square it replaced was 16, so at regional zoom the tags overlap each other and axe reaches a neighbouring marker before it reaches the block the 8px type is printed on. Measured on the stock fixture with MR3's tags on the map: 37 findings at 1280 and 17 at 375, every one of them "background color could not be determined because it is overlapped by another element". The tag's SVG is `aria-hidden` (its whole name is on the marker as `role="img"` plus `aria-label`, so the two glyphs are a picture of information a screen reader already has better), and that is not what excuses this: axe's contrast rule scans them anyway, correctly, because a sighted rider still sees them | `a11y.spec.js A1z4` reads each tag's printed ink and the fill of the block it is printed on straight off the drawn page, in both themes, and requires AA; it also asserts that every `svg.rail-tag` on the page belongs to a rail tag marker, which is what keeps the exception from widening. `frontend/railtag.test.js` measures the same pair in node over all 31 `(route_color, route_text_color)` pairs the three feeds publish, which is what found that eight of them do not clear 4.5 as published. What it does not claim: a tag a NEIGHBOURING tag covers is a density question rather than a contrast one, answered by the zoom presets and the feed toggles and recorded as a finding in `docs/reviews/map-redesign-rounds.md` |
 | Whether the skip link's target becomes visible on activation | the panel is hidden at scan time and no static rule can activate a link | `mobile.spec.js A6g` presses it at 375 and asserts focus lands inside the panel that was hidden a moment earlier; `A6h` asserts the desktop behaviour it must not break |
+| Whether a Key route bullet's visible text is part of its accessible name, when that text is one letter | axe-core 4.14 runs `label-content-name-mismatch` by default and declines any control whose visible text is one non-digit character, so a letter bullet ("A") is undecided where a digit bullet ("1") is decided and passes | `subway.spec.js D2a` asserts every bullet's accessible name is exactly "Focus route" followed by its visible text, so the visible label is the last word of the name and SC 2.5.3 is met |
+| Whether the visible text of Leaflet's zoom in, zoom out and popup close is part of their accessible names | the same rule declines each control's visible content, a single glyph (`+`, `−`, `×`) inside `aria-hidden="true"` | `a11y.spec.js A1z5` pins each control's computed accessible name ("Zoom in", "Zoom out", "Close popup"), its button role, and that its only visible content is that one glyph inside `aria-hidden="true"`: a symbolic use, which SC 2.5.3 does not count as a visible label |
+
+**Label in Name (SC 2.5.3).** axe-core 4.14 runs `label-content-name-mismatch` by
+default, and the last two rows above are its undecidables on this page, each answered by a
+spec rather than excluded from the scan. A Key route bullet's visible id names a train in
+the rider's language, so 2.5.3 applies to it, and it is met: the id is always the last word
+of the bullet's name, "Focus route A" for "A" (`subway.spec.js D2a`). Leaflet's zoom in,
+zoom out and popup close each show one glyph inside `aria-hidden="true"` that stands for an
+action rather than saying it, which W3C's Understanding document for 2.5.3 does not count as
+a visible label: "text should not be considered a visible label if it is used in a symbolic
+manner, rather than directly “expressing something in human language” as per the
+definition of text in WCAG" (section "Symbolic text characters"). That document's exception
+for mathematical expressions covers formulae such as "A>B", not a lone glyph used as an icon.
+Each control is named for the function it serves, and `a11y.spec.js A1z5` pins the name, the
+role and the single glyph, so a change to Leaflet's markup fails there rather than passing
+under this exception.
 
 This inventory may only shrink by **conversion**: an entry leaves it by becoming
 decidable and passing, never by being deleted and never by loosening a pattern

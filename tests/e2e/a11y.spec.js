@@ -359,6 +359,73 @@ const UNDECIDABLE_SHAPES = [
       "mobile.spec.js A6g presses the link at 375 and asserts focus lands inside the panel that " +
       "was hidden a moment earlier; A6h asserts the desktop behaviour it must not break.",
   },
+  {
+    /* AXE 4.14 TURNED label-content-name-mismatch ON BY DEFAULT (axe-core #5421; it had been
+       tagged experimental, which a default scan skips), and its evaluator declines any control
+       whose visible text is one non-digit character: isHumanInterpretable returns 0 for it, so
+       the check returns undefined. The two shapes below are that rule's undecidables on this
+       page, each scoped by element class and each decided by a spec.
+
+       THE KEY'S ROUTE BULLETS. A bullet's visible text is its bare route id and its name is
+       "Focus route {id}" (systems/shared.js buildSubwayKey). A digit id is decided and passes;
+       a letter id is one non-digit character, so axe declines it. The stock fixture's Key holds
+       two bullets, "1" and "A", which is why axe 4.14 reported only "A", and only in the states
+       where the Key is rendered (all of 1280, and "key open" at 375 and 320); every letter
+       bullet a real route list draws is in the same position, so the shape is the class, not
+       the route. A route letter names a train in the rider's language, so SC 2.5.3 applies to
+       it, and it is met: the visible id is the last word of the name. */
+    name: "a Key route bullet's label in name, when its visible id is one letter",
+    rule: "label-content-name-mismatch",
+    message: /Unable to determine if the visible text is part of the accessible name/,
+    where: (id) => /^#subway-key .*button\.bul(:\d+)?$/.test(id),
+    decider:
+      "subway.spec.js D2a asserts every Key bullet's accessible name is exactly " +
+      '"Focus route {its visible text}" (its lines 172 to 175), so the visible label is the ' +
+      "last word of the name.",
+  },
+  {
+    /* LEAFLET'S ZOOM IN, ZOOM OUT AND POPUP CLOSE, the same rule's other undecidable. Each is
+       Leaflet's own markup (frontend/vendor/leaflet/leaflet.js): an <a role="button"> named
+       "Zoom in", "Zoom out" or "Close popup" whose only visible content is one glyph, "+",
+       U+2212 or U+00D7, inside <span aria-hidden="true">. axe declines a one-character visible
+       text, and the answer is that SC 2.5.3 does not treat such a glyph as a visible label. W3C,
+       Understanding SC 2.5.3: Label in Name, section "Symbolic text characters"
+       (https://www.w3.org/WAI/WCAG22/Understanding/label-in-name.html, fetched 2026-11-01),
+       verbatim:
+
+         For the purposes of this SC, text should not be considered a visible label if it is
+         used in a symbolic manner, rather than directly "expressing something in human
+         language" as per the definition of text in WCAG. For example, 1.4.5 Images of Text
+         describes considerations for "symbolic text characters." In the images of text example
+         "B", "I", and "ABC" appear on icons in a text editor, where they are meant to symbolize
+         the functions for Bold, Italics, and Spelling, respectively. In such a case, the
+         accessible name should be the function the button serves (e.g., "Spell check" or
+         "Check spelling"), not the visible symbolic characters. A similar text editor is shown
+         in the figure below.
+
+         Likewise, where an author has used a greater-than symbol (">") to mimic the appearance
+         of the right-facing arrow, the text does not convey something in human language. It
+         is a symbol, in this scenario likely meant to mimic the icons used for a "Play" button
+         or a "Next" arrow.
+
+       The same document's next section, "Mathematical expressions and formulae", says
+       "Mathematical expressions are an exception to the previous subsection about symbolic
+       characters. Math symbols can be used as labels; for example "A>B" and "11×3=33" and
+       convey meaning." These glyphs are not expressions: each stands alone for an action
+       (zoom, close), which is the symbolic use the first passage describes, and each name is
+       the function the control serves, as that passage asks. The decider pins exactly that
+       shape, so a Leaflet upgrade that put words on these controls, or a letter where the glyph
+       is, fails there instead of being excused here. */
+    name: "a Leaflet control's label in name, when its visible content is one symbol glyph",
+    rule: "label-content-name-mismatch",
+    message: /Unable to determine if the visible text is part of the accessible name/,
+    where: (id) =>
+      /a\.leaflet-control-zoom-(in|out)(:\d+)?$/.test(id) || /a\.leaflet-popup-close-button(:\d+)?$/.test(id),
+    decider:
+      "a11y.spec.js A1z5 pins each control's computed accessible name (Zoom in, Zoom out, Close " +
+      'popup), its button role, and that its only visible content is one symbol glyph inside ' +
+      'aria-hidden="true", which is the symbolic use SC 2.5.3 does not count as a visible label.',
+  },
 ];
 
 async function assertUndecidablesAreKnown(page, results, label) {
@@ -1555,6 +1622,54 @@ test("A1z4. every commuter rail tag's type is legible on the block it is printed
     }
   }
   await closePopups();
+});
+
+test("A1z5. Leaflet's zoom and popup-close controls: a named button whose only visible content is one symbol glyph", async ({
+  page,
+}) => {
+  /* THE DECIDER FOR THE label-content-name-mismatch SHAPE ON LEAFLET'S CONTROLS. axe declines
+     these because the visible text is one character; the shape says that is a symbolic use,
+     which SC 2.5.3 does not count as a visible label, and this is what makes that a measured
+     fact about the drawn page rather than an assumption about Leaflet. Each control must be a
+     button, carry the name of the function it serves, and show nothing but one glyph that is
+     neither a letter nor a digit, inside aria-hidden="true". The names are read through the
+     accessibility tree (toHaveAccessibleName), not off the attribute, so a name supplied some
+     other way is measured too. A popup is opened as A1z opens one, because the close control
+     exists only while a popup does. */
+  await page.setViewportSize(DESKTOP);
+  await open(page, { alerts: 0 });
+  await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
+    if (!placed) throw new Error("the fixture no longer has a railroad train drawn on its station to open");
+    placed.marker.openPopup();
+  });
+  await expectState(page, ["one popup open", "popup finished opening"], "A1z5 reads the popup close control");
+
+  const CONTROLS = [
+    { selector: ".leaflet-control-zoom-in", name: "Zoom in", glyph: "+" },
+    { selector: ".leaflet-control-zoom-out", name: "Zoom out", glyph: "−" },
+    { selector: ".leaflet-popup-close-button", name: "Close popup", glyph: "×" },
+  ];
+  for (const control of CONTROLS) {
+    const el = page.locator(control.selector);
+    await expect(el, `${control.selector} is drawn exactly once`).toHaveCount(1);
+    await expect(el, `${control.selector} is a button`).toHaveRole("button");
+    await expect(el, `${control.selector} is named for the function it serves`).toHaveAccessibleName(control.name);
+    const content = await el.evaluate((node) =>
+      [...node.childNodes].map((child) =>
+        child.nodeType === Node.ELEMENT_NODE
+          ? { tag: child.tagName, ariaHidden: child.getAttribute("aria-hidden"), text: child.textContent }
+          : { text: child.textContent },
+      ),
+    );
+    expect(content, `${control.selector}'s only content is one glyph inside aria-hidden="true"`).toEqual([
+      { tag: "SPAN", ariaHidden: "true", text: control.glyph },
+    ]);
+    expect([...control.glyph].length, `${control.name}'s glyph is one character`).toBe(1);
+    expect(/^[^\p{L}\p{N}]$/u.test(control.glyph), `${control.name}'s glyph is a symbol, not a letter or a digit`).toBe(
+      true,
+    );
+  }
 });
 
 test("A1l. the gate has teeth: a defect anywhere on the page IS caught", async ({ page }) => {

@@ -521,7 +521,12 @@ def run_world(
         # The acceptance test's own fixture primes app.state and patches the clock, and
         # hands the clock back; the MonkeyPatch restores everything it set.
         clock = inspect.unwrap(world.f03_world)(mp)
-        mp.setattr(main.app.state, "subway_station_routes", station_routes, raising=False)
+        # Assigned, not patched: f03_world has already patched this name on mp. From pytest
+        # 9.2.0 MonkeyPatch.setattr takes the old value from the target's __dict__, and
+        # app.state keeps nothing there (Starlette's State holds it in _state), so both
+        # patches would record the name as absent and each undo would delete it, the second
+        # raising KeyError. The world's own undo still clears the value.
+        main.app.state.subway_station_routes = station_routes
 
         async def go() -> None:
             for k, (at, body, failing) in enumerate(schedule):

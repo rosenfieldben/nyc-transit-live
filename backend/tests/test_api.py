@@ -997,7 +997,11 @@ async def test_healthz_gating_reasons_all_appear_as_codes(client, healthz_env, m
     _stale(healthz_env["buses"])
     _stale(healthz_env["subways"])
     monkeypatch.setattr(bus_static, "_status", "failed")
-    monkeypatch.setattr(app_module.app.state, "subway_static_status", "failed", raising=False)
+    # Assigned, not patched: healthz_env has already patched this name. From pytest 9.2.0
+    # MonkeyPatch.setattr takes the old value from the target's __dict__, and app.state keeps
+    # nothing there (Starlette's State holds it in _state), so both patches would record the
+    # name as absent and each undo would delete it, the second raising KeyError.
+    app_module.app.state.subway_static_status = "failed"
     res = await client.get("/healthz")
     assert res.status_code == 503
     assert res.json()["degraded"] == [

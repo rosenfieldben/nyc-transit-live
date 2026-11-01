@@ -14,7 +14,10 @@ answered stops being evidence of what was actually asked. **Amendment 1** (A03 a
 the 2026-10-12 audit, the last section of this document) is PROPOSED on
 `claude/design-freshness-amendment-1`, for review before anything is built from it, and
 changes nothing yet: sections 1 to 6 and the Decisions of 2026-09-12 read as they did
-before it, and the body is amended in place only on the date its own decisions land.
+before it, and the body is amended in place only on the date its own decisions land. Its
+citations are at `1d17aa0`, and the application code is `1d17aa0`'s: the branch's fork
+commit is `74bd2ee` (PR #131's merge), and the two merges between change no application
+code.
 
 **Written against:** `672206a`, the `main` this branch forked from, with items 1 to 6 of
 the Release 1 order in [the audit record](../reviews/audit-2026-09-05.md) already landed
@@ -1566,7 +1569,8 @@ under it, at 6.3.
 ## Amendment 1, 2026-11-01: empty boards and headerless generations (A03, A10)
 
 **Proposed, not built, and not decided.** This section is written on
-`claude/design-freshness-amendment-1`, forked from `main` at `1d17aa0` (PR #127's merge), as
+`claude/design-freshness-amendment-1`, forked from `main` at `1d17aa0` (PR #127's merge) and
+rebased onto `74bd2ee` (PR #131's merge), as
 item 3 of the release order in [the 2026-10-12 record](../reviews/audit-2026-10-12.md)
 (Section 4), first half: A03 and A10 as an amendment to this contract, for review before
 anything is built from it. It changes no code, no test, no fixture, no golden and no witness
@@ -1582,12 +1586,19 @@ above, which this amendment poses as Q8.
 below is a path and a line range at that commit, re-anchored for this amendment rather than
 carried over from the audit's links, which were taken at `1e3e73d` with four pull requests
 merged since. Every number is measured on this branch by the command named beside it, from
-the repository root, on CPython 3.12.13 with `backend/requirements-dev.txt` installed and
-pytest held at 9.1.1, the version CI last installed on `main` (run 39295886396, 2026-10-19).
-That pin is part of the command: pytest 9.2.0 (published 2026-10-27) restores a patched
-attribute from the target's instance `__dict__`, which Starlette's `State` does not use, so
-under it the A03 witness stops at `KeyError: 'subway_station_routes'` before it measures
-anything.
+the repository root, on CPython 3.12.13 with `backend/requirements-dev.txt` installed, and
+at `1d17aa0` under pytest 9.1.1, the version CI last installed on `main` before 9.2.0 was
+published (run 39295886396, 2026-10-19): at that commit pytest 9.2.0 (published 2026-10-27)
+stopped the A03 witness at `KeyError: 'subway_station_routes'` before it measured anything,
+because it restores a patched attribute from the target's instance `__dict__`, which
+Starlette's `State` does not use. PR #130 (merged as `ef98328`) fixed that double patch at
+its source, a harness repair with every check unchanged, and pins `pytest==9.2.0`.
+**The rebase onto `74bd2ee` changes no application code.** PR #130 and PR #131 between them
+change `backend/requirements-dev.txt`, one patch in `backend/tests/test_api.py` and one in
+the A03 witness, the 2026-10-12 harness README, the npm test tooling and `ACCESSIBILITY.md`.
+Of this section's citations, only those into `backend/tests/test_api.py` past line 1000
+move, each four lines later at `74bd2ee`: `:1291-1350` is `:1295-1354` there, `:1353-1445`
+is `:1357-1449`, `:5572` is `:5576` and `:5682-5683` is `:5686-5687`.
 
 ### A1.1 The problem, with the numbers
 
@@ -1758,7 +1769,7 @@ tests that already pin a cell named beside it.
 | Family | (i) failing, rows still on the board | (ii) failing, rows past their time | (iii) failing, past the retention cap | (iv) never decoded in this process | (v) healthy and empty |
 | --- | --- | --- | --- | --- | --- |
 | Subway union (`/api/subway-arrivals/219`) | `systems` names 1-7+S: `ok: false`, `fetched_at` frozen at the last decode, `retained_since` set; rows `retained` | **`systems: null`**, `fetched_at` the aggregate's (0 s old), `feed_timestamp: null`: identical to (v) | **the same as (ii)**, from T0+620 s | **the same as (v)**: the group has no row here, so it is not a contributor | `systems: null`, `fetched_at` the aggregate's, `feed_timestamp: null` |
-| Railroad (`/api/railroad-arrivals/LIRR/{stop}`) | `systems` names LIRR: `ok: false`, `fetched_at` frozen, `retained_since` set; rows `retained`, pruned at each poll | `systems` keeps LIRR, `ok: false`, `fetched_at` frozen; directions `{}` | the same; the cap also drops rows not yet due, and `retained_since` reads null for one poll and then restarts | with Metro-North healthy: HTTP 200, `systems` names LIRR with `ok: false`, `fetched_at: null`, `feed_timestamp: null`, `retained_since` set; with both failing: HTTP 502 | `systems` names LIRR, `ok: true`, both clocks current |
+| Railroad (`/api/railroad-arrivals/LIRR/{stop}`) | `systems` names LIRR: `ok: false`, `fetched_at` frozen, `retained_since` set; rows `retained`, pruned at each poll | `systems` keeps LIRR, `ok: false`, `fetched_at` frozen; directions `{}` | the same; the cap also drops rows not yet due, and `retained_since` reads null for one poll in 31 and then restarts, a 620 s cycle at the 20 s poll (H4 on the 2026-10-12 record's live list) | with Metro-North healthy: HTTP 200, `systems` names LIRR with `ok: false`, `fetched_at: null`, `feed_timestamp: null`, `retained_since` set; with both failing: HTTP 502 | `systems` names LIRR, `ok: true`, both clocks current |
 | PATH (`/api/path-arrivals/{stop}`) | `systems: null` in every state; rows kept as `reported`, `fetched_at` frozen | **no pruning**: departed rows are served as they were, measured to T0+3620 s | **no cap**: the same as (ii) | HTTP 503 before any poll; **HTTP 502** after a failed first poll, carrying the sanitized upstream error | `systems: null`, `feed_timestamp: null`, `fetched_at` current |
 | NJ Transit (`/api/njt-arrivals/{stop}`) | `systems` names `njt`: `ok: false`, `fetched_at` frozen; rows kept as `reported` | **no pruning**, measured to T0+14400 s | **no cap**: the same as (ii) | HTTP 503 before any poll (also while static loads, and when unconfigured); **HTTP 502** after a failed first poll | `systems` names `njt`, `ok: true`; `arrivals: []` |
 | NYC Ferry (`/api/ferry-arrivals/{stop}`) | `systems: null` in every state; rows kept as `reported`, `fetched_at` frozen | **no pruning**, measured to T0+14400 s | **no cap**: the same as (ii); `FEED_RETENTION_MAX_S` has no effect on it | HTTP 503 before any poll; **HTTP 502** after a failed first poll, whichever leg failed | `systems: null`, `feed_timestamp: null`, `fetched_at` current; `routes: {}` |
@@ -1767,40 +1778,63 @@ tests that already pin a cell named beside it.
 **What the rider reads on an empty board**, from the same served bodies through the
 production renderers (`frontend/helpers.js` loaded in `node` the way
 `frontend/boards.test.js` loads it, `boardFreshness`, `boardSystemLine` and each family's
-popup renderer). One column was read rather than rendered, and says so: a non-200 board
-never reaches those renderers, and the drivers do not run the browser-side controller that
-handles it (`frontend/systems/shared.js:2856-2861` and `:2891-2898` for the popup,
-`frontend/stations.js:509-514` for the panel):
+popup renderer). State (iv)'s HTTP 502 never reaches those renderers, so it was rendered by
+the page itself, in the browser, where the popup prints the body's `detail`
+(`frontend/systems/shared.js:2891-2896` into `stationError`, `:2856-2860`) and the panel
+prints it and speaks it (`frontend/stations.js:513-514`, `:660-665`); the text and how it
+was measured are under the table:
 
 | Family | (ii) or (iii), failing and empty | (iv) never decoded | (v) healthy and empty |
 | --- | --- | --- | --- |
 | Subway | `No trains`, no line: **identical to (v)** | `No trains`: **identical to (v)** | `No trains` |
-| Railroad | `No trains`; from 90 s after the last decode, `as of {age} ago` above it | `No trains`: **identical to (v)** (with Metro-North healthy) | `No trains` |
-| PATH | rows never leave a failing board, so it is empty only when it failed empty: `No trains`, then `as of {age} ago` from 90 s | the backend's error detail, verbatim (read, not rendered) | `No trains` |
-| NJ Transit | as PATH | the backend's error detail, verbatim (read, not rendered) | `No trains` |
-| NYC Ferry | as PATH, with `No boats` | the backend's error detail, verbatim (read, not rendered) | `No boats` |
+| Railroad | `No trains`; from 90 s after the last decode, `as of {age} ago` above it | `No trains`: **identical to (v)** (with Metro-North healthy); with both failing, the 502's `detail`, `All railroad feeds failed: LIRR: Server error '503 Service Unavailable' for url '<feed url> For more information check: <feed url> MNR: ...` and the same for Metro-North | `No trains` |
+| PATH | rows never leave a failing board, so it is empty only when it failed empty: `No trains`, then `as of {age} ago` from 90 s | the 502's `detail`: `Upstream PATH bridge feed error: Server error '503 Service Unavailable' for url '<feed url> For more information check: <feed url>` | `No trains` |
+| NJ Transit | as PATH | the 502's `detail`: `Upstream NJ Transit feed error: NJ Transit returned HTTP 503: (empty body)`, the upstream's body in place of `(empty body)` when it sends one | `No trains` |
+| NYC Ferry | as PATH, with `No boats` | the 502's `detail`, PATH's with `Upstream NYC Ferry feed error:` in front, from the first failing leg | `No boats` |
+
+**What the 502 carries, rendered.** Its body is `{"detail": ...}`: `_require_filled_cache`
+raises the error the failed poll recorded (`backend/cache.py:321-333`), and the same detail is
+`/api/status`'s `feeds.<entry>.last_error` (`backend/routes/status.py:119`). The detail is a
+family prefix and the upstream exception's own text, with only its URL runs replaced by
+`<feed url>` (`_sanitize_upstream`, `backend/cache.py:248-268`, whose `https?://\S+` also
+takes the closing quote after the URL and, on the railroad, the `;` of its join). For PATH,
+the ferry and the railroads that text is httpx's `raise_for_status` message, which carries
+the upstream's status code and HTTP reason phrase and not its body; for NJ Transit it is
+`_body_or_raise`'s, which carries up to 200 characters of the upstream's body, whitespace
+collapsed (`backend/njt_auth.py:647-665`, `:1479`), and not the reason phrase (`:705` keeps
+only the status and the bytes). With a stub upstream that put one marker in its reason phrase
+and another in its body, the reason phrase's marker reached the rider on PATH, the ferry (its
+first failing leg's only, `backend/feeds/ferry.py:459`) and both railroads, and the body's on
+NJ Transit, each on the popup, on the panel, and in `#stations-announce`, which speaks
+"{station}, {label}. {detail}". The popup escapes it, so it shows as text, not markup. So text
+the upstream chose reaches a rider-facing response: H6 on the 2026-10-12 record's live list,
+which stands apart from Q10.
 
 **How each row was measured.** Every world polls every 20 s and fails its contributor from
 the first poll after a healthy one (T0), except state (iv), which fails it from the first poll
-of the process; "failing" is HTTP 503 unless a row says otherwise.
+of the process; "failing" is HTTP 503 unless a row says otherwise. The review round re-derived
+the subway's cells, in both tables, from this text alone, by re-running the committed A03
+witness; every other cell was checked against the uncommitted drivers' reports, and its
+bullet says so.
 
 - **Subway:** the A03 run above, unchanged; its sections (a), (b) and (c) are the five cells.
+  Re-derived from the text: the review round re-ran the witness.
 - **Railroad:** `test_f01_positions.f01_world`, unwrapped and handed a
   `pytest.MonkeyPatch.context()` as A03 handles `f03_world`, both captures restamped to the
   frozen clock; boards LIRR 102 Jamaica (12 rows, straddling the cap), 129 Medford (one row at
   T0+90 s, so it expires inside the window) and 24 Belmont Park (none in a healthy decode);
   read at every poll to T0+1500 s; the never-decoded world fails LIRR from the first poll with
-  Metro-North healthy, then both.
+  Metro-North healthy, then both. **Not re-derived from the text:** the review round checked these cells against the driver's report.
 - **PATH:** `path_rt_gen_a.pb` at its own header, boards 26723, 26733 and 26734, read to
-  T0+3620 s; the empty world is a header-only `_quiet_feed` poll before the failures.
+  T0+3620 s; the empty world is a header-only `_quiet_feed` poll before the failures. **Not re-derived from the text:** the review round checked these cells against the driver's report.
 - **NJ Transit:** `test_njt_rt._feed` and `_trip` (three trips at stop 109), through the real
   `_refresh_njt` and `njt_auth.njt_post` over an `httpx.MockTransport`, read to T0+14400 s;
   `test_health_observations.py:483-494` pins the one NJ Transit state any test pins (a single
-  failed poll is quiet).
+  failed poll is quiet). **Not re-derived from the text:** the review round checked these cells against the driver's report.
 - **Ferry:** `ferry_vp_a.pb` and `ferry_tu_a.pb` restamped to T0-5 and T0-12 so the two clocks
   can be told apart, stop 17 East 34th Street (10 rows) and stop 4 Hunters Point South
   (none); each leg failed alone and both together, which served identical bodies; read to
-  T0+14400 s.
+  T0+14400 s. **Not re-derived from the text:** the review round checked these cells against the driver's report.
 - **`observations-qualified`:** the same refreshers with a fresh `buses` entry beside them so
   `no-feed-fresh` cannot speak for the family, and `test_health_observations.py`'s own
   builders for the bare rule; the tests that pin a state are
@@ -1809,7 +1843,7 @@ of the process; "failing" is HTTP 503 unless a row says otherwise.
   (healthy and empty), with `backend/tests/test_api.py:1291-1350` and `:1353-1445` driving the
   subway's retained-then-dropped road through the real refresher. The only pin on the second
   blind spot is one failed NJ Transit poll, quiet at 20 s (`:483-494`); no test pins the PATH or
-  ferry case, or either blind spot past a single poll.
+  ferry case, or either blind spot past a single poll. **Not re-derived from the text:** the review round checked these cells against the driver's report.
 - **Seams a rebuilder will meet:** `test_f03_boards._Upstream.get(url)` takes no keyword
   arguments, so PATH (`headers=`) and the ferry (`follow_redirects=True`) need a subclass that
   accepts them; driving the real `njt_post` needs a fake rider and secret in the environment
@@ -1818,7 +1852,23 @@ of the process; "failing" is HTTP 503 unless a row says otherwise.
   never called; and state (ii) on the subway and the railroads needs a capture trimmed to the
   calls due inside the window (the subway's to calls by T0+100 s), or the cap arrives first.
 - **The rider's table:** the served bodies above, rendered at `now = served_at` through
-  `frontend/helpers.js` loaded with `require()`.
+  `frontend/helpers.js` loaded with `require()`. **Not re-derived from the text** outside the
+  subway's row: the review round checked the other cells against the driver's report.
+- **State (iv)'s 502, rendered:** measured after the review round, so **not re-derived from
+  the text** either. Backend: one fresh process per family, each family's real `_refresh_*`
+  run once, the process's first poll, against a stub answering `httpx.Response(503,
+  content=<body marker>, extensions={"reason_phrase": <reason marker>})`, and again against a
+  bare `httpx.Response(503)`; NJ Transit through the real `njt_post` over an
+  `httpx.MockTransport` with a fake rider and secret, so no request left the process and no
+  mint was spent; boards PATH 26734, ferry 18 (both legs failing), NJ Transit 109 and LIRR 12
+  (both railroads failing), each read with `/api/status` through the ASGI app. Browser: a
+  Playwright spec on the stock fixture answering each family's board route with status 502
+  and the body the backend served, opening the station's popup as
+  `tests/e2e/stations.spec.js`'s A1s does and its panel as A1q does, and reading each surface
+  through `innerText`, which shows the detail's newline as a space (the live region keeps it).
+  Both ran on a scratch copy of `22c4824` (PR #131's second commit), whose application code is
+  `1d17aa0`'s. That a real HTTP/1.1 socket fills httpx's `reason_phrase` extension was not
+  measured.
 
 Seven things fall out, and they are what makes the four states a contract rather than a
 subway fix.
@@ -1838,10 +1888,10 @@ subway fix.
    (`:1830-1841`). The field that distinguishes failed from healthy is served and unread.
 3. **"Never decoded" has three shapes today.** A subway group that never decoded is absent;
    an LIRR beside a healthy Metro-North is a block with `fetched_at: null`; a single-system
-   family is an HTTP 502 whose body is the sanitized upstream error, which both surfaces print
-   verbatim, read from the code rather than rendered (`frontend/systems/shared.js:2856-2861`
-   and `:2891-2898` for the popup, `frontend/stations.js:509-514` for the panel). Only the second is a field
-   a board renderer could read.
+   family, and a railroad board with both railroads failing, is an HTTP 502 whose `detail` is
+   the upstream error with its URLs scrubbed, which the popup and the panel print and the
+   panel speaks (rendered in the browser; the text is under the rider's table, and H6 on the
+   2026-10-12 record's live list). Only the second is a field a board renderer could read.
 4. **Expiry is a retaining family's rule only.** `drop_expired_arrivals` runs on a partial
    failure of the subway or the railroads; PATH, NJ Transit and the ferry keep their last
    decode whole, and so does the railroad on a TOTAL failure (`pollers.py:600-618` returns
@@ -1857,7 +1907,8 @@ subway fix.
 6. **The failing families' operator surfaces are not symmetric either.** `/api/status`
    carries `subway_feeds`, `railroad_feeds`, `path_feeds` and `ferry_feeds`, but no NJ
    Transit list: `app.state.njt_feed_health` is written (`backend/pollers.py:986-994`, whose
-   comment says it is "Surfaced on /api/status") and not served.
+   comment says it is "Surfaced on /api/status") and not served (H5 on the 2026-10-12
+   record's live list).
 7. **The operator's code is silent in exactly the states a rider cannot see.** It never fires
    for a system that has never decoded, on any family (the first KNOWN BLIND SPOT,
    `backend/models.py:1173-1179`, measured over 91 polls), nor for PATH, the ferry or NJ
@@ -2067,9 +2118,9 @@ carried forward from its last good poll ... a long-failed system reports ok=Fals
 retained_since=None and no data at all" (`backend/models.py:216-220`). A1.2 measured the
 field set on a system that never decoded, and, past the cap, null for one poll in 31 and then
 set again, because the capped branch records no clock and the next poll starts one
-(`backend/feeds/shared.py:452-456`). Retention is unchanged by this amendment (section 5); the
-build has to word that comment truthfully and must not read `retained_since` as "something is
-held".
+(`backend/feeds/shared.py:452-456`; H4 on the 2026-10-12 record's live list). Retention
+is unchanged by this amendment (section 5); the build has to word that comment truthfully
+and must not read `retained_since` as "something is held".
 
 #### The producers
 
@@ -2322,6 +2373,14 @@ keyless probe of the eight live group feeds before the build (6.0's shape: a
 measurement nobody has taken, not a decision nobody has made), and a check that every route
 a live group serves is in the table; no means a memory of groups seen, which cannot name a
 group that has never decoded here, so the fourth state stays unsayable on the subway.
+**What the probe measures:** the route ids each group feed carries over a full service day,
+the overnight shuttles included, since one fetch sees only what runs at that minute (Step
+0). **An unverified lead, not a fact this rests on:** MTA's developer documentation
+describes the ACE feed as also carrying H, the BDFM feed FS, and the 1-7 feed GS. Nothing
+in the tree confirms the first two, and the probe is what would. Which group carries a
+route is feed data, under the README's branding rule (`README.md:1351-1359`): the table
+would hold what the feeds are measured to carry, not a document's grouping or a line's
+branding.
 *Recommendation: yes, static, with the probe first and the union of expected and seen that
 A1.3 states, because it is the only source that makes "never decoded" sayable, and a
 29-row table checked against the feeds it describes is a smaller drift risk than the one
@@ -2390,7 +2449,8 @@ nothing from riders here" (`backend/models.py:1174-1175`): A03 is the measuremen
 takes their board. It needs a block on the rule's input for PATH, the ferry and NJ Transit,
 which pass none (`routes/status.py:585-590`, `:611-616`), and an operator copy of NJ
 Transit's failure, which `/api/status` does not serve although two comments say it does
-(`backend/pollers.py:990-992`, `backend/main.py:278-280`). It must exclude a family that is
+(`backend/pollers.py:990-992`, `backend/main.py:278-280`; H5 on the 2026-10-12 record's
+live list). It must exclude a family that is
 not configured, which is a deployment fact the page already keeps quiet (`isNotConfigured`,
 `frontend/helpers.js:4708`).
 And it has a cost to state beside it: the contract monitor fails a run on any recognized
@@ -2466,9 +2526,9 @@ all five arrivals envelopes `+ served_at` and `+ systems`, on 3.5's ground that 
 field and serves it null for these two ("No systems block exists for PATH: it is one feed,
 and no poller writes one", `backend/routes/path.py:128-129`). Today PATH's and the ferry's boards serve `"systems": None` always,
 so `ok` reaches no field and the renderer's substitute block says `ok: true`; and a family
-that has never decoded answers 502, whose detail both surfaces print verbatim ("Upstream PATH
-bridge feed error: Server error '503 Service Unavailable' for url '<feed url>' ..."), so a
-rider reads upstream error text where `SystemFreshness`'s docstring keeps it out of every
+that has never decoded answers 502, whose detail both surfaces print, rendered as "Upstream
+PATH bridge feed error: Server error '503 Service Unavailable' for url '<feed url> For more
+information check: <feed url>" (A1.2), so a rider reads upstream error text where `SystemFreshness`'s docstring keeps it out of every
 envelope ("NO ERROR TEXT LIVES HERE"). The rule against one-entry blocks
 (`backend/cache.py:306-310`) is argued for the vehicle envelopes, where "their top-level
 fetched_at already means what a per-system block would say"; on a board it does not, because
@@ -2510,11 +2570,12 @@ frontend spec the reverse). Each step states its acceptance in the auditor's ter
 those are the sentences the work will be judged against, as 6.x does.
 
 **Step 0, the probe (a prerequisite, not a build step, and only if Q1 is answered yes).**
-One keyless fetch of each of the eight subway group feeds, counting the route ids each
-carries, so the route-to-group table's FS, H and SI rows are written from a measurement and
-the table cites a committed capture, like 3.3's buses row. **Acceptance:** every one of the
-live archive's 29 route ids is placed in exactly one group by a capture, or is stated as
-unplaced with the capture that shows it absent.
+Keyless fetches of each of the eight subway group feeds over a full service day, the
+overnight shuttles included, counting the route ids each carries, so the route-to-group
+table's FS, H and SI rows are written from a measurement and the table cites a committed
+capture, like 3.3's buses row. **Acceptance:** every one of the live archive's 29 route ids
+is placed in exactly one group by a capture, or is stated as unplaced with the capture that
+shows it absent.
 
 **Step 1, A10.** The railroad producer records a key for every decoded system under the
 membership clause, and the envelope's keep-last-known branch takes the shape Q7's answer

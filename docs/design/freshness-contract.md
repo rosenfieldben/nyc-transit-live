@@ -11,10 +11,11 @@ below is the world this design was written against unless a sentence beside it s
 otherwise.** Corrections made after a step landed are marked at the sentence; the open
 questions in section 5 are deliberately not, because a question rewritten after it is
 answered stops being evidence of what was actually asked. **Amendment 1** (A03 and A10 of
-the 2026-10-12 audit, the last section of this document) is PROPOSED on
-`claude/design-freshness-amendment-1`, for review before anything is built from it, and
-changes nothing yet: sections 1 to 6 and the Decisions of 2026-09-12 read as they did
-before it, and the body is amended in place only on the date its own decisions land. Its
+the 2026-10-12 audit, the last section of this document) is DECIDED, 2026-11-01, on
+`claude/design-freshness-amendment-1`, and nothing is built from it yet: Step 0 of its A1.6 is
+next. Its decisions amended the body in place on that date, each amended sentence marked
+`Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states the rule the
+build is to meet, not what the code does until that build lands. Its
 citations are at `1d17aa0`, and the application code is `1d17aa0`'s: the branch's fork
 commit is `74bd2ee` (PR #131's merge), and the two merges between change no application
 code.
@@ -223,6 +224,18 @@ holds on the capture: the header is `1782006915` and not one of the 69 positione
 carries that value. The ages run from 4s to 53676s with a median of 203s, so the
 distribution is not a couple of outliers behind a healthy fleet: half the fleet is over
 three minutes old and more than a THIRD is over ten minutes old (25 of 69).
+
+**ERRATUM, 2026-11-01, on the header above.** This section takes LIRR's header as the true
+feed-generation time from one capture and says nothing about how old a header can be while
+the feed still answers, and monitor runs 399 (2026-10-25 04:51:48 UTC), 400 (11:41:24), 401
+(16:30:35), 402 (20:56:07), 403 (2026-10-26 04:55:55), 404 (13:13:54) and 421 (2026-11-01
+06:18:19 UTC) each `WARN`ed `railroad-realtime: LIRR header older than 600s`, with
+`production:healthz` failing on `feed-content-stale`; 399 to 404 each printed `LIRR 26/0/12/0
+drawn, 21 not shown` from production's `railroad_positions`, the same five counts in all six,
+and 421 printed `LIRR 6/5/7/0 drawn, 16 not shown`. The logs carry counts and not entity
+clocks, so they do not show whether the header lagged while the entities' own clocks were
+current or the whole feed had stopped; that is re-measured on the build branch, and it bears
+on Q7's envelope clock and on `feed-content-stale`.
 
 The layout is SEPARATE ENTITIES: 69 vehicle-only, 132 trip-update-only, none combined. The
 join is by `trip_id`, and it is total on this capture: all 69 positioned vehicles join a
@@ -590,7 +603,9 @@ as nothing a rider ever sees). Settled as Q8; see Decisions.
 
 **`reported` and the shipped string "not reporting" are unrelated, and the collision is
 close enough to be worth one sentence.** "{system} not reporting" (`helpers.js:2058`) means
-a system that has NEVER DECODED anything, which is a statement about a feed. `reported` is
+a system that has NEVER DECODED anything, which is a statement about a feed. **Amended 2026-11-01 (Q11):**
+from the build it also means, on a board and on the status line past the cap, a failing system
+with nothing of it shown, which is still a statement about a feed. `reported` is
 a statement about one observation: the provider sent it as observed rather than us deriving
 it. A system can be reporting fine while every observation in it is `placed`, and a system
 that is "not reporting" has no observations to carry any provenance at all. Nothing in the
@@ -611,9 +626,9 @@ today:
 | `live GPS` | `helpers.js:2358-2359` (`positionQualifier`) | a real reported position |
 | `scheduled position (no GPS)` | `helpers.js:2365` (`positionQualifier`'s `placed` answer) | a position the app placed from a prediction |
 | `scheduled position, no GPS` | `helpers.js:2367` (the same answer's `.spoken`) | the same fact in an accessible name |
-| `scheduled (no GPS)` | *no reader since MR5, see the note at the end* | the compact form, once the railroad popup's |
+| `scheduled (no GPS)` | *no reader since MR5, see the note at the end* | the compact form, once the railroad popup's. **Amended 2026-11-01 (Q8):** removed from the contract and the code in the build; until then the string still ships |
 | `as of {age} ago` | `helpers.js:2211` (a row's qualifier), `:2237` (a board's line), `:2056-2057` (the status line); `As of {age} ago` at `:677` (the feed strip and a vehicle popup's footer) | how old the thing just named is |
-| `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded |
+| `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded. **Amended 2026-11-01 (Q11):** from the build also, on a board and on the status line past the cap, a failing system with nothing of it shown (the second table's added rows) |
 | `feed empty, showing last known` | `helpers.js:3486`, `:3492` | a bounded empty run |
 | `scheduled service (no live tracking)` | `helpers.js:3796` (the AirTrain station popup's sub-line) | AirTrain, which has no feed |
 
@@ -629,8 +644,9 @@ resolves to the wrong place is a claim that reads as evidence, which is why this
 pass of its own rather than a note.
 
 **The contract adds three words and fixes one omission.** Building 6.2 added a fourth, the
-board's form of the per-system clause (the last row), recorded under 6.2 as an amendment
-rather than a decision.
+board's form of the per-system clause (the `{system} prediction age unavailable` row), recorded
+under 6.2 as an amendment rather than a decision. **Amended 2026-11-01 (Amendment 1):** the last four rows are
+A1.3's, three of shipped strings and one NEW form, `{routes} trains not reporting`.
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
@@ -645,6 +661,10 @@ rather than a decision.
 | `observed_at` null, on a non-gated row | *(nothing at the observation)* | The provider does not date this at all. Said ONCE on that system's line instead; see the rule below. Metro-North is the only system in this state today. |
 | A whole system with no observation clock | **`{system} position age unavailable`** | NEW, and per-system rather than per-observation. A clause on the source's line, so the railroad source reads "railroad: MNR position age unavailable". |
 | A whole system with no observation clock, on its arrival board | **`{system} prediction age unavailable`** | NEW in 6.2: the row above in its prediction form, since a board carries predictions and "position" would be false of them, naming the system in the rider's word ("Metro-North prediction age unavailable") because the panel speaks it. It rides the board's own stale-poll line and never raises it, so a board whose poll is current says nothing. |
+| An empty board, every expected contributor fresh | `No trains`; `No boats` on a ferry board | **Amended 2026-11-01.** Shipped (`frontend/helpers.js:4047`, `:4210`, `:4386`, `:4743`, `frontend/systems/subway.js:470`; the panel's `No trains.` and `No boats.` at `frontend/stations.js:703` and `:853`), and in neither of 3.2's tables before this amendment, although every board has said it since before this contract. A statement about service, so it gives way to `{system} not reporting` in its slot when every expected contributor is failed or never decoded (Q3). |
+| An empty board, an expected contributor stale | `as of {age} ago` | **Amended 2026-11-01.** The board's line as shipped, its age the worse of poll and content (Q4). |
+| A board, an expected contributor failing with no row on it | `{system} not reporting` | **Amended 2026-11-01.** The shipped status-line clause on a board. On the status line it means never decoded and, once the cap has taken a system's vehicles, failing with nothing drawn (Q11); on a board it means "failing, and nothing of it is here", which covers never decoded and failed alike, because a board with no row of the contributor has nothing to date. A failed contributor reads it from 90 s after its last decode, a never-decoded one at once (Q11). Where every expected contributor on an empty board is in this state, it takes the `No trains` slot rather than the line (Q3). |
+| A board, a failing subway group, named | **`{routes} trains not reporting`** | **Amended 2026-11-01.** NEW (Q1, Q3): the subway's `{system}` on a board, its routes named from Q1's table. A group key is a feed's name ("1-7+S") and the panel speaks the line, so 6.2's reason for "Metro-North" over "MNR" applies. It joins the panel's shipped route noun ("5 train", `arrivalSentence`, `frontend/helpers.js:5423-5441`) to 3.2's `not reporting`: "2 and 5 trains not reporting" at Prospect Av. Where the routes cannot be named, the board's own system word, `Subway` (`POPUP_SYSTEM_WORDS`, `frontend/helpers.js:986-993`), never the key. |
 
 **The rule, stated once for all surfaces:** a marker, a popup, a panel row or a board row
 MUST carry its word when any of the following holds. (a) Its provenance is not `reported`.
@@ -928,7 +948,8 @@ The name mirrors the envelope field it is the per-system version of, the same wa
   healthy contributor and a lagging one now differ in a field rather than in nothing;
 - the subway arrivals union gets its content-time analogue of
   `_oldest_contributing_fetched_at`, with the same rules already argued there: the worst
-  contributor answers, a group contributing nothing at this station does not participate,
+  contributor answers, **Amended 2026-11-01 (A1.3):** a group not expected at this station, with no rows
+  here, does not participate, so a down SIR group still cannot age a Manhattan board,
   and one contributor that has never decoded makes the answer `None` rather than letting
   the others speak for it.
 
@@ -936,6 +957,21 @@ The name mirrors the envelope field it is the per-system version of, the same wa
 excludes MNR from the envelope's `feed_timestamp` for a measured reason, and the per-system
 block inherits that exclusion rather than quietly reintroducing the lagging clock one level
 down.
+
+**Amended 2026-11-01 (A1.3, Q6): the membership clause.** Every producer that hands the
+per-system reader a content-clock map records a key for EVERY system that decoded this poll,
+and a system absent from the map did not decode. The value under a decoded system's key is
+its header's time, and, for a generation that carried no usable header, `None`. "No usable
+header" covers a header that carries no timestamp and a header this contract excludes by
+policy, so Metro-North is recorded as `None` rather than left absent: its block is null today
+and stays null, and the exclusion above stops resting on absence.
+
+**Amended 2026-11-01 (A1.3, Q1, Q2, Q10): the membership rule for a station board's `systems` map** is its
+expected contributors. For the subway those are the groups Q1's route-to-group table names
+for the station, UNITED with any group that has rows indexed there, so a diverted group's
+rows still vote, and each is published as a block, a never-decoded one reading `fetched_at:
+null`, `ok: false`. For the other four families the expected contributor is the board's one
+system.
 
 **The five arrivals envelopes need two of the three timestamps they are missing.**
 `StationArrivals`, `RailroadStationArrivals`, `PathStationArrivals`, `NjtStationArrivals`
@@ -1520,7 +1556,7 @@ measurable and worth revisiting rather than arguing about in advance.
 
 ---
 
-## For the next amendment, posed by Amendment 1 as its Q8: the compact form has no reader
+## For the next amendment, decided by Amendment 1 as its Q8: remove. The compact form has no reader
 
 **Recorded rather than acted on**, because removing a form this contract defines is an amendment to
 the contract and not a stage's tidying.
@@ -1568,19 +1604,20 @@ under it, at 6.3.
 
 ## Amendment 1, 2026-11-01: empty boards and headerless generations (A03, A10)
 
-**Proposed, not built, and not decided.** This section is written on
+**Decided 2026-11-01, and not built.** This section is written on
 `claude/design-freshness-amendment-1`, forked from `main` at `1d17aa0` (PR #127's merge) and
 rebased onto `74bd2ee` (PR #131's merge), as
 item 3 of the release order in [the 2026-10-12 record](../reviews/audit-2026-10-12.md)
 (Section 4), first half: A03 and A10 as an amendment to this contract, for review before
 anything is built from it. It changes no code, no test, no fixture, no golden and no witness
 script: the 2026-10-12 record still reads A03 and A10 as VERIFIED, both audit harnesses
-report what they report on `main`, and the build that follows is what flips them. Sections 1 to 6 and the Decisions of 2026-09-12 are not rewritten here.
-What this amendment adds to 3.2 and 3.5 and changes in 4.x is stated in its own subsections
-below, and the body is amended in place on the date a decision lands, as it was on
-2026-09-12. Two edits fall outside this section: the Status paragraph at the top, which says
-this amendment is proposed and changes nothing yet, and the heading of the compact-form note
-above, which this amendment poses as Q8.
+report what they report on `main`, and the build that follows is what flips them. The Decisions of 2026-09-12 are not rewritten here.
+**Amended 2026-11-01:** what this amendment adds to 3.2 and 3.5 is now in those sections as well as in its own
+subsections below, and what it changes in 4.x is stated in A1.4, the body amended in place on
+the date its decisions landed, as it was on 2026-09-12. The edits outside this section are the
+Status paragraph at the top, the erratum at 2.1, 3.1's "not reporting" note, 3.2, 3.5 and the
+heading of the compact-form note above; "What changed in the body, and where", under
+Decisions at the end of this section, lists them.
 
 **A "today" or a "currently" in this section means the world at `1d17aa0`.** Every citation
 below is a path and a line range at that commit, re-anchored for this amendment rather than
@@ -1661,7 +1698,7 @@ nothing (an empty feed is an ordinary overnight state for NJ Transit and the fer
 row to age and none to drop, so this code says nothing for as long as the outage lasts,
 while /api/status still shows the feed's error. Closing that needs a decision about the
 overnight empty state first, so it is not closed here." This amendment is where that
-decision is posed (Q5), because the overnight empty state is the first of A03's four states,
+decision is posed and, **Amended 2026-11-01,** made (Q5), because the overnight empty state is the first of A03's four states,
 **fresh and empty**, and the outage it hides is the third or the fourth.
 
 **A03, the frontend half.** The same run boots the whole page (every script `index.html`
@@ -1807,8 +1844,9 @@ and another in its body, the reason phrase's marker reached the rider on PATH, t
 first failing leg's only, `backend/feeds/ferry.py:459`) and both railroads, and the body's on
 NJ Transit, each on the popup, on the panel, and in `#stations-announce`, which speaks
 "{station}, {label}. {detail}". The popup escapes it, so it shows as text, not markup. So text
-the upstream chose reaches a rider-facing response: H6 on the 2026-10-12 record's live list,
-which stands apart from Q10.
+the upstream chose reaches a rider-facing response: H6 on the 2026-10-12 record's live list.
+**Amended 2026-11-01 (Q10):** H6's rider-facing half closes with Q10's build, and its `/api/status` half stays on
+that list.
 
 **How each row was measured.** Every world polls every 20 s and fails its contributor from
 the first poll after a healthy one (T0), except state (iv), which fails it from the first poll
@@ -1898,7 +1936,8 @@ subway fix.
    before any merge), so a departed train is served as `reported` and counts down to "now"
    for as long as the outage lasts (an NJ Transit row read "as of 4h ago departs now" at
    T0+14400 s). State (ii) therefore exists for two families and is replaced by state (i)
-   without end for the other three. Q9 poses it.
+   without end for the other three. Q9 poses it. **Amended 2026-11-01 (Q9):** answered yes, so after the
+   build state (ii) exists on every family.
 5. **An empty board has no content clock on three families.** PATH's and the ferry's board
    `feed_timestamp` is the oldest row's `observed_at` (`backend/cache.py:361-399`), so it is
    null on every empty board, healthy or failing, and the subway's is null on any board with
@@ -1930,18 +1969,16 @@ subway fix.
 EVERY system that decoded this poll. A system absent from the map did not decode.** The
 reader already says this in a comment (`backend/pollers.py:449-457`); this makes the
 membership contract text, so a producer that departs from it is a contract defect rather
-than a style. **The VALUE under a decoded system's key is its header's time, and, for a
-generation that carried no usable header, whatever Q6 decides**: the reader's convention,
-and this amendment's recommendation, is `None`. The membership stands under any answer to
-Q6, including its third alternative, a refusal, which makes the generation a FAILURE and so
-belongs in the poll's failed list; today's railroad producer does neither, recording no key
-and no failure.
+than a style. **Amended 2026-11-01 (Q6): the VALUE under a decoded system's key is its header's time, and,
+for a generation that carried no usable header, `None`**, the reader's convention. Today's
+railroad producer does not do this, recording no key and no failure, and it is the one
+producer that changes.
 
 "No usable header" covers two cases and the clause means both: a header that carries no
 timestamp, and a header this contract excludes by policy. Metro-North's header decodes and
 is not a freshness signal (2.2, `RAILROAD_FRESHNESS_SYSTEMS`), so under the clause Metro-North
-is recorded rather than left out, with the value Q6 gives a generation with no usable
-header. Under the recommended `None` its block is null today and stays null; what changes is
+is recorded rather than left out, **Amended 2026-11-01 (Q6)** as `None`. Its block is null today and stays
+null; what changes is
 that the exclusion stops resting on absence, which is the one thing the reader reads as "did
 not decode".
 
@@ -1986,8 +2023,10 @@ never reads `feed_age_s`** (no occurrence in `backend/scripts/contract_monitor.p
 `None`, `0.0`, `99999.0` or a string). It sees a headerless upstream directly:
 `railroad-realtime` WARNs "LIRR omitted its header timestamp" (`:825-832`, pinned by
 `test_railroad_realtime_lirr_missing_header_is_warn`), and it sees `/healthz` through
-`production:healthz`, which FAILs on any recognized code (`:2295-2309`). Q6 asks what a
-headerless generation publishes and Q7 what the envelope does with it.
+`production:healthz`, which FAILs on any recognized code (`:2295-2309`). **Amended 2026-11-01 (Q6, Q7):** a
+headerless generation publishes `None` under its key; the envelope publishes `None` with it
+and `feed_age_s` reads unknown, the branch keeping the last clock exactly when LIRR is in the
+poll's failed list; and `railroad-realtime`'s WARN is the signal that names the cause.
 
 #### To 3.2 and 3.5: the empty-board states (A03)
 
@@ -1995,20 +2034,20 @@ headerless generation publishes and Q7 what the envelope does with it.
 cases must distinguish genuinely fresh empty service from stale, failed and unknown empty
 service in both surfaces." The 2026-10-12 record names them fresh and empty, stale, failed
 and never decoded (Section 4 item 3). Each must be distinguishable in a FIELD of the served
-board (on PATH and the ferry, whose boards carry no block today, only if Q10 is answered yes),
-3.5's standard ("a healthy contributor and a lagging one now differ in a field rather
+board (**Amended 2026-11-01 (Q10):** on PATH and the ferry, whose boards carry no block today, through the block
+Q10 gives them), 3.5's standard ("a healthy contributor and a lagging one now differ in a field rather
 than in nothing"), and each takes a word from 3.2:
 
 | State | What the served board carries that makes it this state | What the rider reads: popup, panel, spoken | 3.2 word |
 | --- | --- | --- | --- |
 | **Fresh and empty** | every expected contributor's block reads `ok: true`, with `fetched_at`, and `feed_timestamp` where its provider dates content, within `OBS_FRESH_S` of `served_at` | `No trains` (`No boats` on a ferry board) and no line; spoken "Prospect Av, Subway. No trains." | `No trains`, `No boats`: shipped, and added to 3.2 below |
 | **Stale** | an expected contributor reads `ok: true` and its `feed_timestamp` (the content) or its `fetched_at` (the poll) is older than `OBS_FRESH_S` | the board's line `as of {age} ago` above `No trains`, the age the worse of the two (Q4); spoken "Prospect Av, Subway. as of 10m ago. No trains." | `as of {age} ago`, 3.2's first table; the board's form is `helpers.js:2469` |
-| **Failed** | an expected contributor reads `ok: false` and its `fetched_at` is a number: it decoded in this process and is failing now | the board's line names it once its last decode is `OBS_FRESH_S` old, the grace the status line gives a failed system, in the word Q11 decides (`{system} not reporting` recommended, `as of {age} ago` the alternative); whether it also takes the `No trains` slot is Q3 | `{system} not reporting` if Q11 is answered yes (the row added below), otherwise `as of {age} ago` |
+| **Failed** | an expected contributor reads `ok: false` and its `fetched_at` is a number: it decoded in this process and is failing now | **Amended 2026-11-01 (Q3, Q11):** the board's line reads `{system} not reporting` once its last decode is `OBS_FRESH_S` old, the grace the status line gives a failed system; where every expected contributor on an empty board is failed past that grace or never decoded, the `No trains` slot reads it instead of the line | `{system} not reporting`, the row added below |
 | **Never decoded** | an expected contributor reads `ok: false` with `fetched_at: null` (Q2), both: a substitute block can have a null clock with `ok: true` | as failed, from the first poll, as the status line says `not reporting` at once | `{system} not reporting`, 3.2's first table: "a system that has never decoded" |
 
-**Two rules make the table a contract rather than four cases.** Both are this amendment's
-proposals rather than questions, and A1.5 lists them with the others, so a decision can
-reject one by name.
+**Two rules make the table a contract rather than four cases.** **Amended 2026-11-01:** both were this
+amendment's proposals rather than questions, A1.5 lists them with the others, and both are
+accepted as proposed.
 
 - **A failing expected contributor with no row on the board is said whether or not other
   contributors' rows are there**, at once if it has never decoded and once its last decode is
@@ -2016,8 +2055,8 @@ reject one by name.
   the status line (`staleness()` raises a failed system at that age,
   `frontend/helpers.js:2262`). `boardSystemLine` already "speaks only for what the rows
   cannot" (`frontend/helpers.js:2446-2449`), and a contributor whose rows are gone is exactly
-  what no row can speak for. So the line names it, in Q11's word for a failed one, on a board
-  with rows too. On a subway board "no row of it" is a join, since a row names its route and
+  what no row can speak for. So the line names it, **Amended 2026-11-01 (Q11):** `{system} not reporting`, on
+  a board with rows too. On a subway board "no row of it" is a join, since a row names its route and
   not its group: the rows' route ids against the contributor's `SystemFreshness.routes`, or
   Q1's table for a group that has never decoded and so lists none. It matters at the 73 parent stations whose routes in the live index
   belong to two or three groups (reading each group's routes from its name, with GS placed
@@ -2030,8 +2069,8 @@ reject one by name.
   another's age is the defect the status line's own split was made to prevent.
 
 **The membership rule for a station board's `systems` map changes from "contributors with
-rows indexed here" to "expected contributors".** For the subway that is the groups Q1's
-source names for the station, UNITED with any group that has rows indexed there, so a
+rows indexed here" to "expected contributors".** **Amended 2026-11-01 (Q1):** for the subway that is the
+groups Q1's table names for the station, UNITED with any group that has rows indexed there, so a
 diverted group's rows still vote: the committed capture carries route 5 at seven
 Lexington Avenue stations (622 to 630, 116 St to 51 St) that the live static index does not
 list for it. The union is also what keeps F03's own acceptance world standing: that world
@@ -2041,15 +2080,16 @@ of the tree with an expected-ONLY prototype of this rule the 2026-09-05 F03 witn
 union it runs exactly as today. For the other four families the expected contributor is the board's one system,
 which the railroad and NJ Transit boards already name and PATH and the ferry boards do not
 (both serve `"systems": None`, `backend/routes/path.py:129` and `backend/routes/ferry.py:122-123`),
-so for those two the rule reaches a field only if Q10 is answered yes.
+so, **Amended 2026-11-01 (Q10),** for those two the rule reaches a field through the block Q10 gives them.
 3.5's second rule survives in substance: a group that is not expected here, and has no rows
 here, does not take part, so a down SIR group still cannot age a Manhattan board.
 
 **`SystemFreshness.fetched_at` on a board.** The field is already `float | None`
 (`backend/models.py:191`), and the comment above it says what it is: "This system's last poll
 that DECODED". On a board, `None` therefore means exactly one thing, that this expected
-contributor has not decoded in this process, and Q2 asks that it be published rather than
-omitted. It is the field that tells never decoded from failed, and it is already served that
+contributor has not decoded in this process, and, **Amended 2026-11-01 (Q2),** it is published as a block reading
+`fetched_at: null`, `ok: false` rather than omitted, and a renderer reads `fetched_at`, never
+`retained_since`, to know whether anything is held. It is the field that tells never decoded from failed, and it is already served that
 way by one family: an LIRR that never decoded beside a healthy Metro-North (A1.2).
 
 **The status line and `observations-qualified`, in the same four words.** The status line
@@ -2062,39 +2102,45 @@ vehicles, and it does not change once the cap has taken them: measured through `
 with 1-7+S failing and nothing of it drawn, the line reads "trains: 1-7+S group as of 10m ago"
 at the cap poll and "as of 25m ago" at 1500 s, where 200 s into the failure, its vehicles
 held, it read "as of 3m ago". So a failed contributor with nothing on a board and a failed
-system with nothing on the map past the cap are one state on two surfaces, and Q11 asks which
-word it takes on both. A third shipped surface has a word for the never-decoded half already:
+system with nothing on the map past the cap are one state on two surfaces. **Amended 2026-11-01 (Q11):** it
+takes one word on both, `{system} not reporting`: on a board from 90 s after the last decode,
+and on the status line once the cap has taken the system's vehicles, which keeps `as of {age}
+ago` inside the window, where it dates what is drawn. A third shipped surface has a word for the never-decoded half already:
 the feed strip and the vehicle popup's footer say `Not reporting` for a feed with no age
 (`feedStateWords`, `frontend/helpers.js:822-827`, waived as a state no fixture world reaches at
 `tests/e2e/pins.spec.js:1186-1188`). The operator's code is where the four states are not yet
 said: it is silent for a never-decoded system on every family and for PATH, the ferry and NJ
-Transit failing with nothing to show (A1.2, point 7). Q5 asks whether the four states govern
-it, which closes both of 6.2's blind spots; answered no, the amendment records precisely why
-they stay open, which is the cost Q5 states beside its recommendation.
+Transit failing with nothing to show (A1.2, point 7). **Amended 2026-11-01 (Q5):** the four states govern it,
+which closes both of 6.2's blind spots. Fresh and empty says nothing; stale is the code's age
+rule at the 600 s band; failed and never decoded are named from the block's `ok` and the time
+since the last decode or, never decoded, since this process first tried, at the same band.
+That last time is a first-attempt clock, which no block serves today and which is kept beside
+the block for the rule to read, since `retained_since` restarts after the cap. The cost is the
+one Q5 states: the monitor fails a run on a group dark since a deploy from its tenth minute.
 
 **The vocabulary, weighed.** The candidates the amendment considered are all shipped
-strings, and no state needs a NEW word; one NEW form is proposed, for naming a subway group
-on a board (Q3), in the rows below. `No trains` (and the ferry's `No boats`) is the
+strings, and no state needs a NEW word; **Amended 2026-11-01:** one NEW form is added, for naming a subway
+group on a board (Q3), in the rows below. `No trains` (and the ferry's `No boats`) is the
 fresh-and-empty word as shipped; it is in neither of 3.2's tables, which list qualifiers, and
 is added to the second below because the four states turn on when it may be said. `as of
 {age} ago` is stale's, unchanged in form. `{system} not reporting` is never decoded's as
-shipped and, if Q11 is answered yes, failed's as well. `showing last known, as of {age} ago` is not
+shipped and, **Amended 2026-11-01 (Q11),** failed's as well. `showing last known, as of {age} ago` is not
 a candidate for any of the four: it qualifies a ROW that is held, an empty board holds none,
 and it stays the word for a failing contributor's retained rows, state (i), exactly as
 shipped. `age unknown` is not either: it is clause (c)'s word for an observation whose
 provider normally dates it and did not, and an empty board has no observation, so a
 contributor whose content cannot be dated (Metro-North by policy, or a headerless
-generation under Q6) leaves an empty board aged by its poll, with 3.2's undated clause riding
+generation under Q6's `None`, **Amended 2026-11-01**) leaves an empty board aged by its poll, with 3.2's undated clause riding
 the line as it does today.
 
-**Added to 3.2's second table**, three rows of shipped strings and one NEW form:
+**Amended 2026-11-01: added to 3.2's second table**, in these words, three rows of shipped strings and one NEW form:
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
-| An empty board, every expected contributor fresh | `No trains`; `No boats` on a ferry board | Shipped (`frontend/helpers.js:4047`, `:4210`, `:4386`, `:4743`, `frontend/systems/subway.js:470`; the panel's `No trains.` and `No boats.` at `frontend/stations.js:703` and `:853`), and in neither of 3.2's tables before this amendment, although every board has said it since before this contract. A statement about service, so whether it gives way to `{system} not reporting` when no expected contributor is up is Q3. |
-| An empty board, an expected contributor stale | `as of {age} ago` | The board's line as shipped, its age the worse of poll and content (Q4). |
-| A board, an expected contributor failing with no row on it | `{system} not reporting` | The shipped status-line clause on a board. On the status line it means never decoded; on a board it means "failing, and nothing of it is here", which covers never decoded and failed alike, because a board with no row of the contributor has nothing to date. Q11 for a failed contributor; Q3 for the slot. |
-| A board, a failing subway group, named | **`{routes} trains not reporting`** | NEW, and only if Q3 and Q1 are answered yes: the subway's `{system}` on a board. A group key is a feed's name ("1-7+S") and the panel speaks the line, so 6.2's reason for "Metro-North" over "MNR" applies. It joins the panel's shipped route noun ("5 train", `arrivalSentence`, `frontend/helpers.js:5423-5441`) to 3.2's `not reporting`: "2 and 5 trains not reporting" at Prospect Av. Where the routes cannot be named, the board's own system word, `Subway` (`POPUP_SYSTEM_WORDS`, `frontend/helpers.js:986-993`), never the key. |
+| An empty board, every expected contributor fresh | `No trains`; `No boats` on a ferry board | **Amended 2026-11-01.** Shipped (`frontend/helpers.js:4047`, `:4210`, `:4386`, `:4743`, `frontend/systems/subway.js:470`; the panel's `No trains.` and `No boats.` at `frontend/stations.js:703` and `:853`), and in neither of 3.2's tables before this amendment, although every board has said it since before this contract. A statement about service, so it gives way to `{system} not reporting` in its slot when every expected contributor is failed or never decoded (Q3). |
+| An empty board, an expected contributor stale | `as of {age} ago` | **Amended 2026-11-01.** The board's line as shipped, its age the worse of poll and content (Q4). |
+| A board, an expected contributor failing with no row on it | `{system} not reporting` | **Amended 2026-11-01.** The shipped status-line clause on a board. On the status line it means never decoded and, once the cap has taken a system's vehicles, failing with nothing drawn (Q11); on a board it means "failing, and nothing of it is here", which covers never decoded and failed alike, because a board with no row of the contributor has nothing to date. A failed contributor reads it from 90 s after its last decode, a never-decoded one at once (Q11). Where every expected contributor on an empty board is in this state, it takes the `No trains` slot rather than the line (Q3). |
+| A board, a failing subway group, named | **`{routes} trains not reporting`** | **Amended 2026-11-01.** NEW (Q1, Q3): the subway's `{system}` on a board, its routes named from Q1's table. A group key is a feed's name ("1-7+S") and the panel speaks the line, so 6.2's reason for "Metro-North" over "MNR" applies. It joins the panel's shipped route noun ("5 train", `arrivalSentence`, `frontend/helpers.js:5423-5441`) to 3.2's `not reporting`: "2 and 5 trains not reporting" at Prospect Av. Where the routes cannot be named, the board's own system word, `Subway` (`POPUP_SYSTEM_WORDS`, `frontend/helpers.js:986-993`), never the key. |
 
 ### A1.4 What changes where
 
@@ -2106,14 +2152,14 @@ something correct today stops being correct are the useful part of a change list
 | Model | Change |
 | --- | --- |
 | `StationArrivals.systems` | Its MEANING changes, not its type: the expected contributors (A1.3, Q1) with a never-decoded one as a block (Q2), where today it is the groups with rows indexed at the station. Nothing new in `SystemFreshness`: `fetched_at` is already `float \| None` (`backend/models.py:191`). |
-| `PathStationArrivals.systems`, `FerryStationArrivals.systems` | From always null to the board's one system, if Q10 is answered yes. |
+| `PathStationArrivals.systems`, `FerryStationArrivals.systems` | **Amended 2026-11-01 (Q10):** from always null to the board's one system. |
 | `RailroadStationArrivals`, `NjtStationArrivals` | None: each board already names its one system. |
 
 **Asserted today that this makes false:** `StationArrivals`'s comment states the
 contributor rule as "a group contributing nothing at this station does not participate"
 (`backend/models.py:369-373`), which becomes "a group not expected at this station, with no
-rows here, does not participate". And one sentence that is already false and that Q2 would
-put on a board: `SystemFreshness.retained_since` "Set while this system's data is being
+rows here, does not participate". And one sentence that is already false and that Q2 puts on a
+board (**Amended 2026-11-01**): `SystemFreshness.retained_since` "Set while this system's data is being
 carried forward from its last good poll ... a long-failed system reports ok=False with
 retained_since=None and no data at all" (`backend/models.py:216-220`). A1.2 measured the
 field set on a system that never decoded, and, past the cap, null for one poll in 31 and then
@@ -2126,9 +2172,11 @@ and must not read `retained_since` as "something is held".
 
 | Producer | Change |
 | --- | --- |
-| `feeds/railroad.py` | Record `feed_ts_by_system[system]` for every system that decoded (`:1320-1327`): the header's time for a dated LIRR generation, and for an undated one and for Metro-North (by policy) the value Q6 decides, `None` recommended. The envelope's `timestamps` list keeps its gate, so the envelope still folds LIRR alone. |
-| `pollers._refresh_railroads` | The keep-last-known branch (`backend/pollers.py:696-708`) as Q7 rules it. |
-| The subway, NJ Transit and alerts producers; PATH, the ferry and buses | None: each already obeys the clause or has no map (A1.3's table). |
+| `feeds/railroad.py` | **Amended 2026-11-01 (Q6):** record `feed_ts_by_system[system]` for every system that decoded (`:1320-1327`): the header's time for a dated LIRR generation, and `None` for an undated one and for Metro-North (by policy). The envelope's `timestamps` list keeps its gate, so the envelope still folds LIRR alone. |
+| `pollers._refresh_railroads` | **Amended 2026-11-01 (Q7):** the keep-last-known branch (`backend/pollers.py:696-708`) is narrowed to "LIRR failed this poll": it keeps the last clock exactly when LIRR is in the poll's failed list, so a headerless success publishes `None` on the envelope and `feed_age_s` reads unknown, with a test pinning both arms. |
+| `feeds/subway.py` | **Amended 2026-11-01 (Q1):** a 29-row route-to-group table beside `SUBWAY_FEED_URLS`, its FS, H and SI rows written from Step 0's committed capture, with a check that every route a live group serves is in the table. |
+| `_refresh_path`, `_refresh_njt`, `_refresh_ferry`, and `_refresh_railroads` on a total failure (`backend/pollers.py:600-618`) | **Amended 2026-11-01 (Q9):** prune a kept row once its time has passed, through `drop_expired_arrivals`'s own rule with its zero grace. Retention is unchanged; nothing undeparted is dropped. |
+| The subway, NJ Transit and alerts producers; PATH, the ferry and buses | **Amended 2026-11-01:** none for the membership clause: each already obeys it or has no map (A1.3's table). |
 
 **Asserted today that this makes false:** two comments that rest the Metro-North exclusion on
 absence, "a system that is not admitted here is simply absent from the map, so its block
@@ -2147,14 +2195,18 @@ publishes a block for each, never-decoded included (Q2), so it returns `None` on
 nothing is expected; `_oldest_contributing_content_at` (`:465-502`) keeps its three rules over
 the wider set; and `_oldest_contributing_fetched_at`'s aggregate fallback (`:539-543`) is
 reached only by a station with no expected contributor: on the live index, three of the
-496 (S01, S03 and S04, served by FS alone) until Q1's probe places FS, and none after it. The other four arrivals routes change only as Q9 and Q10 are answered:
+496 (S01, S03 and S04, served by FS alone) until Q1's probe places FS, and none after it. **Amended 2026-11-01 (Q9, Q10):** the other four arrivals routes change by those two answers, the prune above and:
 `/api/path-arrivals` and `/api/ferry-arrivals` serve their one system's block instead of
 `"systems": None` (`backend/routes/path.py:129`, `backend/routes/ferry.py:122-123`), and the
-single-system boards answer a failed first poll with a board rather than the recorded 502
+single-system boards, and a railroad board with both railroads failing, answer a failed first
+poll with a 200 board whose block reads `fetched_at: null`, `ok: false`, rather than the
+recorded 502, the 503 before any poll staying
 (`_require_filled_cache`, `backend/cache.py:321-333`, the recorded error raised at `:328-330`,
 called at `backend/routes/path.py:111`, `backend/routes/ferry.py:106` and
-`backend/routes/njt.py:166`). `/api/status` gains nothing for the boards; Q5 says what its
-health code reads.
+`backend/routes/njt.py:166`). `/api/status` gains nothing for the boards. **Amended 2026-11-01 (Q5):** its
+health code reads the four states, which requires a block on the rule's input for PATH, the
+ferry and NJ Transit, an operator copy of NJ Transit's failure (H5 closes with it), the
+first-attempt clock, and the exclusion of a family that is not configured.
 
 **Asserted today that this makes false:** "MEMBERSHIP IS THE PER-GROUP INDEX, NOT THE SERVED
 PAYLOAD" (`backend/cache.py:448-455`), whose argument (a group's rows can be trimmed out of
@@ -2169,10 +2221,12 @@ old `fetched_at`.
 | Surface | Change |
 | --- | --- |
 | `boardFreshness` (`frontend/helpers.js:2395-2404`) | Reads each block's `ok`, `fetchedAt` and `feedTimestamp`, all three already ingested (`:1846-1856`), and returns each expected contributor's state rather than one poll age (Q4). |
-| `boardSystemLine` (`:2462-2471`) | Speaks for an empty board's stale contributors by content age as well as poll age (Q4), and for a failing contributor with no row on the board whether or not other rows are there, in Q11's word (A1.3's proposal). |
-| The `No trains` slot | `frontend/helpers.js:4047` (railroad), `:4210` (PATH), `:4386` (`No boats`, ferry), `:4743` (NJ Transit), `frontend/systems/subway.js:469-470` (subway), and the panel's `frontend/stations.js:701-705`: as Q3 rules. |
+| `boardSystemLine` (`:2462-2471`) | Speaks for an empty board's stale contributors by content age as well as poll age (Q4), and for a failing contributor with no row on the board whether or not other rows are there, **Amended 2026-11-01 (Q11):** in `{system} not reporting` (A1.3's proposal, accepted). |
+| The `No trains` slot | `frontend/helpers.js:4047` (railroad), `:4210` (PATH), `:4386` (`No boats`, ferry), `:4743` (NJ Transit), `frontend/systems/subway.js:469-470` (subway), and the panel's `frontend/stations.js:701-705`. **Amended 2026-11-01 (Q3):** where every expected contributor on an empty board is failed past the 90 s grace or never decoded, the slot reads `{routes} trains not reporting` on the subway, from Q1's table, `Subway not reporting` where routes cannot be named, never the feed key; on the other families `{system} not reporting` with their one system, `No boats` on the ferry following the same rule. |
+| The status line (`staleness()`, `frontend/helpers.js:2256-2268`) | **Amended 2026-11-01 (Q11):** reads `{system} not reporting` once the cap has taken a system's vehicles, and keeps `as of {age} ago` inside the window, where it dates what is drawn. |
+| `positionQualifier`'s `.compact` | **Amended 2026-11-01 (Q8):** removed; `frontend/positions.test.js` pins two forms (12 tests move, all in that file), and the `NOT_RIDER_TEXT` waiver for "scheduled (no GPS)" (`tests/e2e/pins.spec.js:1134-1146`) is deleted in the same change. |
 | The panel's spoken line | `arrivalsSpeech` (`frontend/stations.js:841-856`) already carries the board's line before the rows; it carries the new clauses the same way, in the same one write (`speakPanel`'s rule, `:858-870`). |
-| `ingestSystems`' substitute block (`:1830-1841`) | Unchanged. After the build `systems: null` on a board means one of three things: an older backend, for which `ok: true` is the right default; a subway station with no expected contributor (S01, S03 and S04 until Q1's probe places FS); or, if Q10 is answered no, any PATH or ferry board, as today. |
+| `ingestSystems`' substitute block (`:1830-1841`) | Unchanged. **Amended 2026-11-01 (Q10):** after the build `systems: null` on a board means one of two things: an older backend, for which `ok: true` is the right default; or a subway station with no expected contributor (S01, S03 and S04 until Q1's probe places FS). |
 | N6 and the announcement rule | The board's line reaches no live region of its own: its only writer is the panel's one composed write to `#stations-announce` (`frontend/stations.js:894-898`, through `speakPanel` at `:873-878`), and `#page-announce`'s writers (`frontend/systems/shared.js:1872`, `:1903`) never see it, so N6's open half is not walked into. What the change does meet is `announcementWorthy`'s clause 4 (`frontend/helpers.js:5523`), which announces a line only when it appears or goes: a board going from `as of 10m ago` to `{system} not reporting` would change on screen and stay silent, so the build makes a change of the line's KIND news, as `arrivalQualifier`'s `kind` already is for a row (`:2426-2430`). |
 
 **Asserted today that this makes false:** `boardFreshness`'s comment, "the age of its worst
@@ -2249,17 +2303,18 @@ this branch) and running the suites:
   590 pass with either changed or both, and 441 of 441 across every file that drives
   `_refresh_railroads` with the branch deleted outright. Eight `test_api.py` tests build fakes that mirror
   today's producer (Metro-North decoded and absent from the clock map) without asserting it;
-  the build adds the pins Q7's recommendation asks for.
+  **Amended 2026-11-01 (Q7):** the build adds the pins Q7's answer asks for.
 - **The frontend (Q3, Q4, Q11).** No unit test pins today's empty-board silence: a prototype
   that speaks only for an EMPTY board whose every block is down, at once, passes 397 of 397
   `frontend/*.test.js` tests. The rule as A1.3 writes it (boards with rows too, the 90 s grace
-  for a failed contributor) was not prototyped, so what it moves is not measured here. One pin constrains the rule's shape:
+  for a failed contributor) was not prototyped, so what it moves is not measured here. **Amended 2026-11-01:** the
+  rule is accepted, and the build measures and names what it moves. One pin constrains the rule's shape:
   `frontend/helpers.test.js:2394` (its `:2432-2438`) expects no line for a body with no systems
   map, whose substitute block has `fetchedAt` null and `ok: true`, so "never decoded" must be
   read as `ok: false` AND `fetched_at` null, never as a null clock alone. The status line's
   vocabulary pin, "trains: BDFM group as of 5m ago; ACE group as of 10m ago; SIR group not
   reporting" (`helpers.test.js:1962-1973`), is what keeps `not reporting` meaning never decoded
-  on that surface; it moves only if Q11 is answered yes, and then only past the cap. A new
+  on that surface; **Amended 2026-11-01 (Q11):** it moves in the build, past the cap only. A new
   popup literal such as `not reporting` in `boardSystemLine` meets `tests/e2e/pins.spec.js`
   P5b's uncovered-literal check (`:1645-1668`) and needs a pin, read from the spec (the e2e
   suite was not run).
@@ -2315,7 +2370,10 @@ F03's; these two are the files whose passing this amendment's build is supposed 
 and whose state there is "Not decided here"; the 2026-10-12 record's live list carries it as
 "Open question 1", with `backend/tests/test_health_observations.py` and
 `backend/tests/test_f01_positions.py` as its witnesses. Nothing below moves the LIRR
-prediction row of 3.3, and an empty LIRR board has no prediction to age.
+prediction row of 3.3, and an empty LIRR board has no prediction to age. **Amended 2026-11-01:** nor does it
+decide what the header age in the erratum at 2.1 means (monitor runs 399 to 404 and 421), which
+is re-measured on the build branch and bears on Q7's envelope clock and on
+`feed-content-stale`.
 
 **It does not decide F06/A05 or F07/A06**, which stay Release 2 design work (the 2026-10-12
 record, Section 4 item 6). One consequence touches this amendment and is stated so it is not
@@ -2342,10 +2400,11 @@ population on a board's line.
 #### The open questions
 
 Each is phrased so a yes or a no settles it, with the recommendation stated, in section 5's
-form. **None is answered here.** The decisions are the operator's and are appended below
-this amendment before it merges, as they were on 2026-09-12; until then nothing in A1.3 or
-A1.4 that depends on a question is decided by being written down, and each place that
-depends on one names it.
+form. **Amended 2026-11-01: all eleven were answered on this date and the answers are recorded below in
+Decisions.** The questions are kept here exactly as they were posed, including the
+recommendations, because a question rewritten after it is answered stops being evidence of what
+was actually asked. A1.3, A1.4, A1.6 and the sections they amend state the decided rule, so the
+body is the thing to build from.
 
 **Q1. Should a subway station's EXPECTED contributors come from the static routes-per-station
 index through a route-to-group table, rather than from a memory of the groups seen at that
@@ -2569,7 +2628,7 @@ the backend spec turns the backend checks red with the frontend checks green, an
 frontend spec the reverse). Each step states its acceptance in the auditor's terms, because
 those are the sentences the work will be judged against, as 6.x does.
 
-**Step 0, the probe (a prerequisite, not a build step, and only if Q1 is answered yes).**
+**Step 0, the probe (a prerequisite, not a build step).** **Amended 2026-11-01 (Q1):** Q1 is answered yes, so this runs before the build.
 Keyless fetches of each of the eight subway group feeds over a full service day, the
 overnight shuttles included, counting the route ids each carries, so the route-to-group
 table's FS, H and SI rows are written from a measurement and the table cites a committed
@@ -2577,34 +2636,40 @@ capture, like 3.3's buses row. **Acceptance:** every one of the live archive's 2
 is placed in exactly one group by a capture, or is stated as unplaced with the capture that
 shows it absent.
 
-**Step 1, A10.** The railroad producer records a key for every decoded system under the
-membership clause, and the envelope's keep-last-known branch takes the shape Q7's answer
-gives it. **Acceptance, in the auditor's terms:** *"Emit explicit null for a successfully
+**Step 1, A10.** **Amended 2026-11-01 (Q6, Q7):** the railroad producer records a key for every decoded system
+under the membership clause, `None` for a generation with no usable header and for Metro-North
+by policy, and the envelope's keep-last-known branch is narrowed to "LIRR failed this poll",
+with a test pinning both arms. **Acceptance, in the auditor's terms:** *"Emit explicit null for a successfully
 decoded but undated generation; preserve prior timestamps only for actual failures. Test
 timestamped → headerless → failed transitions."*
-Concretely, on `a10_headerless_lirr_clock.py`'s sequence and under Q6's recommended `None`:
+Concretely, on `a10_headerless_lirr_clock.py`'s sequence and, **Amended 2026-11-01 (Q6),** under Q6's `None`:
 at 1000 the LIRR block reads (true, 1000, `null`) where it reads (true, 1000, 900) today; at 1100, (false, 1000, `null`);
 the failure-only control unchanged at (false, 900, 900); arm D's five headerless polls each
-publish `null` with no implied age; and the envelope and `feed_age_s` as Q7 rules.
+publish `null` with no implied age; and, **Amended 2026-11-01 (Q7),** the envelope reads `null` and `feed_age_s`
+unknown on a headerless success, while the failure-only control keeps its last clock.
 
-**Step 2, A03's backend half.** Expected contributors (Q1), the never-decoded block (Q2), the
-three selectors over the expected set, and, as Q9 and Q10 are answered, the prune and the
-single-system block on the other families. **Acceptance, in the auditor's terms:** *"Maintain
+**Step 2, A03's backend half.** **Amended 2026-11-01 (Q1, Q2, Q9, Q10):** the route-to-group table and expected
+contributors united with seen, the never-decoded block, the three selectors over the expected
+set, the prune on PATH, NJ Transit, the ferry and the railroads on a total failure, and PATH's
+and the ferry's block with a 200 board in place of the 502 after a failed first poll.
+**Acceptance, in the auditor's terms:** *"Maintain
 station-to-feed coverage independently of displayed predictions; preserve expected failed
 contributors after expiry or retention limits."* Concretely, in A03's world: after the T0+200 s
 expiry and at the T0+620 s cap, 219's `systems` names 1-7+S with `ok: false`; in world B it
 names 1-7+S with `fetched_at: null`; and no served board is identical to fresh empty
 service's while a contributor fails.
 
-**Step 3, A03's frontend half, and the operator's code.** `boardFreshness` and `boardSystemLine`
-over the expected contributors' `ok`, `fetchedAt` and `feedTimestamp` (Q3, Q4, Q11), one write per
-render, and `observations-qualified` in the same four states (Q5). **Acceptance, in the
+**Step 3, A03's frontend half, and the operator's code.** **Amended 2026-11-01 (Q3, Q4, Q5, Q8, Q11):**
+`boardFreshness` and `boardSystemLine` over the expected contributors' `ok`, `fetchedAt` and
+`feedTimestamp`, the `No trains` slot, the status line past the cap, `.compact` and its waiver
+removed, one write per render, and `observations-qualified` in the same four states, with the
+first-attempt clock it needs. **Acceptance, in the
 auditor's terms:** *"Carry availability, unknown clocks and source-content age through the
 board renderer. Regression cases must distinguish genuinely fresh empty service from stale,
 failed and unknown empty service in both surfaces."* Concretely, each of A03's section (d)
 boards A, B and C reads differently from the fresh one on the popup, the panel and the spoken
 board, and the fresh one reads exactly as it does today; B (never decoded) and C (failed)
-differ in the served field, and share the rider's word if Q11 is answered yes.
+differ in the served field, and, **Amended 2026-11-01 (Q11),** share the rider's word.
 
 **Steps 2 and 3 land together or in that order, never 3 alone.** The frontend half reads
 fields only the backend half serves, and the reverse order is safe: a backend that names a
@@ -2612,3 +2677,61 @@ failed contributor in front of today's renderer makes an empty board read `as of
 from 90 s after the last decode (A03's world C, the control), never less honest than now.
 The one surface Step 2 cannot leave for later is the monitor: a never-decoded block fails both
 of its board lines (A1.4), so their four-state reading lands with Step 2.
+
+### Decisions, 2026-11-01
+
+All eleven questions in A1.5 are settled, and **every answer matched the recommendation this
+amendment gave**. The four proposals A1.5 lists as "proposed in the body, not asked" are
+accepted as written. Nothing is built: A03 and A10 stay VERIFIED on the 2026-10-12 harness
+until the build flips them, and the build starts at Step 0, which Q1 makes a prerequisite.
+
+| Q | Answer | Consequence |
+| --- | --- | --- |
+| Q1 | **Yes**: static route-to-group table, probe first, expected UNITED with seen | A 29-row table in `feeds/subway.py` beside `SUBWAY_FEED_URLS`, its FS, H and SI rows written from Step 0's committed capture, with a check that every route a live group serves is in the table. Never decoded becomes sayable on the subway. The union stands, as measured necessary for F03's own world. |
+| Q2 | **Yes** | A never-decoded expected contributor is a block with `fetched_at: null`, `ok: false`. Renderers read `fetched_at`, never `retained_since`, to know whether anything is held. The monitor's two board lines learn the state in Step 2, since a never-decoded block on a populated board fails both today. |
+| Q3 | **Yes**: replace the slot, name the group by its routes | On an empty board whose every expected contributor is failed or never decoded, the `No trains` slot reads `{routes} trains not reporting` ("2 and 5 trains not reporting"), the NEW form, from Q1's table; `Subway not reporting` where routes cannot be named, never the feed key. `No boats` on the ferry follows the same rule with its one system. |
+| Q4 | **Yes** | One helper takes the worse of a contributor's poll age and content age, both through the door; stale empty service reads `as of {age} ago`. Bounded on PATH and the ferry by their boards carrying no content clock once empty (A1.2, point 5), and on Metro-North by policy (Q4). |
+| Q5 | **Yes**: the four states govern `observations-qualified`, built with A03 | Fresh and empty says nothing; stale is the code's age rule at 600 s; failed and never decoded are named from the block's `ok` and the time since the last decode or, never decoded, since the process first tried, at the same band, which needs the first-attempt clock A1.3 names. Closes both 6.2 blind spots. Cost accepted: the monitor fails a run on a group dark since a deploy from its tenth minute. Requires a block on the rule's input for PATH, the ferry and NJ Transit, an operator copy of NJ Transit's failure (H5 closes with it), and the not-configured exclusion. |
+| Q6 | **`None`** | A decoded generation with no usable header publishes `None` under its key; Metro-North is recorded as `None` by policy rather than left absent. The railroad is the one producer that changes, and no LIRR row moves (0 of 763 undated on the capture). |
+| Q7 | **Yes**: narrowed to "LIRR failed this poll", with a test pinning both arms | A headerless LIRR success publishes `None` on the envelope and `feed_age_s` reads unknown; `/healthz` reads a null age as healthy and the monitor's `railroad-realtime` WARN names the cause. The branch keeps the last clock exactly when LIRR is in the poll's failed list, so "LIRR down, Metro-North up" still reads `feed-content-stale`. |
+| Q8 | **Remove** | `.compact` leaves `positionQualifier`, the contract and the code; `positions.test.js` pins two forms (12 tests move, all in that file); the `NOT_RIDER_TEXT` waiver for "scheduled (no GPS)" is deleted in the same change. |
+| Q9 | **Yes** | PATH, NJ Transit, the ferry, and the railroads on a total failure prune a kept row once its time has passed, through `drop_expired_arrivals`'s own rule with its zero grace. Retention is unchanged; nothing undeparted is dropped. State (ii) exists on every family. |
+| Q10 | **Yes** | PATH's and the ferry's boards carry their one system's block; a single-system board, and a railroad board with both railroads failing, answers a failed first poll with a 200 board whose block reads `fetched_at: null`, `ok: false`, and the rider reads `{system} not reporting` instead of the 502's detail. The 503 before any poll stays. H6's rider-facing half closes with this; its `/api/status` half stays on the live list. |
+| Q11 | **Yes**: on the board, and on the status line past the cap | A failed contributor with no row on a board reads `{system} not reporting` from 90 s after its last decode; the status line reads the same once the cap has taken a system's vehicles, and keeps `as of {age} ago` inside the window, where it dates what is drawn. The status line's vocabulary pin (`helpers.test.js:1962-1973`) moves in the build, past the cap only. |
+
+**The four proposals are accepted as proposed**: a decoded system always has a key; expected
+united with seen; the line rule for a failing contributor on a populated board, with its 90 s
+grace, whose effect on the frontend suite the build measures and names; and one clause per
+population, in the status line's order.
+
+**What changed in the body, and where.** Every sentence below is marked at the sentence
+(`Amended 2026-11-01`, or `ERRATUM, 2026-11-01` at 2.1). The eleven questions and the four
+proposals in A1.5 stay exactly as posed, so Q8's text still quotes the compact-form note's
+heading as it read when the question was asked.
+
+- **The Status paragraph** says DECIDED, nothing built, Step 0 next.
+- **2.1** gains the erratum on the LIRR header, which is not a decision: A1.5 says so, and the
+  build branch re-measures it.
+- **3.1's "not reporting" note and 3.2's first table** say what Q11 widens, and the first table
+  says Q8 removes `scheduled (no GPS)`. **3.2's second table** gains A1.3's four rows, in the
+  same words as A1.3, no longer conditional, and the sentence above that table stops calling
+  6.2's clause "the last row".
+- **3.5** gains the membership clause with `None` as the value, and the expected-contributors
+  membership rule with the union; its third bullet states the narrowed rule.
+- **The compact-form note's heading** reads "decided by Amendment 1 as its Q8: remove". Its text
+  stays as written.
+- **This amendment's opening, A1.1 and A1.2** record that the decisions landed: Q5's decision is
+  made, H6's rider-facing half closes with Q10, and Q9 makes state (ii) exist on every family.
+  Their measurements of today do not move.
+- **A1.3, A1.4 and A1.6** state the decided rules where they named a question's answer as
+  pending. A1.4 gains rows for what had none: the route-to-group table (Q1), the prune (Q9), the
+  status line past the cap (Q11) and the compact form (Q8). A1.5's introduction to the questions
+  says they are answered, and its "does not decide" gains one sentence on the erratum.
+- **The 2026-10-12 record** says Amendment 1 is decided at Section 4 item 3, and its H5 and H6
+  rows say what closes them. Its open question 1 row is unchanged.
+
+**Two readings made while amending, recorded so they are not mistaken for decisions.** Q3's
+slot and Q11's grace are composed: Q11 says "Either way the 90 s grace stands, so one failed
+poll is not news", so a failed contributor counts toward the slot only once its last decode
+is 90 s old, as it does for the line, and a never-decoded one counts at once. And Q8 had no
+step in A1.6, so it lands in Step 3 with the rest of the frontend's changes.

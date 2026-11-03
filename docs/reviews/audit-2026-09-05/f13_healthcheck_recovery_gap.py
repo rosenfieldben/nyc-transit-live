@@ -211,6 +211,12 @@ def cron_fire_minutes(expr: str) -> list[int]:
     return sorted(h * 60 + m for h in hours for m in minutes)
 
 
+# What a workflow that reads the deployment names: the monitor's own URL variable,
+# its script, or either endpoint it reads. A workflow naming none of them cannot reach
+# the deployment through anything this repository defines.
+DEPLOYMENT_MARKERS = ("MONITOR_STATUS_URL", "contract_monitor.py", "/healthz", "/api/status")
+
+
 def part1_cadence() -> dict:
     rule("PART 1: the repository-defined monitoring cadence, re-derived")
 
@@ -232,6 +238,33 @@ def part1_cadence() -> dict:
     ).stdout.split("\n")
     scheduled = [c.strip() for c in all_crons if c.strip()]
     say(f"  every scheduled workflow in .github/workflows      : {len(scheduled)} cron line(s)")
+
+    # WHICH OF THEM READS THE DEPLOYMENT. Amended 2026-11-03 on
+    # claude/step0-subway-group-probe. The record's fact is that nothing checks the
+    # deployment between monitor runs, and until that branch "no other scheduled
+    # workflow exists" was the same sentence. Step 0 of the freshness contract's
+    # Amendment 1 added a second, temporary one (probe-subway-groups.yml) that samples
+    # the MTA's keyless feeds and never reads the deployment, so counting cron lines
+    # would refute a record whose fact still holds. The check below asks the fact: of
+    # the scheduled workflows, which name anything a deployment reader needs. The
+    # cron-line count above still prints, so a new schedule is visible either way.
+    scheduled_files = subprocess.run(
+        ["git", "grep", "-l", "-E", r"^[[:space:]]*- cron:", "--", ".github/workflows"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    readers = sorted(
+        name
+        for name in scheduled_files
+        if any(
+            marker in (REPO / name).read_text(encoding="utf-8")
+            for marker in DEPLOYMENT_MARKERS
+        )
+    )
+    for name in sorted(scheduled_files):
+        reads = "reads the deployment" if name in readers else "does not read the deployment"
+        say(f"    {name:<46} : {reads}")
 
     fires = cron_fire_minutes(crons[0])
     gaps = [(fires[(i + 1) % len(fires)] - fires[i]) % 1440 for i in range(len(fires))]
@@ -281,12 +314,13 @@ def part1_cadence() -> dict:
     say("  poll freshness, alert-system degradation, the /healthz degraded classification,")
     say("  and whether served_at is built rather than replayed. WHAT CHECKS IN BETWEEN:")
     say("  nothing in this repository. Railway polls /healthz only while promoting a")
-    say("  deployment, and no other scheduled workflow exists.")
+    say("  deployment, and no other scheduled workflow reads the deployment.")
 
     check(len(crons) == 1, "contract-monitor.yml declares exactly one cron", str(crons))
     check(crons[0] == "17 */6 * * *", "the cron is the audited one", crons[0])
-    check(len(scheduled) == 1, "it is the only scheduled workflow in the repository",
-          f"{len(scheduled)} cron line(s) tracked")
+    check(readers == [".github/workflows/contract-monitor.yml"],
+          "it is the only scheduled workflow that reads the deployment",
+          f"scheduled workflows reading it: {readers}")
     check(len(fires) == 4 and set(gaps) == {360},
           "the audit's 'every six hours' is exact", f"{len(fires)} fires/day, gaps={set(gaps)}")
     check(deploy.get("healthcheckPath") == "/healthz",

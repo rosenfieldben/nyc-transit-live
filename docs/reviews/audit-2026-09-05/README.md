@@ -138,6 +138,38 @@ under node, which this hook does not instrument. The count moved from twelve bec
 the bus probe is the thirteenth Python script, and it is the one script here whose
 FIXTURE came off the network, which is exactly why it was worth re-running this.
 
+## Harness repairs
+
+A repair to how a script runs or to the proxy a check reads, never to the fact a record
+states, recorded here so a script's history tells the two apart (the form of the
+2026-10-12 directory's section of the same name).
+
+- **F13, on `claude/step0-subway-group-probe`, 2026-11-03.** The fact F13 records is
+  unchanged: nothing in this repository checks the deployment between two runs of the
+  contract monitor, because Railway polls `/healthz` only while a deployment is being
+  promoted. The check that stood for it read a proxy, "it is the only scheduled workflow
+  in the repository", by counting `- cron:` lines under `.github/workflows`, and Step 0 of
+  the freshness contract's Amendment 1 made the proxy false without touching the fact: its
+  temporary `probe-subway-groups.yml` is a second schedule, and it samples the MTA's
+  keyless feeds and never reads the deployment. The proxy is now "it is the only scheduled
+  workflow that reads the deployment": of the workflows with a cron line, the ones naming
+  any of `DEPLOYMENT_MARKERS` (`MONITOR_STATUS_URL`, `contract_monitor.py`, `/healthz`,
+  `/api/status`, and `railway.app`, so a production URL written in by hand counts) must be
+  `contract-monitor.yml` alone. The cron-line count and each scheduled workflow's verdict
+  still print. **No other check changed**: the disposition and every number the script
+  prints match `main` at `93f09fe`, the comment inventory included (27 candidates; class A
+  0, D 15, B 10, C 2). The guards, each on a scratch worktree, never the live tree:
+  - the original witness (`93f09fe`'s script) over this branch's tree: exit 1, REFUTED at
+    `it is the only scheduled workflow in the repository: 2 cron line(s) tracked`;
+  - the narrowed witness over the probe mutated to `curl -fsS "$MONITOR_STATUS_URL/healthz"`:
+    exit 1, REFUTED, naming both workflows (`scheduled workflows reading it:
+    ['.github/workflows/contract-monitor.yml', '.github/workflows/probe-subway-groups.yml']`);
+  - the narrowed witness over the probe mutated to `curl` a hardcoded
+    `https://example.up.railway.app/api/subways` (an invented host), which names no
+    other marker: exit 1, REFUTED, naming both workflows. The same mutation under the markers
+    without `railway.app` exits 0, VERIFIED, which is the escape that marker closes;
+  - the narrowed witness over this branch's tree: exit 0, VERIFIED.
+
 ## The scripts
 
 | Script | Finding | What it drives |

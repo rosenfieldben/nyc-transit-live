@@ -1,0 +1,79 @@
+name: Probe subway groups
+
+# TEMPORARY. Step 0 of Amendment 1 to the freshness contract (docs/design/freshness-contract.md,
+# A1.6, and its Q1): keyless samples of the eight subway group feeds over a full service day,
+# the overnight included, so the route-to-group table Step 2 writes beside SUBWAY_FEED_URLS
+# cites a committed capture rather than a document's grouping. Each run takes ONE sample with
+# backend/scripts/probe_subway_groups.py and uploads it as an artifact named by its UTC time.
+#
+# WHAT REMOVES IT: the follow-up branch that downloads every artifact, folds them with
+# `probe_subway_groups.py --reduce`, and commits the reduced capture under
+# backend/tests/fixtures/ deletes this file in that same commit, with the workflow section of
+# backend/tests/test_probe_subway_groups.py. Nothing else depends on it, and it is never a gate.
+#
+# JUDGED BY COVERAGE, NOT DURATION. GitHub's schedule drifts and drops runs: this repository's
+# contract monitor (cron "17 */6 * * *") ran 231 to 362 minutes late on 2026-11-01/02 by its
+# run times against its slots. So "every ten minutes" is a request, not a sampling rate. The
+# collection runs until the reduction's coverage table shows every hour of the day sampled
+# across one weekday service day and its overnight (its weekday_windows_fully_covered), however
+# long that takes, and the capture's README names the window, the samples and the gaps.
+#
+# THE NETWORK AND NJ TRANSIT. The job fetches the eight URLs in SUBWAY_FEED_URLS, once each,
+# with no key. It maps no secret and declares no environment, so the NJ Transit credentials
+# (environment secrets on "monitor", see contract-monitor.yml) cannot exist here, and nothing
+# in this workflow can spend a mint. A test pins that.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+# Two samplers never run at once, and late runs queue rather than drop. cancel-in-progress
+# false keeps a running sample from being cancelled by the next arrival; queue: max keeps every
+# waiting run (up to GitHub's 100, first in first out) where the default, single, would let a
+# newer arrival cancel the one already waiting. GitHub itself may still drop a scheduled run
+# under load, and a run that fails before its upload (pip, the timeout) leaves no artifact:
+# neither reaches the reduction as a row, so lost runs are counted from this workflow's run
+# list, not from the capture, and the capture's coverage table shows whether they cost an hour.
+concurrency:
+  group: probe-subway-groups
+  cancel-in-progress: false
+  queue: max
+
+# Read-only: the job fetches public feeds and uploads an artifact, which needs no repository
+# write. upload-artifact authenticates with the Actions runtime token, which this block does
+# not govern, so contents: read is all GITHUB_TOKEN is given.
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Matches the runtime pinned in nixpacks.toml, ci.yml and contract-monitor.yml.
+          python-version: "3.12"
+      # The exact pinned runtime set Railway deploys, so the feeds are parsed with the same
+      # gtfs-realtime-bindings and protobuf versions as production. No dev deps.
+      - run: pip install -r backend/requirements.lock
+      - name: Take one sample
+        id: sample
+        working-directory: backend
+        # The script prints the sample's path on stdout and its tally on stderr, and exits 0
+        # whenever the file is written, failed feeds included: a failure is a row in the
+        # sample, so it reaches the artifact rather than ending the run.
+        run: |
+          path="$(python scripts/probe_subway_groups.py --out-dir "$RUNNER_TEMP/samples")"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "name=subway-groups-$(basename "$path" .jsonl)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.sample.outputs.name }}
+          path: ${{ steps.sample.outputs.path }}
+          if-no-files-found: error
+          # Long enough to outlive the collection and the follow-up branch that reduces it.
+          # GitHub caps this at the repository's own retention setting.
+          retention-days: 90

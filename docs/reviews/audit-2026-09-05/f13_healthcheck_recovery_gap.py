@@ -212,9 +212,17 @@ def cron_fire_minutes(expr: str) -> list[int]:
 
 
 # What a workflow that reads the deployment names: the monitor's own URL variable,
-# its script, or either endpoint it reads. A workflow naming none of them cannot reach
-# the deployment through anything this repository defines.
-DEPLOYMENT_MARKERS = ("MONITOR_STATUS_URL", "contract_monitor.py", "/healthz", "/api/status")
+# its script, either endpoint it reads, or the platform's own domain, so a production
+# URL written into a workflow by hand counts as reading it too. A workflow naming none
+# of them cannot reach the deployment through anything this repository defines. See
+# "Harness repairs" in this directory's README.
+DEPLOYMENT_MARKERS = (
+    "MONITOR_STATUS_URL",
+    "contract_monitor.py",
+    "/healthz",
+    "/api/status",
+    "railway.app",
+)
 
 
 def part1_cadence() -> dict:

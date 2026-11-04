@@ -8,6 +8,11 @@ a socket is watched. What is pinned:
     trip updates and 1 vehicle), where the key's first character would say G;
   * a sample fetches each of the eight SUBWAY_FEED_URLS once, in order, and nothing else,
     and refuses to run at all with a contract-tier seam set;
+  * the loop's clock and stop rule: samples on the grid start + k * ten minutes, only at
+    slots strictly before the budget, an overrun skipping the slots it missed rather than
+    bursting, every sample in one file named for the loop's start and written as it
+    completes, so a loop killed partway keeps what it finished; and every row's
+    provenance, counted by the reduction;
   * a feed that fails is a row, for every way a feed can fail (parse_feed's body rules
     included, a header in name only among them), and never aborts the sample;
   * the reduction: placement from every live row (stale and undated rows listed, not
@@ -16,9 +21,10 @@ a socket is watched. What is pinned:
     edges and against the archive's calendar, determinism over the layout on disk, sorted
     keys, and a refusal for a conflicting row, an unreadable line, or a group fetched from
     two URLs;
-  * the temporary workflow: its schedule and queue, its read-only permissions, that no
+  * the temporary workflow: its schedule, its dispatched loop, a queue per trigger, the
+    timeouts nesting budget inside step inside job, its read-only permissions, that no
     expression in it reads a secret (which is what makes "nothing here can spend an NJ
-    Transit mint" structural), and the shell that names the artifact, run for real. That
+    Transit mint" structural), and the shell of both its run steps, run for real. That
     section goes with the workflow, in the commit that deletes it.
 
 THE CAPTURE IS SERVED RE-DATED TO THE SAMPLE'S MINUTE in the reduction tests. It was taken
@@ -629,6 +635,7 @@ def test_hour_coverage_counts_complete_samples_and_route_evidence_counts_every_l
         "incomplete_samples": 2,
         "failed_rows": 2,
         "stale_rows": 0,
+        "samples_by_provenance": {"dispatched": 0, "local": 3, "scheduled": 0, "unrecorded": 0},
     }
     assert capture["failed"] == [
         {"sampled_at": "2026-11-04T14:00:00Z", "group": "BDFM", "status": 503, "error": "HTTP 503"},
@@ -868,6 +875,215 @@ def test_the_capture_states_what_it_was_compared_against_and_what_it_fetched(pro
 
 
 # ---------------------------------------------------------------------------
+# The loop: its clock and its stop rule
+# ---------------------------------------------------------------------------
+
+
+class _Time:
+    """A fake clock and sleep in one: a read costs `read_s`, a sleep advances by what it
+    was asked, and `jump` adds an overrun in the middle of a sample."""
+
+    def __init__(self, start: float, read_s: float = 0.05):
+        self.now = start
+        self.read_s = read_s
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        value = self.now
+        self.now += self.read_s
+        return value
+
+    def sleep(self, seconds: float) -> None:
+        assert seconds > 0
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _loop_fetch(probe, time_: _Time, overrun: dict[int, float] | None = None):
+    """A fetch serving complete, live bodies at the fake clock's current time. `overrun`
+    maps a sample's index to seconds added during its first fetch."""
+    calls = {"n": 0}
+
+    def fetch(url: str):
+        index = calls["n"] // len(SUBWAY_FEED_URLS)
+        if overrun and calls["n"] % len(SUBWAY_FEED_URLS) == 0 and index in overrun:
+            time_.now += overrun[index]
+        calls["n"] += 1
+        group = next(g for g, u in SUBWAY_FEED_URLS.items() if u == url)
+        return probe.Fetched(200, _complete_bodies(time_.now)[group])
+
+    return fetch
+
+
+def _offsets(samples, start: float) -> list[float]:
+    return [_ts(rows[0]["sampled_at"]) - start for rows in samples]
+
+
+def test_a_loop_samples_on_the_ten_minute_grid_into_one_file_named_for_its_start(probe, tmp_path):
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+    path, samples = probe.run_loop(
+        tmp_path,
+        _loop_fetch(probe, time_),
+        time_.clock,
+        time_.sleep,
+        budget_s=30 * 60,
+        provenance="dispatched",
+    )
+    assert path == tmp_path / "20261104T140000Z.jsonl"
+    assert list(tmp_path.iterdir()) == [path]
+    assert _offsets(samples, start) == [0, 600, 1200]
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows == [row for sample in samples for row in sample]
+    assert len(rows) == 3 * len(SUBWAY_FEED_URLS)
+    assert {row["provenance"] for row in rows} == {"dispatched"}
+    # It slept up to each slot, never past it: the sample's own reads are the remainder.
+    assert len(time_.sleeps) == 2 and all(590 < s < 600 for s in time_.sleeps)
+    # And it does not sleep out the rest of the budget after its last sample.
+    assert time_.now < start + 1200 + 60
+
+
+@pytest.mark.parametrize(
+    ("budget_minutes", "taken"),
+    [(1, 1), (10, 1), (11, 2), (20, 2), (21, 3), (340, 34)],
+)
+def test_the_stop_rule_takes_only_slots_strictly_before_the_budget(
+    probe, tmp_path, budget_minutes, taken
+):
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+    _, samples = probe.run_loop(
+        tmp_path, _loop_fetch(probe, time_), time_.clock, time_.sleep, budget_s=budget_minutes * 60
+    )
+    assert len(samples) == taken == probe.loop_slots(start, budget_minutes * 60)
+    assert max(_offsets(samples, start)) < budget_minutes * 60
+
+
+def test_an_overrun_skips_the_slots_it_missed_and_stays_on_the_grid(probe, tmp_path):
+    """Sample 1 (at +600) takes 700 s, so slot +1200 has passed when it ends: the loop takes
+    +1800 next, never +1300 (a burst) and never +1200 late."""
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+    _, samples = probe.run_loop(
+        tmp_path,
+        _loop_fetch(probe, time_, overrun={1: 700.0}),
+        time_.clock,
+        time_.sleep,
+        budget_s=40 * 60,
+    )
+    assert _offsets(samples, start) == [0, 600, 1800]
+
+
+def test_an_overrun_past_the_budget_ends_the_loop_without_another_sample(probe, tmp_path):
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+    _, samples = probe.run_loop(
+        tmp_path,
+        _loop_fetch(probe, time_, overrun={1: 700.0}),
+        time_.clock,
+        time_.sleep,
+        budget_s=20 * 60,
+    )
+    assert _offsets(samples, start) == [0, 600]
+
+
+def test_a_loop_killed_partway_keeps_every_sample_it_finished(probe, tmp_path):
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+    taken: list[list[dict]] = []
+
+    def killed_after_two(rows):
+        taken.append(rows)
+        if len(taken) == 2:
+            raise KeyboardInterrupt  # the step timeout's SIGTERM, near enough
+
+    with pytest.raises(KeyboardInterrupt):
+        probe.run_loop(
+            tmp_path,
+            _loop_fetch(probe, time_),
+            time_.clock,
+            time_.sleep,
+            budget_s=60 * 60,
+            on_sample=killed_after_two,
+        )
+    (path,) = tmp_path.iterdir()
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows == [row for sample in taken for row in sample]
+
+
+@pytest.mark.parametrize("budget_s", [0, -60])
+def test_a_loop_needs_a_positive_budget(probe, tmp_path, budget_s):
+    time_ = _Time(_ts("2026-11-04T14:00:00Z"))
+    with pytest.raises(ValueError, match="positive budget"):
+        probe.run_loop(tmp_path, _loop_fetch(probe, time_), time_.clock, time_.sleep, budget_s)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_cli_loop_prints_the_file_and_a_tally_per_sample(probe, tmp_path, capsys):
+    start = _ts("2026-11-04T14:00:00Z")
+    time_ = _Time(start)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        group = next(g for g, u in SUBWAY_FEED_URLS.items() if u == str(request.url))
+        return httpx.Response(200, content=_complete_bodies(time_.now)[group])
+
+    def client_factory(**kwargs):
+        return httpx.Client(transport=httpx.MockTransport(handler), **kwargs)
+
+    argv = ["--out-dir", str(tmp_path), "--loop-minutes", "20", "--provenance", "dispatched"]
+    code = probe.main(argv, client_factory=client_factory, clock=time_.clock, sleep=time_.sleep)
+    assert code == 0
+    out, err = capsys.readouterr()
+    assert out.strip() == str(tmp_path / "20261104T140000Z.jsonl")
+    assert err.strip().splitlines() == [
+        "2026-11-04T14:00:00Z: 8 of 8 feeds ok",
+        "2026-11-04T14:10:00Z: 8 of 8 feeds ok",
+        "2 samples in one loop of 20 minutes",
+    ]
+    rows = [json.loads(line) for line in Path(out.strip()).read_text().splitlines()]
+    assert {row["provenance"] for row in rows} == {"dispatched"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--loop-minutes", "0"], ["--loop-minutes", "ten"], ["--provenance", "cron"]],
+)
+def test_the_cli_refuses_a_budget_below_a_minute_and_an_unknown_provenance(probe, tmp_path, argv):
+    def no_client(**kwargs):
+        raise AssertionError("a client was built for a refused command line")
+
+    with pytest.raises(SystemExit) as refused:
+        probe.main(["--out-dir", str(tmp_path), *argv], client_factory=no_client)
+    assert refused.value.code == 2
+
+
+def test_the_capture_counts_samples_by_provenance_and_reads_old_rows_as_unrecorded(probe):
+    at = _ts("2026-11-04T14:00:00Z")
+    scheduled = probe.take_sample(
+        _fetch_for(probe, _complete_bodies(at)), _Clock(at), provenance="scheduled"
+    )
+    dispatched = probe.take_sample(
+        _fetch_for(probe, _complete_bodies(at + 600)), _Clock(at + 600), provenance="dispatched"
+    )
+    legacy = [
+        {k: v for k, v in row.items() if k != "provenance"}
+        for row in _sample(probe, "2026-11-04T14:20:00Z")
+    ]
+    capture = probe.reduce_samples(scheduled + dispatched + legacy, _archive(probe))
+    assert capture["window"]["samples_by_provenance"] == {
+        "dispatched": 1,
+        "local": 0,
+        "scheduled": 1,
+        "unrecorded": 1,
+    }
+    mixed = [dict(row, provenance="local") if i == 3 else row for i, row in enumerate(scheduled)]
+    with pytest.raises(ValueError, match="mixes provenances"):
+        probe.reduce_samples(mixed, _archive(probe))
+    with pytest.raises(ValueError, match="provenance must be one of"):
+        probe.take_sample(_fetch_for(probe, _complete_bodies(at)), _Clock(at), provenance="cron")
+
+
+# ---------------------------------------------------------------------------
 # The temporary workflow (deleted, with this section, by the commit that adds the capture)
 # ---------------------------------------------------------------------------
 
@@ -879,16 +1095,48 @@ def _workflow():
     return text, yaml.safe_load(text)
 
 
-def test_the_workflow_samples_every_ten_minutes_and_on_demand_and_queues_late_runs():
+def _steps():
+    _, workflow = _workflow()
+    (job,) = workflow["jobs"].values()
+    return job, job["steps"]
+
+
+def _step(name_part: str) -> dict:
+    _, steps = _steps()
+    (step,) = [s for s in steps if name_part in s.get("name", "")]
+    return step
+
+
+def test_the_workflow_keeps_its_schedule_and_dispatches_a_loop():
     _, workflow = _workflow()
     # PyYAML reads the bare key `on` as the boolean True (YAML 1.1).
     triggers = workflow[True]
     assert triggers["schedule"] == [{"cron": "*/10 * * * *"}]
-    assert "workflow_dispatch" in triggers
-    # cancel-in-progress false keeps a running sample; queue max keeps every waiting one
+    loop_minutes = triggers["workflow_dispatch"]["inputs"]["loop_minutes"]
+    assert (loop_minutes["type"], loop_minutes["default"]) == ("number", 340)
+
+
+def test_each_trigger_queues_in_its_own_group_and_late_runs_wait():
+    _, workflow = _workflow()
+    concurrency = workflow["concurrency"]
+    # A sample must never wait hours behind a loop, so the group is per trigger.
+    assert concurrency["group"] == "probe-subway-groups-${{ github.event_name }}"
+    # cancel-in-progress false keeps a running loop; queue max keeps every waiting one
     # (the default, single, would let a newer arrival cancel the one already waiting).
-    assert workflow["concurrency"]["cancel-in-progress"] is False
-    assert workflow["concurrency"]["queue"] == "max"
+    assert concurrency["cancel-in-progress"] is False
+    assert concurrency["queue"] == "max"
+
+
+def test_the_timeouts_nest_budget_inside_step_inside_job():
+    """The default loop starts its last sample before minute 340 and ends seconds later;
+    the sample step dies at 350; the job at 358, under GitHub's 360. The ten minutes between
+    budget and step timeout are one whole interval of slack for a slow last sample."""
+    _, workflow = _workflow()
+    job, _ = _steps()
+    budget = workflow[True]["workflow_dispatch"]["inputs"]["loop_minutes"]["default"]
+    step_timeout = _step("Take one sample")["timeout-minutes"]
+    assert job["timeout-minutes"] == 358
+    assert budget + 10 <= step_timeout < job["timeout-minutes"] < 360
 
 
 def test_the_workflow_is_read_only_and_no_expression_in_it_reads_a_secret():
@@ -903,56 +1151,89 @@ def test_the_workflow_is_read_only_and_no_expression_in_it_reads_a_secret():
         assert "permissions" not in job, f"{name} must not widen the workflow's permissions"
 
 
-def test_the_workflow_runs_one_sample_on_the_lock_and_uploads_it_by_its_time():
-    _, workflow = _workflow()
-    (job,) = workflow["jobs"].values()
-    steps = job["steps"]
+def test_the_workflow_runs_on_the_lock_and_uploads_whatever_the_sample_step_did():
+    _, steps = _steps()
     python = next(s for s in steps if s.get("uses", "").startswith("actions/setup-python@"))
     assert python["with"]["python-version"] == "3.12"
     runs = [s["run"] for s in steps if "run" in s]
     assert "pip install -r backend/requirements.lock" in runs
-    (sample,) = [s for s in steps if "probe_subway_groups.py" in s.get("run", "")]
-    assert sample["id"] == "sample"
+    sample = _step("Take one sample")
     assert sample["working-directory"] == "backend"
-    assert sample["run"].count("probe_subway_groups.py") == 1
     assert "--reduce" not in sample["run"]
+    naming = _step("Name the artifact")
+    assert (naming["id"], naming["if"]) == ("sample", "always()")
     (upload,) = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")]
+    # A loop the step timeout kills still uploads every sample it finished.
+    assert upload["if"] == "always() && steps.sample.outputs.path != ''"
     assert upload["with"]["name"] == "${{ steps.sample.outputs.name }}"
     assert upload["with"]["path"] == "${{ steps.sample.outputs.path }}"
     assert upload["with"]["if-no-files-found"] == "error"
 
 
-def test_the_sample_step_names_the_artifact_by_the_samples_utc_time(tmp_path):
-    """The step's shell, run as Actions runs it (bash -eo pipefail), with `python` standing
-    in for the collector: what reaches GITHUB_OUTPUT is what the upload step reads."""
-    _, workflow = _workflow()
-    (job,) = workflow["jobs"].values()
-    (sample,) = [s for s in job["steps"] if s.get("id") == "sample"]
-    runner_temp = tmp_path / "runner"
+def _run_step(step: dict, tmp_path: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """A step's shell, run as Actions runs it (bash -eo pipefail)."""
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={"PATH": os.environ["PATH"], **env},
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("event", "loop_minutes", "expected"),
+    [
+        ("schedule", "", "--provenance scheduled"),
+        ("workflow_dispatch", "340", "--provenance dispatched --loop-minutes 340"),
+    ],
+)
+def test_the_sample_step_takes_one_sample_on_schedule_and_a_loop_on_dispatch(
+    tmp_path, event, loop_minutes, expected
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    argv_file = tmp_path / "argv"
     fake = bin_dir / "python"
-    fake.write_text(
-        '#!/bin/sh\n[ "$1" = scripts/probe_subway_groups.py ] || exit 9\n'
-        '[ "$2" = --out-dir ] || exit 9\necho "$3/20261104T140733Z.jsonl"\n'
-        'echo "8 of 8 feeds ok" >&2\n'
-    )
+    fake.write_text(f'#!/bin/sh\necho "$@" > {argv_file}\n')
     fake.chmod(0o755)
+    runner_temp = tmp_path / "runner"
+    result = _run_step(
+        _step("Take one sample"),
+        tmp_path,
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(runner_temp),
+            "EVENT": event,
+            "LOOP_MINUTES": loop_minutes,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert argv_file.read_text().split() == (
+        f"scripts/probe_subway_groups.py --out-dir {runner_temp}/samples {expected}".split()
+    )
+
+
+@pytest.mark.parametrize(
+    ("event", "prefix"),
+    [("schedule", "subway-groups"), ("workflow_dispatch", "subway-groups-loop")],
+)
+def test_the_artifact_is_named_by_the_files_own_utc_time(tmp_path, event, prefix):
+    """What reaches GITHUB_OUTPUT is what the upload step reads: a typo in `name=` or
+    `path=` fails here, and so does a directory holding anything but one sample file."""
+    runner_temp = tmp_path / "runner"
+    (runner_temp / "samples").mkdir(parents=True)
+    sample = runner_temp / "samples" / "20261104T140733Z.jsonl"
+    sample.write_text("{}\n")
     output = tmp_path / "github_output"
     output.write_text("")
-    env = {
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "RUNNER_TEMP": str(runner_temp),
-        "GITHUB_OUTPUT": str(output),
-    }
-    subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", sample["run"]],
-        cwd=tmp_path,
-        env=env,
-        check=True,
-    )
+    env = {"RUNNER_TEMP": str(runner_temp), "GITHUB_OUTPUT": str(output), "EVENT": event}
+    result = _run_step(_step("Name the artifact"), tmp_path, env)
+    assert result.returncode == 0, result.stderr
     written = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert written == {
-        "path": f"{runner_temp}/samples/20261104T140733Z.jsonl",
-        "name": "subway-groups-20261104T140733Z",
-    }
+    assert written == {"path": str(sample), "name": f"{prefix}-20261104T140733Z"}
+
+    (runner_temp / "samples" / "20261104T150000Z.jsonl").write_text("{}\n")
+    output.write_text("")
+    assert _run_step(_step("Name the artifact"), tmp_path, env).returncode != 0
+    assert output.read_text() == ""

@@ -12,7 +12,7 @@ samples over a full service day, the overnight included. This is the collector f
 samples and the reduction that folds them into the capture. It is a DATA PROBE in 6.0's
 shape (the bus probe): it measures, it decides nothing, and it imports no decoder.
 
-THE TWO MODES.
+THE THREE MODES.
 
   sample (the default)  fetches each of the eight group feeds in SUBWAY_FEED_URLS once, in
                         that order, parses each as a GTFS-RT FeedMessage through
@@ -23,6 +23,18 @@ THE TWO MODES.
                         in basic ISO 8601 (20261103T141007Z), which is also what the
                         workflow names the artifact by. It prints that path on stdout and
                         a one-line tally on stderr.
+  --loop-minutes M      takes a sample every SAMPLE_INTERVAL_S (ten minutes) for M minutes,
+                        every row of every sample into ONE file named for the loop's start,
+                        so a dispatched run carries a few hours of samples in one artifact
+                        rather than depending on GitHub's schedule. THE STOP RULE: a sample
+                        runs only at a slot (the start plus a whole number of intervals)
+                        that is strictly before the start plus M minutes, so a loop never
+                        begins a sample past its budget, and M=340 ends inside the
+                        workflow's step timeout with the upload still to come. A sample
+                        that overruns its interval skips the slots it missed rather than
+                        bursting to catch up, so samples stay on the ten-minute grid. Each
+                        sample is appended (and the file closed) as it completes, so a loop
+                        killed partway keeps every sample it finished.
   --reduce DIR          folds every *.jsonl under DIR (recursively, since a download of
                         workflow artifacts puts each in its own directory) into the capture:
                         per route id, the groups that carried it with sample counts, first
@@ -38,8 +50,11 @@ header_age_s (the read instant minus the header timestamp: the feed's age at fet
 two machines' clocks, so a few seconds of it may be skew), fetched_at, entities (counts
 by payload kind, plus `empty` for an entity that carries none, plus `total`), route_ids
 (each route id seen in trip updates and in vehicle positions, with its entity count), and
-no_route_id (entities whose trip names no route). Every row carries every key; a failed
-row carries nulls where it measured nothing.
+no_route_id (entities whose trip names no route), and provenance: how the sample was
+taken, `scheduled` (a run GitHub's schedule started), `dispatched` (a loop started by hand
+or by a check-in) or `local` (anywhere else, the default). Every row carries every key; a
+failed row carries nulls where it measured nothing. The reduction counts samples by
+provenance, and a row from before the field existed counts as `unrecorded`.
 
 A FEED THAT FAILS IS A ROW, NEVER AN ABORT. A transport error, a non-200, an empty body,
 bytes that do not parse and a message with no feed header are each recorded as a row with
@@ -145,6 +160,8 @@ FORMAT = 1  # the reduced capture's shape; bump it when a key changes meaning
 FETCH_TIMEOUT_S = 30.0  # the app's own httpx timeout for these feeds (pollers.py)
 STALE_AFTER_S = 600.0  # cache.OPERATOR_STALE_AFTER_S (see LIVE, STALE AND UNDATED)
 SAMPLE_SUFFIX = ".jsonl"
+SAMPLE_INTERVAL_S = 600  # a loop's spacing: the schedule's own ten minutes
+PROVENANCES = ("scheduled", "dispatched", "local")
 NEW_YORK = ZoneInfo("America/New_York")
 WINDOW_START_HOUR = 5  # the weekday window's edge, New York time (see THE WEEKDAY WINDOWS)
 _ISO_SECONDS = "%Y-%m-%dT%H:%M:%SZ"
@@ -256,11 +273,12 @@ def summarize_feed(raw: bytes) -> dict[str, Any]:
     }
 
 
-def _blank_row(sampled_at: str, group: str, url: str) -> dict[str, Any]:
+def _blank_row(sampled_at: str, group: str, url: str, provenance: str) -> dict[str, Any]:
     return {
         "sampled_at": sampled_at,
         "group": group,
         "url": url,
+        "provenance": provenance,
         "ok": False,
         "error": None,
         "status": None,
@@ -274,9 +292,11 @@ def _blank_row(sampled_at: str, group: str, url: str) -> dict[str, Any]:
     }
 
 
-def feed_row(sampled_at: str, group: str, url: str, fetch: Fetch, clock: Clock) -> dict[str, Any]:
+def feed_row(
+    sampled_at: str, group: str, url: str, fetch: Fetch, clock: Clock, provenance: str = "local"
+) -> dict[str, Any]:
     """One feed's row. Never raises for anything the feed or the network does."""
-    row = _blank_row(sampled_at, group, url)
+    row = _blank_row(sampled_at, group, url, provenance)
     try:
         fetched = fetch(url)
     except Exception as exc:  # noqa: BLE001 - any transport failure is a row, not an abort
@@ -311,31 +331,98 @@ def feed_row(sampled_at: str, group: str, url: str, fetch: Fetch, clock: Clock) 
 
 
 def take_sample(
-    fetch: Fetch, clock: Clock, urls: Mapping[str, str] = SUBWAY_FEED_URLS
+    fetch: Fetch,
+    clock: Clock,
+    urls: Mapping[str, str] = SUBWAY_FEED_URLS,
+    provenance: str = "local",
 ) -> list[dict[str, Any]]:
     """One row per group, in `urls` order, every row stamped with the sample's start."""
+    if provenance not in PROVENANCES:
+        raise ValueError(f"provenance must be one of {PROVENANCES}, not {provenance!r}")
     sampled_at = _iso_seconds(clock())
-    return [feed_row(sampled_at, group, url, fetch, clock) for group, url in urls.items()]
+    return [
+        feed_row(sampled_at, group, url, fetch, clock, provenance) for group, url in urls.items()
+    ]
 
 
-def write_sample(rows: Sequence[dict[str, Any]], out_dir: Path) -> Path:
-    """Append the rows, one JSON line each, to the file named for the sample's UTC time."""
+def append_rows(rows: Sequence[dict[str, Any]], path: Path) -> Path:
+    """Append the rows, one JSON line each, to `path`, and close it, so what is written
+    survives whatever happens to the process next."""
     if not rows:
         raise ValueError("a sample has one row per group; this one has none")
-    sampled_at = _parse_iso(rows[0]["sampled_at"]).timestamp()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / sample_filename(sampled_at)
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
     return path
 
 
+def write_sample(rows: Sequence[dict[str, Any]], out_dir: Path) -> Path:
+    """Append the rows to the file named for the sample's UTC time."""
+    if not rows:
+        raise ValueError("a sample has one row per group; this one has none")
+    sampled_at = _parse_iso(rows[0]["sampled_at"]).timestamp()
+    return append_rows(rows, out_dir / sample_filename(sampled_at))
+
+
 def run_sample(
-    out_dir: Path, fetch: Fetch, clock: Clock, urls: Mapping[str, str] = SUBWAY_FEED_URLS
+    out_dir: Path,
+    fetch: Fetch,
+    clock: Clock,
+    urls: Mapping[str, str] = SUBWAY_FEED_URLS,
+    provenance: str = "local",
 ) -> tuple[Path, list[dict[str, Any]]]:
-    rows = take_sample(fetch, clock, urls)
+    rows = take_sample(fetch, clock, urls, provenance)
     return write_sample(rows, out_dir), rows
+
+
+def loop_slots(start: float, budget_s: float, interval_s: float = SAMPLE_INTERVAL_S) -> int:
+    """How many samples a loop of `budget_s` takes if none overruns: the slots
+    start + k * interval_s that are strictly before start + budget_s."""
+    if budget_s <= 0 or interval_s <= 0:
+        raise ValueError("a loop needs a positive budget and a positive interval")
+    return int(-(-budget_s // interval_s))  # ceil: slot k runs while k * interval < budget
+
+
+def run_loop(
+    out_dir: Path,
+    fetch: Fetch,
+    clock: Clock,
+    sleep: Callable[[float], None],
+    budget_s: float,
+    interval_s: float = SAMPLE_INTERVAL_S,
+    urls: Mapping[str, str] = SUBWAY_FEED_URLS,
+    provenance: str = "local",
+    on_sample: Callable[[list[dict[str, Any]]], None] | None = None,
+) -> tuple[Path, list[list[dict[str, Any]]]]:
+    """Samples on the grid start + k * interval_s, all into one file named for the start.
+
+    THE CLOCK AND THE STOP RULE (see --loop-minutes in the module docstring). The start is
+    read once. Slot k is start + k * interval_s, and slot k is taken only while it is
+    strictly before start + budget_s. Before a slot the loop sleeps until it; after a sample
+    the next slot is the first one not yet reached, so an overrun skips missed slots instead
+    of bursting, and a slot that the overrun pushed past the budget is never taken. The
+    first sample is slot 0, at once.
+    """
+    loop_slots(0.0, budget_s, interval_s)  # validates the budget and the interval
+    start = clock()
+    deadline = start + budget_s
+    path = out_dir / sample_filename(start)
+    samples: list[list[dict[str, Any]]] = []
+    k = 0
+    while start + k * interval_s < deadline:
+        slot = start + k * interval_s
+        wait = slot - clock()
+        if wait > 0:
+            sleep(wait)
+        rows = take_sample(fetch, clock, urls, provenance)
+        append_rows(rows, path)
+        samples.append(rows)
+        if on_sample is not None:
+            on_sample(rows)
+        reached = int((clock() - start) // interval_s)  # the last slot already begun
+        k = max(k + 1, reached + 1)
+    return path, samples
 
 
 def httpx_fetch(client: httpx.Client) -> Fetch:
@@ -507,6 +594,7 @@ def reduce_samples(
 
     complete_by_hour = dict.fromkeys(range(24), 0)
     incomplete_by_hour = dict.fromkeys(range(24), 0)
+    by_provenance = dict.fromkeys((*PROVENANCES, "unrecorded"), 0)
     windows: dict[str, dict[str, Any]] = {}
     failed: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
@@ -521,6 +609,10 @@ def reduce_samples(
     for stamp in order:
         sample = samples[stamp]
         when = _parse_iso(stamp)
+        provenances = {row.get("provenance", "unrecorded") for row in sample.values()}
+        if len(provenances) != 1:
+            raise ValueError(f"the sample at {stamp} mixes provenances: {sorted(provenances)}")
+        by_provenance[provenances.pop()] += 1
         complete = all(g in sample and row_state(sample[g]) == "live" for g in expected_groups)
         (complete_by_hour if complete else incomplete_by_hour)[when.hour] += 1
 
@@ -670,6 +762,7 @@ def reduce_samples(
             "incomplete_samples": len(order) - complete_total,
             "failed_rows": len(failed),
             "stale_rows": len(stale),
+            "samples_by_provenance": by_provenance,
         },
         "coverage": {
             "by_utc_hour": {
@@ -732,11 +825,25 @@ def main(
     *,
     client_factory: Callable[..., httpx.Client] = httpx.Client,
     clock: Clock = time.time,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """The command line. `client_factory` and `clock` are the seams a test drives the
-    sample path through (an httpx client over a mock transport, a fixed clock)."""
+    """The command line. `client_factory`, `clock` and `sleep` are the seams a test drives
+    the sample and loop paths through (an httpx client over a mock transport, a fake clock
+    that a fake sleep advances)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out-dir", type=Path, default=Path("."), help="sample mode: where")
+    parser.add_argument(
+        "--loop-minutes",
+        type=int,
+        metavar="M",
+        help="a sample every ten minutes for M minutes, all into one file",
+    )
+    parser.add_argument(
+        "--provenance",
+        choices=PROVENANCES,
+        default="local",
+        help="how the sample is taken, recorded on every row (default: local)",
+    )
     parser.add_argument("--reduce", type=Path, metavar="DIR", help="fold DIR's samples")
     parser.add_argument("--routes", type=Path, help="reduce: gtfs_subway.zip or routes.txt")
     parser.add_argument("--output", type=Path, help="reduce: write here, not to stdout")
@@ -760,17 +867,38 @@ def main(
         )
         return 0
 
+    if args.loop_minutes is not None and args.loop_minutes < 1:
+        parser.error("--loop-minutes must be at least 1")
     env_seams.assert_unset("the subway group probe")
     with client_factory(timeout=FETCH_TIMEOUT_S) as client:
-        path, rows = run_sample(args.out_dir, httpx_fetch(client), clock)
+        if args.loop_minutes is None:
+            path, rows = run_sample(
+                args.out_dir, httpx_fetch(client), clock, provenance=args.provenance
+            )
+            print(path)
+            print(_tally(rows), file=sys.stderr)
+            return 0
+        path, samples = run_loop(
+            args.out_dir,
+            httpx_fetch(client),
+            clock,
+            sleep,
+            budget_s=args.loop_minutes * 60,
+            provenance=args.provenance,
+            on_sample=lambda rows: print(
+                f"{rows[0]['sampled_at']}: {_tally(rows)}", file=sys.stderr
+            ),
+        )
     print(path)
-    failed = [f"{row['group']} ({row['error']})" for row in rows if not row["ok"]]
-    print(
-        f"{len(rows) - len(failed)} of {len(rows)} feeds ok"
-        + (f"; failed: {', '.join(failed)}" if failed else ""),
-        file=sys.stderr,
-    )
+    print(f"{len(samples)} samples in one loop of {args.loop_minutes} minutes", file=sys.stderr)
     return 0
+
+
+def _tally(rows: Sequence[dict[str, Any]]) -> str:
+    failed = [f"{row['group']} ({row['error']})" for row in rows if not row["ok"]]
+    return f"{len(rows) - len(failed)} of {len(rows)} feeds ok" + (
+        f"; failed: {', '.join(failed)}" if failed else ""
+    )
 
 
 if __name__ == "__main__":

@@ -20,12 +20,7 @@ a socket is watched. What is pinned:
     stated unplaced, hour coverage from complete samples only, the weekday windows at their
     edges and against the archive's calendar, determinism over the layout on disk, sorted
     keys, and a refusal for a conflicting row, an unreadable line, or a group fetched from
-    two URLs;
-  * the temporary workflow: its schedule, its dispatched loop, a queue per trigger, the
-    timeouts nesting budget inside step inside job, its read-only permissions, that no
-    expression in it reads a secret (which is what makes "nothing here can spend an NJ
-    Transit mint" structural), and the shell of both its run steps, run for real. That
-    section goes with the workflow, in the commit that deletes it.
+    two URLs.
 
 THE CAPTURE IS SERVED RE-DATED TO THE SAMPLE'S MINUTE in the reduction tests. It was taken
 on 2026-06-13, so in a November sample its own header would make it stale and, correctly,
@@ -40,10 +35,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
-import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from datetime import datetime, timezone
@@ -57,7 +49,6 @@ from feeds.subway import SUBWAY_FEED_URLS
 
 _BACKEND = Path(__file__).resolve().parent.parent
 _SCRIPT = _BACKEND / "scripts" / "probe_subway_groups.py"
-_WORKFLOW = _BACKEND.parent / ".github" / "workflows" / "probe-subway-groups.yml"
 _CAPTURE = _BACKEND / "tests" / "fixtures" / "subway_1_7_s.pb"
 _CAPTURE_HEADER = 1781380197  # 2026-06-13T19:49:57Z, the capture's own header
 
@@ -1081,159 +1072,3 @@ def test_the_capture_counts_samples_by_provenance_and_reads_old_rows_as_unrecord
         probe.reduce_samples(mixed, _archive(probe))
     with pytest.raises(ValueError, match="provenance must be one of"):
         probe.take_sample(_fetch_for(probe, _complete_bodies(at)), _Clock(at), provenance="cron")
-
-
-# ---------------------------------------------------------------------------
-# The temporary workflow (deleted, with this section, by the commit that adds the capture)
-# ---------------------------------------------------------------------------
-
-
-def _workflow():
-    import yaml
-
-    text = _WORKFLOW.read_text()
-    return text, yaml.safe_load(text)
-
-
-def _steps():
-    _, workflow = _workflow()
-    (job,) = workflow["jobs"].values()
-    return job, job["steps"]
-
-
-def _step(name_part: str) -> dict:
-    _, steps = _steps()
-    (step,) = [s for s in steps if name_part in s.get("name", "")]
-    return step
-
-
-def test_the_workflow_keeps_its_schedule_and_dispatches_a_loop():
-    _, workflow = _workflow()
-    # PyYAML reads the bare key `on` as the boolean True (YAML 1.1).
-    triggers = workflow[True]
-    assert triggers["schedule"] == [{"cron": "*/10 * * * *"}]
-    loop_minutes = triggers["workflow_dispatch"]["inputs"]["loop_minutes"]
-    assert (loop_minutes["type"], loop_minutes["default"]) == ("number", 340)
-
-
-def test_each_trigger_queues_in_its_own_group_and_late_runs_wait():
-    _, workflow = _workflow()
-    concurrency = workflow["concurrency"]
-    # A sample must never wait hours behind a loop, so the group is per trigger.
-    assert concurrency["group"] == "probe-subway-groups-${{ github.event_name }}"
-    # cancel-in-progress false keeps a running loop; queue max keeps every waiting one
-    # (the default, single, would let a newer arrival cancel the one already waiting).
-    assert concurrency["cancel-in-progress"] is False
-    assert concurrency["queue"] == "max"
-
-
-def test_the_timeouts_nest_budget_inside_step_inside_job():
-    """The default loop starts its last sample before minute 340 and ends seconds later;
-    the sample step dies at 350; the job at 358, under GitHub's 360. The ten minutes between
-    budget and step timeout are one whole interval of slack for a slow last sample."""
-    _, workflow = _workflow()
-    job, _ = _steps()
-    budget = workflow[True]["workflow_dispatch"]["inputs"]["loop_minutes"]["default"]
-    step_timeout = _step("Take one sample")["timeout-minutes"]
-    assert job["timeout-minutes"] == 358
-    assert budget + 10 <= step_timeout < job["timeout-minutes"] < 360
-
-
-def test_the_workflow_is_read_only_and_no_expression_in_it_reads_a_secret():
-    text, workflow = _workflow()
-    assert workflow["permissions"] == {"contents": "read"}
-    expressions = re.findall(r"\$\{\{(.*?)\}\}", text, flags=re.S)
-    assert expressions, "the workflow's expressions were not found, so this checks nothing"
-    reading = [e.strip() for e in expressions if re.search(r"\bsecrets\b", e)]
-    assert reading == [], "a sample is keyless; no secret may reach this job"
-    for name, job in workflow["jobs"].items():
-        assert "environment" not in job, f"{name} must not reach the monitor environment"
-        assert "permissions" not in job, f"{name} must not widen the workflow's permissions"
-
-
-def test_the_workflow_runs_on_the_lock_and_uploads_whatever_the_sample_step_did():
-    _, steps = _steps()
-    python = next(s for s in steps if s.get("uses", "").startswith("actions/setup-python@"))
-    assert python["with"]["python-version"] == "3.12"
-    runs = [s["run"] for s in steps if "run" in s]
-    assert "pip install -r backend/requirements.lock" in runs
-    sample = _step("Take one sample")
-    assert sample["working-directory"] == "backend"
-    assert "--reduce" not in sample["run"]
-    naming = _step("Name the artifact")
-    assert (naming["id"], naming["if"]) == ("sample", "always()")
-    (upload,) = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")]
-    # A loop the step timeout kills still uploads every sample it finished.
-    assert upload["if"] == "always() && steps.sample.outputs.path != ''"
-    assert upload["with"]["name"] == "${{ steps.sample.outputs.name }}"
-    assert upload["with"]["path"] == "${{ steps.sample.outputs.path }}"
-    assert upload["with"]["if-no-files-found"] == "error"
-
-
-def _run_step(step: dict, tmp_path: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
-    """A step's shell, run as Actions runs it (bash -eo pipefail)."""
-    return subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-        cwd=tmp_path,
-        env={"PATH": os.environ["PATH"], **env},
-        capture_output=True,
-        text=True,
-    )
-
-
-@pytest.mark.parametrize(
-    ("event", "loop_minutes", "expected"),
-    [
-        ("schedule", "", "--provenance scheduled"),
-        ("workflow_dispatch", "340", "--provenance dispatched --loop-minutes 340"),
-    ],
-)
-def test_the_sample_step_takes_one_sample_on_schedule_and_a_loop_on_dispatch(
-    tmp_path, event, loop_minutes, expected
-):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    argv_file = tmp_path / "argv"
-    fake = bin_dir / "python"
-    fake.write_text(f'#!/bin/sh\necho "$@" > {argv_file}\n')
-    fake.chmod(0o755)
-    runner_temp = tmp_path / "runner"
-    result = _run_step(
-        _step("Take one sample"),
-        tmp_path,
-        {
-            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-            "RUNNER_TEMP": str(runner_temp),
-            "EVENT": event,
-            "LOOP_MINUTES": loop_minutes,
-        },
-    )
-    assert result.returncode == 0, result.stderr
-    assert argv_file.read_text().split() == (
-        f"scripts/probe_subway_groups.py --out-dir {runner_temp}/samples {expected}".split()
-    )
-
-
-@pytest.mark.parametrize(
-    ("event", "prefix"),
-    [("schedule", "subway-groups"), ("workflow_dispatch", "subway-groups-loop")],
-)
-def test_the_artifact_is_named_by_the_files_own_utc_time(tmp_path, event, prefix):
-    """What reaches GITHUB_OUTPUT is what the upload step reads: a typo in `name=` or
-    `path=` fails here, and so does a directory holding anything but one sample file."""
-    runner_temp = tmp_path / "runner"
-    (runner_temp / "samples").mkdir(parents=True)
-    sample = runner_temp / "samples" / "20261104T140733Z.jsonl"
-    sample.write_text("{}\n")
-    output = tmp_path / "github_output"
-    output.write_text("")
-    env = {"RUNNER_TEMP": str(runner_temp), "GITHUB_OUTPUT": str(output), "EVENT": event}
-    result = _run_step(_step("Name the artifact"), tmp_path, env)
-    assert result.returncode == 0, result.stderr
-    written = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert written == {"path": str(sample), "name": f"{prefix}-20261104T140733Z"}
-
-    (runner_temp / "samples" / "20261104T150000Z.jsonl").write_text("{}\n")
-    output.write_text("")
-    assert _run_step(_step("Name the artifact"), tmp_path, env).returncode != 0
-    assert output.read_text() == ""

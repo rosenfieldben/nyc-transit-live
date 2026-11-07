@@ -1,0 +1,1564 @@
+{
+  "archive": {
+    "calendar": true,
+    "feed_version": "20261028-fall-2026-pick-with-long-term-supplements",
+    "route_ids": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "6X",
+      "7",
+      "7X",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "FS",
+      "FX",
+      "G",
+      "GS",
+      "H",
+      "J",
+      "L",
+      "M",
+      "N",
+      "Q",
+      "R",
+      "SI",
+      "W",
+      "Z"
+    ],
+    "routes_txt_sha256": "8f1917e6fb1feee9ad0158a5414b9de4bff8ca73ddb4818f9520c9acfae644b6"
+  },
+  "coverage": {
+    "by_utc_hour": {
+      "00": {
+        "complete": 6,
+        "incomplete": 0
+      },
+      "01": {
+        "complete": 6,
+        "incomplete": 0
+      },
+      "02": {
+        "complete": 7,
+        "incomplete": 0
+      },
+      "03": {
+        "complete": 8,
+        "incomplete": 0
+      },
+      "04": {
+        "complete": 6,
+        "incomplete": 0
+      },
+      "05": {
+        "complete": 12,
+        "incomplete": 0
+      },
+      "06": {
+        "complete": 12,
+        "incomplete": 0
+      },
+      "07": {
+        "complete": 12,
+        "incomplete": 0
+      },
+      "08": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "09": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "10": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "11": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "12": {
+        "complete": 12,
+        "incomplete": 0
+      },
+      "13": {
+        "complete": 11,
+        "incomplete": 1
+      },
+      "14": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "15": {
+        "complete": 12,
+        "incomplete": 0
+      },
+      "16": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "17": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "18": {
+        "complete": 13,
+        "incomplete": 0
+      },
+      "19": {
+        "complete": 10,
+        "incomplete": 0
+      },
+      "20": {
+        "complete": 6,
+        "incomplete": 0
+      },
+      "21": {
+        "complete": 7,
+        "incomplete": 0
+      },
+      "22": {
+        "complete": 7,
+        "incomplete": 0
+      },
+      "23": {
+        "complete": 7,
+        "incomplete": 0
+      }
+    },
+    "utc_hours_without_complete_sample": [],
+    "weekday_windows": {
+      "2026-11-03": {
+        "complete_samples": 33,
+        "incomplete_samples": 0,
+        "new_york_hours_without_complete_sample": [
+          "05",
+          "06",
+          "07",
+          "08",
+          "09",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16",
+          "18",
+          "19",
+          "20",
+          "22",
+          "23"
+        ],
+        "weekday": "Tuesday",
+        "weekday_services": [
+          "Weekday"
+        ]
+      },
+      "2026-11-04": {
+        "complete_samples": 151,
+        "incomplete_samples": 1,
+        "new_york_hours_without_complete_sample": [],
+        "weekday": "Wednesday",
+        "weekday_services": [
+          "Weekday"
+        ]
+      },
+      "2026-11-05": {
+        "complete_samples": 61,
+        "incomplete_samples": 0,
+        "new_york_hours_without_complete_sample": [
+          "00",
+          "01",
+          "02",
+          "03",
+          "04",
+          "15",
+          "16",
+          "17",
+          "18",
+          "19",
+          "20",
+          "21",
+          "22",
+          "23"
+        ],
+        "weekday": "Thursday",
+        "weekday_services": [
+          "Weekday"
+        ]
+      }
+    },
+    "weekday_windows_fully_covered": [
+      "2026-11-04"
+    ]
+  },
+  "expected_groups": [
+    "1-7+S",
+    "ACE",
+    "BDFM",
+    "G",
+    "JZ",
+    "NQRW",
+    "L",
+    "SIR"
+  ],
+  "failed": [
+    {
+      "error": "empty body",
+      "group": "1-7+S",
+      "sampled_at": "2026-11-04T13:05:48Z",
+      "status": 200
+    }
+  ],
+  "format": 1,
+  "groups": {
+    "1-7+S": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 1,
+      "header_age_s": {
+        "max": 6.969,
+        "median": 4.678
+      },
+      "live_samples": 245,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "6X",
+        "7",
+        "7X",
+        "GS"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
+      ]
+    },
+    "ACE": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 13.987,
+        "median": 4.729
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "A",
+        "C",
+        "E",
+        "H"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace"
+      ]
+    },
+    "BDFM": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 14.737,
+        "median": 5.79
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "B",
+        "D",
+        "F",
+        "FS",
+        "FX",
+        "M"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm"
+      ]
+    },
+    "G": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 15.149,
+        "median": 6.707
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "G"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g"
+      ]
+    },
+    "JZ": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 14.226,
+        "median": 5.492
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "J",
+        "Z"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz"
+      ]
+    },
+    "L": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 9.202,
+        "median": 4.16
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "L"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l"
+      ]
+    },
+    "NQRW": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 13.205,
+        "median": 5.282
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "D",
+        "N",
+        "Q",
+        "R",
+        "W"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw"
+      ]
+    },
+    "SIR": {
+      "empty_live_samples": 0,
+      "expected": true,
+      "failed_samples": 0,
+      "header_age_s": {
+        "max": 14.971,
+        "median": 6.271
+      },
+      "live_samples": 246,
+      "no_route_id": {
+        "trip_update": 0,
+        "vehicle": 0
+      },
+      "routes": [
+        "SI",
+        "SS"
+      ],
+      "stale_samples": 0,
+      "urls": [
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si"
+      ]
+    }
+  },
+  "placement": {
+    "counts": {
+      "archive": 29,
+      "in_more_than_one_group": 1,
+      "placed": 28,
+      "unplaced": 0
+    },
+    "in_more_than_one_group": {
+      "D": [
+        "BDFM",
+        "NQRW"
+      ]
+    },
+    "placed": {
+      "1": "1-7+S",
+      "2": "1-7+S",
+      "3": "1-7+S",
+      "4": "1-7+S",
+      "5": "1-7+S",
+      "6": "1-7+S",
+      "6X": "1-7+S",
+      "7": "1-7+S",
+      "7X": "1-7+S",
+      "A": "ACE",
+      "B": "BDFM",
+      "C": "ACE",
+      "E": "ACE",
+      "F": "BDFM",
+      "FS": "BDFM",
+      "FX": "BDFM",
+      "G": "G",
+      "GS": "1-7+S",
+      "H": "ACE",
+      "J": "JZ",
+      "L": "L",
+      "M": "BDFM",
+      "N": "NQRW",
+      "Q": "NQRW",
+      "R": "NQRW",
+      "SI": "SIR",
+      "W": "NQRW",
+      "Z": "JZ"
+    },
+    "seen_not_in_archive": [
+      "SS"
+    ],
+    "unplaced": []
+  },
+  "probe": "backend/scripts/probe_subway_groups.py",
+  "routes": {
+    "1": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 6843,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4226
+        }
+      },
+      "in_archive": true
+    },
+    "2": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 7163,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 5392
+        }
+      },
+      "in_archive": true
+    },
+    "3": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 244,
+          "trip_updates": 5181,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 3540
+        }
+      },
+      "in_archive": true
+    },
+    "4": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 6088,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4075
+        }
+      },
+      "in_archive": true
+    },
+    "5": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 5742,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 3982
+        }
+      },
+      "in_archive": true
+    },
+    "6": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 6846,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4065
+        }
+      },
+      "in_archive": true
+    },
+    "6X": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 159,
+          "trip_updates": 1771,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 1102
+        }
+      },
+      "in_archive": true
+    },
+    "7": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 245,
+          "trip_updates": 8088,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4632
+        }
+      },
+      "in_archive": true
+    },
+    "7X": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 191,
+          "trip_updates": 1503,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 850
+        }
+      },
+      "in_archive": true
+    },
+    "A": {
+      "groups": {
+        "ACE": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 9080,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 9080
+        }
+      },
+      "in_archive": true
+    },
+    "B": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 190,
+          "trip_updates": 5276,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 5276
+        }
+      },
+      "in_archive": true
+    },
+    "C": {
+      "groups": {
+        "ACE": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 192,
+          "trip_updates": 4838,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4838
+        }
+      },
+      "in_archive": true
+    },
+    "D": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 8044,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 8044
+        },
+        "NQRW": {
+          "first_seen": "2026-11-04T07:45:24Z",
+          "last_seen": "2026-11-04T07:45:24Z",
+          "samples": 1,
+          "trip_updates": 1,
+          "utc_hours_seen": [
+            7
+          ],
+          "vehicles": 1
+        }
+      },
+      "in_archive": true
+    },
+    "E": {
+      "groups": {
+        "ACE": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 7553,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 7553
+        }
+      },
+      "in_archive": true
+    },
+    "F": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 9894,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 9894
+        }
+      },
+      "in_archive": true
+    },
+    "FS": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 3204,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 3204
+        }
+      },
+      "in_archive": true
+    },
+    "FX": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T13:47:01Z",
+          "samples": 55,
+          "trip_updates": 97,
+          "utc_hours_seen": [
+            11,
+            12,
+            13,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 97
+        }
+      },
+      "in_archive": true
+    },
+    "G": {
+      "groups": {
+        "G": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 4975,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4975
+        }
+      },
+      "in_archive": true
+    },
+    "GS": {
+      "groups": {
+        "1-7+S": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 244,
+          "trip_updates": 3097,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 124
+        }
+      },
+      "in_archive": true
+    },
+    "H": {
+      "groups": {
+        "ACE": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 4565,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 4565
+        }
+      },
+      "in_archive": true
+    },
+    "J": {
+      "groups": {
+        "JZ": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 5394,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 5394
+        }
+      },
+      "in_archive": true
+    },
+    "L": {
+      "groups": {
+        "L": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 5870,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 3689
+        }
+      },
+      "in_archive": true
+    },
+    "M": {
+      "groups": {
+        "BDFM": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 6012,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 6012
+        }
+      },
+      "in_archive": true
+    },
+    "N": {
+      "groups": {
+        "NQRW": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 6782,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 6782
+        }
+      },
+      "in_archive": true
+    },
+    "Q": {
+      "groups": {
+        "NQRW": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 6825,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 6825
+        }
+      },
+      "in_archive": true
+    },
+    "R": {
+      "groups": {
+        "NQRW": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 7226,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 7226
+        }
+      },
+      "in_archive": true
+    },
+    "SI": {
+      "groups": {
+        "SIR": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 246,
+          "trip_updates": 2120,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 2120
+        }
+      },
+      "in_archive": true
+    },
+    "SS": {
+      "groups": {
+        "SIR": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T13:47:01Z",
+          "samples": 81,
+          "trip_updates": 446,
+          "utc_hours_seen": [
+            0,
+            1,
+            10,
+            11,
+            12,
+            13,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 446
+        }
+      },
+      "in_archive": false
+    },
+    "W": {
+      "groups": {
+        "NQRW": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T19:37:29Z",
+          "samples": 180,
+          "trip_updates": 3277,
+          "utc_hours_seen": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 3277
+        }
+      },
+      "in_archive": true
+    },
+    "Z": {
+      "groups": {
+        "JZ": {
+          "first_seen": "2026-11-03T22:34:52Z",
+          "last_seen": "2026-11-05T13:57:01Z",
+          "samples": 51,
+          "trip_updates": 201,
+          "utc_hours_seen": [
+            11,
+            12,
+            13,
+            21,
+            22,
+            23
+          ],
+          "vehicles": 201
+        }
+      },
+      "in_archive": true
+    }
+  },
+  "stale": [],
+  "stale_after_s": 600.0,
+  "window": {
+    "complete_samples": 245,
+    "failed_rows": 1,
+    "first_sample": "2026-11-03T22:34:52Z",
+    "incomplete_samples": 1,
+    "last_sample": "2026-11-05T19:37:29Z",
+    "samples": 246,
+    "samples_by_provenance": {
+      "dispatched": 238,
+      "local": 0,
+      "scheduled": 7,
+      "unrecorded": 1
+    },
+    "stale_rows": 0
+  }
+}

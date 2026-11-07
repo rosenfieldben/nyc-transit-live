@@ -459,9 +459,22 @@ def test_a_rejected_publication_keeps_the_cached_archive_serving(harness):
     harness.sim.set_publication("subway", "headers-only-stops")
 
     with harness.launch() as app:
+        # WAIT FOR THE WARMUP TO FINISH, NOT ONLY FOR THE REJECTION. The download is
+        # counted failed inside load_subway_stops, which then falls back to the cache,
+        # and the warmup still parses the route shapes, the stations and the
+        # routes-per-station index before it sets the group ready
+        # (warmups._warm_subway_static). Reading the status the moment the count ticks
+        # raced that: CI read "loading" on 2026-11-01 (run 41320189758, an npm-only
+        # branch) and twice on 2026-11-07 (run 42332034546). Waiting until the group
+        # leaves "loading" keeps the promise below exact, since a group that went
+        # "failed" instead still fails the assertion; the two refresh tests below
+        # already wait for the warmup this way.
         app.await_status(
-            lambda s: s["static_archives"].get("subway", {}).get("failed_downloads", 0) >= 1,
-            "the staged download of the bad publication to be rejected",
+            lambda s: (
+                s["static_archives"].get("subway", {}).get("failed_downloads", 0) >= 1
+                and s["subway_static"] != "loading"
+            ),
+            "the bad publication to be rejected and the subway warmup to settle",
         )
         status = app.status()
         entry = status["static_archives"]["subway"]

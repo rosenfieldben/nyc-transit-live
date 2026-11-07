@@ -1182,9 +1182,18 @@ fold and a `FAIL`. Distinct clocks pass whatever their ages (a group that recove
 between the two reads carries its own new clock), and a contributor the board itself
 reports failed or retained is named as not judged, since it carries its last-known
 clock by design. A board that serves rows with no content clock is a `FAIL` on both
-lines, because every rider qualifier built on that clock would be unwatched. An empty
-board, or one that could not be fetched, is a `WARN`, since `production:status`
-already fails a deployment that is down.
+lines, because every rider qualifier built on that clock would be unwatched; a
+contributor the board names as never decoded in the deployment's process (`fetched_at`
+null and `ok` false, which also leaves the board's own content clock null) is not a
+missing clock but a state of its own, named on both lines and a `WARN` on
+`production:board-clock`. An empty board is judged by its blocks, in the freshness
+contract's four states, and is always a `WARN`: fresh and empty, every contributor
+reporting, says there is nothing to judge; a board whose every contributor is failed or
+never decoded is a different `WARN` naming each, because its "No trains" says nothing
+about service; and failing contributors among reporting ones, and on
+`production:board-clock` stale ones, are named beside the first. A board that could not
+be fetched is a `WARN` too, since `production:status` already fails a deployment that is
+down.
 
 `production:railroad-positions` reads the ladder's counts (`railroad_positions`, the
 sibling key described above) and prints them per railroad on every arm, as

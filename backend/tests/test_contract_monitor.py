@@ -357,6 +357,86 @@ def test_railroad_realtime_lirr_missing_header_is_warn():
     assert "omitted its header timestamp" in result.detail
 
 
+def _lirr_generation(header_ts, vehicle_ts=None, trip_ts=None):
+    """A LIRR feed carrying one positioned vehicle and one trip update, each dated by its
+    own clock when given, the header dated when given."""
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    if header_ts is not None:
+        feed.header.timestamp = int(header_ts)
+    vehicle = feed.entity.add(id="v1").vehicle
+    vehicle.trip.trip_id = "t1"
+    vehicle.position.latitude, vehicle.position.longitude = 40.7, -73.8
+    if vehicle_ts is not None:
+        vehicle.timestamp = int(vehicle_ts)
+    trip_update = feed.entity.add(id="u1").trip_update
+    trip_update.trip.trip_id = "t1"
+    if trip_ts is not None:
+        trip_update.timestamp = int(trip_ts)
+    return feed.SerializeToString()
+
+
+def _railroad_rt(now, lirr, mnr=None):
+    urls = {"LIRR": "lirr"} if mnr is None else {"LIRR": "lirr", "MNR": "mnr"}
+    fetch = FakeFetcher({"lirr": lirr, "mnr": mnr})
+    return cm.check_railroad_realtime(fetch, NO_SLEEP, now, {}, feed_urls=urls)
+
+
+def test_railroad_realtime_prints_the_newest_entity_clock_beside_the_header_on_a_pass():
+    """THE CLOCK LINE (freshness contract 2.1's erratum): every run prints LIRR's header age
+    beside the age of the newest clock its entities carry. On the committed captures 30 s
+    after LIRR's header, the newest entity clock is a trip update stamped at the header
+    itself (the newest vehicle is 4 s older), so both read 30 s. Metro-North's header is
+    not judged and gets no line."""
+    lirr = (FIX / "railroad_lirr.pb").read_bytes()
+    mnr = (FIX / "railroad_mnr.pb").read_bytes()
+    result = _railroad_rt(LIRR_GOLDEN_TS + 30, lirr, mnr)
+    assert result.status == cm.PASS
+    assert result.detail == (
+        "2 feeds decoded, direction inference ran; LIRR header 30s old, newest entity clock 30s old"
+    )
+
+
+def test_railroad_realtime_a_stale_header_says_whether_the_entities_lagged_with_it():
+    """The question runs 399 to 404 and 421 could not answer: a header older than 600 s
+    over entities that are current (the header alone lagged), and over entities as old as
+    the header (the feed stopped). The status is the same WARN either way, as before;
+    only the line tells them apart. Whichever entity clock is newer is the one printed,
+    the vehicle's or the trip update's."""
+    now = 10_000.0
+    header = now - 660
+    lagging_header = _railroad_rt(
+        now, _lirr_generation(header, vehicle_ts=now - 5, trip_ts=now - 40)
+    )
+    assert lagging_header.status == cm.WARN
+    assert lagging_header.detail == (
+        "LIRR header older than 600s; LIRR header 660s old, newest entity clock 5s old"
+    )
+    stopped = _railroad_rt(now, _lirr_generation(header, vehicle_ts=header - 30, trip_ts=header))
+    assert stopped.status == cm.WARN
+    assert stopped.detail == (
+        "LIRR header older than 600s; LIRR header 660s old, newest entity clock 660s old"
+    )
+
+
+def test_railroad_realtime_the_clock_line_raises_nothing_of_its_own():
+    """No new WARN and no new FAIL: entities hours old under a current header PASS, as
+    they did before the line existed, and a feed whose header and entities carry no
+    clock at all is the existing missing-header WARN, nothing more."""
+    now = 10_000.0
+    old_entities = _railroad_rt(now, _lirr_generation(now - 5, vehicle_ts=now - 9000))
+    assert old_entities.status == cm.PASS
+    assert old_entities.detail == (
+        "1 feeds decoded, direction inference ran; "
+        "LIRR header 5s old, newest entity clock 9000s old"
+    )
+    clockless = _railroad_rt(now, _lirr_generation(None))
+    assert clockless.status == cm.WARN
+    assert clockless.detail == (
+        "LIRR omitted its header timestamp; LIRR header none, newest entity clock none"
+    )
+
+
 # ---------------------------------------------------------------------------
 # PATH realtime
 # ---------------------------------------------------------------------------
@@ -424,6 +504,18 @@ def test_path_realtime_vehicle_entity_warns_on_shape_change():
     result = cm.check_path_realtime(fetch, NO_SLEEP, PATH_GOLDEN_TS + 30, _path_stops(), url="u")
     assert result.status == cm.WARN
     assert "VehiclePositions" in result.detail
+
+
+def test_path_realtime_a_missing_header_timestamp_is_warn():
+    """A bridge generation that decodes and carries trains but no header time: its write
+    time cannot be judged, which is a WARN and not the stale-bridge FAIL. Unpinned until
+    Amendment 1's A1.4 found it so; the only detail is that one, since the train's stop
+    resolves."""
+    feed = _rt_feed(entities=[_trip_update("t", "trip", stops=[("26733", PATH_GOLDEN_TS)])])
+    fetch = FakeFetcher({"u": feed})
+    result = cm.check_path_realtime(fetch, NO_SLEEP, PATH_GOLDEN_TS + 30, _path_stops(), url="u")
+    assert result.status == cm.WARN
+    assert result.detail == "feed omitted its header timestamp"
 
 
 # ---------------------------------------------------------------------------
@@ -2299,6 +2391,17 @@ def test_njt_realtime_header_lag_bands():
 
     dead = _njt_tu(header_ts=NJT_RT_NOW - 900)
     assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: dead})).status == cm.FAIL
+
+
+def test_njt_realtime_a_missing_header_timestamp_is_warn():
+    """Trip updates that decode, in service and otherwise healthy, with no header time:
+    the lag bands above cannot judge it, which is a WARN and neither band. Unpinned
+    until Amendment 1's A1.4 found it so."""
+    feed = pb.FeedMessage.FromString(_njt_tu())
+    feed.header.ClearField("timestamp")
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.status == cm.WARN
+    assert result.detail == "trip updates carry no header timestamp, so freshness cannot be judged"
 
 
 def test_njt_realtime_warns_when_the_feed_stops_retaining_passed_stops():

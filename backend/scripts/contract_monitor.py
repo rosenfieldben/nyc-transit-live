@@ -832,10 +832,22 @@ def check_railroad_realtime(
 
     _decode_railroad_feed exercises the direction-inference heuristic internally
     (the most fragile railroad path, since it reads live stop progressions), so
-    calling it is enough to prove inference does not raise."""
+    calling it is enough to prove inference does not raise.
+
+    THE CLOCK LINE, ON EVERY RUN. For each system whose header it judges, the line
+    also prints the header's age beside the age of the newest clock the feed's own
+    entities carry (a vehicle's timestamp or a trip update's, whichever is newest),
+    whatever the status. It decides nothing: no WARN or FAIL reads it. It is there
+    because the header alone cannot say whether a stale header means a stopped feed
+    or a header that lags a feed whose entities are current, and that is the question
+    the freshness contract's 2.1 erratum left open (runs 399 to 404 and 421 WARNed on
+    LIRR's header with counts and no entity clocks in the log). With the line, every
+    WARN answers it on its face, and so does every PASS. A clock the provider left
+    unset (protobuf zero) is no clock, the idiom _header_timestamp uses."""
     feed_urls = feed_urls if feed_urls is not None else feeds.RAILROAD_FEED_URLS
     statuses: list[str] = []
     details: list[str] = []
+    clock_lines: list[str] = []
     live = 0
     for system, url in feed_urls.items():
         res, detail = _fetch_retrying(fetch, url, sleep)
@@ -864,9 +876,37 @@ def check_railroad_realtime(
             elif now - ts > stale_s:
                 statuses.append(WARN)
                 details.append(f"{system} header older than {int(stale_s)}s")
+            clock_lines.append(
+                f"{system} header {_clock_age(now, ts)}, "
+                f"newest entity clock {_clock_age(now, _newest_entity_clock(feed))}"
+            )
     if not statuses:
-        return Result("railroad-realtime", PASS, f"{live} feeds decoded, direction inference ran")
-    return Result("railroad-realtime", _worst(statuses), "; ".join(details))
+        summary = f"{live} feeds decoded, direction inference ran"
+        return Result("railroad-realtime", PASS, "; ".join([summary, *clock_lines]))
+    return Result("railroad-realtime", _worst(statuses), "; ".join([*details, *clock_lines]))
+
+
+def _newest_entity_clock(feed) -> float | None:
+    """The newest clock a realtime feed's own entities carry: a vehicle's timestamp or a
+    trip update's, whichever is newest, or None when no entity carries one. Protobuf
+    zero is unset, not the epoch."""
+    stamps = [
+        float(stamp)
+        for entity in feed.entity
+        for stamp in (
+            entity.vehicle.timestamp if entity.HasField("vehicle") else 0,
+            entity.trip_update.timestamp if entity.HasField("trip_update") else 0,
+        )
+        if stamp
+    ]
+    return max(stamps) if stamps else None
+
+
+def _clock_age(now: float, clock: float | None) -> str:
+    """A clock's age for the clock line, whole seconds, or "none" for no clock. A clock
+    ahead of the monitor's prints a negative age rather than being clamped, since the
+    line exists to show what the provider sent."""
+    return "none" if clock is None else f"{int(now - clock)}s old"
 
 
 def check_path_realtime(

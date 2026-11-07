@@ -12,10 +12,14 @@ otherwise.** Corrections made after a step landed are marked at the sentence; th
 questions in section 5 are deliberately not, because a question rewritten after it is
 answered stops being evidence of what was actually asked. **Amendment 1** (A03 and A10 of
 the 2026-10-12 audit, the last section of this document) is DECIDED, 2026-11-01, on
-`claude/design-freshness-amendment-1`, and nothing is built from it yet: Step 0 of its A1.6 is
-next. Its decisions amended the body in place on that date, each amended sentence marked
-`Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states the rule the
-build is to meet, not what the code does until that build lands. Its
+`claude/design-freshness-amendment-1` (PR #132, merged as `93f09fe`). **Amended 2026-11-07:**
+Step 0 of its A1.6, the subway probe, ran on three branches (PRs #133, #134 and #136), and
+Step 1, A10, is built on `claude/a10-headerless-generation`, the branch this sentence is
+written on, alone rather than on the one build branch A1.6 names (A1.6 says why); Steps 2 and
+3 are next. Amendment 1's decisions amended the body in place on 2026-11-01, each amended
+sentence marked `Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states
+the rule the build is to meet, not what the code does until that build lands; for A10's rules
+(Q6 and Q7) it has landed, on Step 1's branch. Its
 citations are at `1d17aa0`, and the application code is `1d17aa0`'s: the branch's fork
 commit is `74bd2ee` (PR #131's merge), and the two merges between change no application
 code.
@@ -236,7 +240,12 @@ drawn, 21 not shown` from production's `railroad_positions`, the same five count
 and 421 printed `LIRR 6/5/7/0 drawn, 16 not shown`. The logs carry counts and not entity
 clocks, so they do not show whether the header lagged while the entities' own clocks were
 current or the whole feed had stopped; that is re-measured on the build branch, and it bears
-on the envelope clock in Amendment 1's Q7 and on `feed-content-stale`.
+on the envelope clock in Amendment 1's Q7 and on `feed-content-stale`. **Amended 2026-11-07:**
+the re-measurement is built into the monitor rather than taken once: since
+`claude/a10-headerless-generation`, `railroad-realtime` prints LIRR's header age beside the age
+of the newest clock its entities carry (a vehicle's or a trip update's) on every run, whatever
+the status, so each later run, and each later `WARN` on the header, answers the question on its
+face.
 
 The layout is SEPARATE ENTITIES: 69 vehicle-only, 132 trip-update-only, none combined. The
 join is by `trip_id`, and it is total on this capture: all 69 positioned vehicles join a
@@ -2652,6 +2661,24 @@ at 1000 the LIRR block reads (true, 1000, `null`) where it reads (true, 1000, 90
 the failure-only control unchanged at (false, 900, 900); arm D's five headerless polls each
 publish `null` with no implied age; and, **Amended 2026-11-01 (Q7),** the envelope reads `null` and `feed_age_s`
 unknown on a headerless success, while the failure-only control keeps its last clock.
+
+**Amended 2026-11-07: Step 1 is built on `claude/a10-headerless-generation`**, on a branch and
+a pull request of its own rather than the one build branch the paragraph at the top of A1.6
+names, because it depends on nothing Steps 2 and 3 need and the NJ Transit stop renumbering's
+repair (PR #137) came between Step 0 and them. The acceptance above holds as written, measured
+by the rewritten witness: at 1000 (true, 1000, `null`), at 1100 (false, 1000, `null`), the
+failure-only control (false, 900, 900) with its envelope keeping 900 and `feed_age_s` 100.0, arm
+D's five polls `null` with no implied age, and the envelope `null` with `feed_age_s` unknown at
+1000. The witness moved the twelve checks A1.4 measured and records the repair (FIXED); the
+backend suite moved no record count, as A1.4 measured, and gained the tests that pin both arms
+of the narrowed branch. The comments A1.4 names are rewritten (the two that rested the
+Metro-North exclusion on absence, and the envelope's account of when its branch fires, which
+A1.3 also found naming `/api/status` where the surface is `/healthz`), and three more sentences
+the change made false: `fetch_railroad_trains`' docstring and `_system_freshness`'s each rested
+the exclusion on absence too, and `_system_freshness`'s named `/api/status` as what reads a
+null clock as healthy, where for a block it is the page's `systemLag`. Of the two monitor gaps
+A1.4 names, the PATH and NJ Transit missing-header `WARN`s are pinned by tests on that branch,
+and the headerless bus feed that passes silently is on the 2026-10-12 record's live list.
 
 **Step 2, A03's backend half.** **Amended 2026-11-01 (Q1, Q2, Q9, Q10):** the route-to-group table and expected
 contributors united with seen, the never-decoded block, the three selectors over the expected

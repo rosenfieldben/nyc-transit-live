@@ -2679,6 +2679,13 @@ the exclusion on absence too, and `_system_freshness`'s named `/api/status` as w
 null clock as healthy, where for a block it is the page's `systemLag`. Of the two monitor gaps
 A1.4 names, the PATH and NJ Transit missing-header `WARN`s are pinned by tests on that branch,
 and the headerless bus feed that passes silently is on the 2026-10-12 record's live list.
+**Measured by that branch's adversarial round (its F1):** Q7's consequence that "LIRR down,
+Metro-North up" still reads `feed-content-stale` (Decisions, Q7) holds after a dated LIRR
+generation and not after an undated one. What the branch keeps is the envelope's last clock,
+null after a headerless success, so an outage that follows one ages nothing; on the committed
+captures `/healthz` first names it as `observations-qualified`, 600 s into the outage, where
+after a dated generation it reads `feed-content-stale` 80 s in. The rule is built as decided,
+a test pins it, and the 2026-10-12 record's live list carries the gap for a ruling.
 
 **Step 2, A03's backend half.** **Amended 2026-11-01 (Q1, Q2, Q9, Q10):** the route-to-group table and expected
 contributors united with seen, the never-decoded block, the three selectors over the expected

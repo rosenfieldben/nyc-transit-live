@@ -707,11 +707,16 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     # Metro-North decoded and fetched_at advances, while the fold comes back None for
     # want of LIRR. Writing that None would blank a real outage into an unknown age,
     # which /healthz tolerates as healthy (routes/status.py, `upstream_ok`), so "LIRR
-    # down, Metro-North up" would read green; kept, the clock ages with each poll and
-    # /healthz reads feed-content-stale once it is FEED_STALE_AFTER_S old. On every poll
-    # where LIRR decoded, the fold is written as it came back, None included: a None
-    # there is a generation whose header carried no time, a fact about this poll as it
-    # is on LIRR's own block. Before Q7 this branch keyed on the None itself and fired
+    # down, Metro-North up" would read green; kept, a dated clock ages with each poll and
+    # /healthz reads feed-content-stale once it is FEED_STALE_AFTER_S old. WHAT IS KEPT IS
+    # WHAT THE ENVELOPE LAST PUBLISHED, and after a headerless LIRR success that is None:
+    # an outage that follows one has no clock to age, so /healthz names it only through
+    # observations-qualified, once the outage's rows pass that code's 600 s band (measured
+    # on the committed capture; the 2026-10-12 record's live list carries it, for a
+    # ruling). On every poll where LIRR decoded, the fold is written as it came back,
+    # None included: a None there is a generation whose header carried no time, a fact
+    # about this poll as it is on LIRR's own block. Before Q7 this branch keyed on the
+    # None itself and fired
     # on that success too, so a feed that decoded every poll was served its last dated
     # clock, aging one interval per interval into feed-content-stale (A10's arm D, 20 s
     # to 100 s over five polls). The signal for a headerless LIRR is the contract

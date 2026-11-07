@@ -437,6 +437,19 @@ def test_railroad_realtime_the_clock_line_raises_nothing_of_its_own():
     )
 
 
+def test_railroad_realtime_a_clock_later_than_the_runs_prints_its_negative_age():
+    """`now` is the run's start, so a header or an entity clock written before the fetch
+    can be later than it, as can a provider clock that runs ahead. Either prints its age
+    as measured, negative, never clamped to zero, so the line shows what was sent (the
+    adversarial round's F6)."""
+    now = 10_000.0
+    ahead = _railroad_rt(now, _lirr_generation(now + 3, vehicle_ts=now - 2, trip_ts=now + 7))
+    assert ahead.status == cm.PASS
+    assert ahead.detail == (
+        "1 feeds decoded, direction inference ran; LIRR header -3s old, newest entity clock -7s old"
+    )
+
+
 # ---------------------------------------------------------------------------
 # PATH realtime
 # ---------------------------------------------------------------------------

@@ -1159,7 +1159,7 @@ async def test_a_headerless_lirr_beside_a_dated_system_borrows_nothing(monkeypat
 async def test_timestamped_then_headerless_then_failed_through_the_reader():
     """The audit's acceptance, A10's correction in its own words: "Emit explicit null for a
     successfully decoded but undated generation; preserve prior timestamps only for actual
-    failures. Test timestamped, headerless, failed transitions." Each poll goes through the
+    failures. Test timestamped → headerless → failed transitions." Each poll goes through the
     real fetcher and the real block builder, the previous blocks threaded through as
     _refresh_railroads threads them.
 
@@ -1204,7 +1204,8 @@ async def test_a_system_the_placement_guard_fails_leaves_the_map(monkeypatch):
     placement guard can still fail it (unreachable as written: the bytes already parsed
     once). A system in the failed list must be absent from the map, as it is from the
     position counts, or the reader would publish this poll's clock for a system it was
-    told did not decode."""
+    told did not decode. Nor does it date the envelope: the fold reads the map after the
+    failed systems left it, so LIRR's 900, recorded before the guard ran, is not folded."""
 
     def refuse(raw, system, stops, now):
         raise DecodeError("placement refused")
@@ -1212,10 +1213,11 @@ async def test_a_system_the_placement_guard_fails_leaves_the_map(monkeypatch):
     monkeypatch.setattr(feeds.railroad, "_decode_railroad_feed", refuse)
     client = _FakeRailClient({"LIRR": _generation(900), "MNR": _generation(880)})
     stops = {"LIRR": _stops("LIRR")}
-    _, _, _, failed, clocks, steps = await feeds.fetch_railroad_trains(client, stops)
+    _, _, envelope, failed, clocks, steps = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["LIRR"]
     assert clocks == {"MNR": None}
     assert set(steps) == {"MNR"}
+    assert envelope is None
 
 
 @pytest.mark.anyio

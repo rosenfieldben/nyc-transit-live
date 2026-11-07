@@ -843,7 +843,14 @@ def check_railroad_realtime(
     the freshness contract's 2.1 erratum left open (runs 399 to 404 and 421 WARNed on
     LIRR's header with counts and no entity clocks in the log). With the line, every
     WARN answers it on its face, and so does every PASS. A clock the provider left
-    unset (protobuf zero) is no clock, the idiom _header_timestamp uses."""
+    unset (protobuf zero) is no clock, the idiom _header_timestamp uses.
+
+    Both ages are taken against `now`, the run's one clock, read by main() before
+    run_all starts and shared by every check, the header WARN above included. This check
+    fetches after the static checks and the subway's, so both printed ages read short by
+    the seconds the run took to get here (less than the whole job, which took 27 s and
+    29 s in scheduled runs 434 and 435, setup included). They read short ALIKE, so the
+    gap between them, which is what the line is for, is exact."""
     feed_urls = feed_urls if feed_urls is not None else feeds.RAILROAD_FEED_URLS
     statuses: list[str] = []
     details: list[str] = []
@@ -904,8 +911,10 @@ def _newest_entity_clock(feed) -> float | None:
 
 def _clock_age(now: float, clock: float | None) -> str:
     """A clock's age for the clock line, whole seconds, or "none" for no clock. A clock
-    ahead of the monitor's prints a negative age rather than being clamped, since the
-    line exists to show what the provider sent."""
+    later than the run's `now` prints a negative age rather than being clamped, since
+    the line exists to show what the provider sent. Negative does not by itself mean the
+    provider's clock is ahead: `now` is the run's start (check_railroad_realtime), so a
+    clock written after the run began and before this fetch reads negative too."""
     return "none" if clock is None else f"{int(now - clock)}s old"
 
 

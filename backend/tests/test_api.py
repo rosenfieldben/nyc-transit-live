@@ -4833,9 +4833,11 @@ class _RailUpstream:
 @pytest.fixture
 def railroad_poll(client, healthz_env, monkeypatch):
     """One real railroad refresh at a pinned clock, then what the app serves: the
-    envelope's content clock, /api/status's feed_age_s and railroad_feeds, and /healthz.
-    A bus entry is kept fresh at every clock so that /healthz has one fresh feed and the
-    railroad's own reading is the only thing that can degrade it."""
+    envelope's poll clock and content clock, /api/status's feed_age_s and railroad_feeds,
+    and /healthz. A bus entry is kept fresh at every clock, so /healthz always has one
+    fresh feed and no-feed-fresh never fires: the railroad's content clock is then the one
+    railroad reading that can degrade it (feed-content-stale), and its poll clock is read
+    off the envelope's fetched_at instead, which each case asserts."""
     clock = [0.0]
     monkeypatch.setattr(app_module.time, "time", lambda: clock[0])
     # railroad_arrivals is NOT patched here: healthz_env already patched it to {}, and a
@@ -4848,9 +4850,11 @@ def railroad_poll(client, healthz_env, monkeypatch):
         clock[0] = at
         healthz_env["buses"].update(data=[1], fetched_at=at, feed_timestamp=at - 5, error=None)
         await app_module._refresh_railroads(app_module.app, _RailUpstream(lirr, mnr))
+        envelope = (await client.get("/api/railroads")).json()
         status = (await client.get("/api/status")).json()
         return (
-            (await client.get("/api/railroads")).json()["feed_timestamp"],
+            envelope["fetched_at"],
+            envelope["feed_timestamp"],
             status["feeds"]["railroads"]["feed_age_s"],
             status["railroad_feeds"],
             (await client.get("/healthz")).json()["degraded"],
@@ -4859,23 +4863,25 @@ def railroad_poll(client, healthz_env, monkeypatch):
     return poll
 
 
+_BOTH_UP = {"total": 2, "ok": 2, "failed": []}
+_LIRR_DOWN = {"total": 2, "ok": 1, "failed": ["LIRR"]}
+
+
 async def test_q7_a_headerless_lirr_success_publishes_no_envelope_clock(railroad_poll):
     """THE SUCCESS ARM. A dated poll at 900, then five headerless polls 20 s apart, each
-    decoding: the envelope reads null and feed_age_s unknown on every one of them, and
-    /healthz stays clean. Before Q7 the branch kept 900 on each, so feed_age_s read 100.0
-    at 1000 and /healthz read feed-content-stale on a feed that decoded every poll."""
-    ok = {"total": 2, "ok": 2, "failed": []}
-    assert await railroad_poll(900.0, _rail_generation(900), _rail_generation(880)) == (
-        900.0,
-        0.0,
-        ok,
-        [],
-    )
+    decoding and each advancing the envelope's poll clock: the envelope reads null and
+    feed_age_s unknown on every one of them, and /healthz stays clean. Before Q7 the branch
+    kept 900 on each, so feed_age_s read 100.0 at 1000 and /healthz read
+    feed-content-stale on a feed that decoded every poll."""
+    dated = await railroad_poll(900.0, _rail_generation(900), _rail_generation(880))
+    assert dated == (900.0, 900.0, 0.0, _BOTH_UP, [])
     served = [
         await railroad_poll(at, _rail_generation(None), _rail_generation(880))
         for at in (1000.0, 1020.0, 1040.0, 1060.0, 1080.0)
     ]
-    assert served == [(None, None, ok, [])] * 5
+    assert served == [
+        (at, None, None, _BOTH_UP, []) for at in (1000.0, 1020.0, 1040.0, 1060.0, 1080.0)
+    ]
 
 
 async def test_q7_lirr_failed_beside_a_decoding_metro_north_keeps_its_last_clock(railroad_poll):
@@ -4885,26 +4891,60 @@ async def test_q7_lirr_failed_beside_a_decoding_metro_north_keeps_its_last_clock
     outright, which the producer's fix alone might suggest, publishes null here and leaves
     /healthz clean through the outage. The first decoding LIRR after it, headerless at
     1100, drops the kept clock, as a success does."""
-    assert await railroad_poll(900.0, _rail_generation(900), _rail_generation(880)) == (
+    dated = await railroad_poll(900.0, _rail_generation(900), _rail_generation(880))
+    assert dated == (900.0, 900.0, 0.0, _BOTH_UP, [])
+    assert await railroad_poll(960.0, 503, _rail_generation(880)) == (
+        960.0,
         900.0,
-        0.0,
-        {"total": 2, "ok": 2, "failed": []},
+        60.0,
+        _LIRR_DOWN,
         [],
     )
-    down = {"total": 2, "ok": 1, "failed": ["LIRR"]}
-    assert await railroad_poll(960.0, 503, _rail_generation(880)) == (900.0, 60.0, down, [])
     assert await railroad_poll(1000.0, 503, _rail_generation(880)) == (
+        1000.0,
         900.0,
         100.0,
-        down,
+        _LIRR_DOWN,
         [models.HEALTH_FEED_CONTENT_STALE],
     )
-    assert await railroad_poll(1100.0, _rail_generation(None), _rail_generation(880)) == (
+    recovered = await railroad_poll(1100.0, _rail_generation(None), _rail_generation(880))
+    assert recovered == (1100.0, None, None, _BOTH_UP, [])
+
+
+async def test_q7_a_metro_north_failure_beside_a_headerless_lirr_keeps_nothing(railroad_poll):
+    """THE "EXACTLY". The branch keys on LIRR being in the failed list, not on some system
+    failing while the fold is None: here Metro-North fails beside a LIRR that decodes a
+    generation with no header time, and the envelope publishes null with feed_age_s
+    unknown. A rule that kept the last clock whenever any system failed and the fold came
+    back None would serve 900 here, 100 s old and feed-content-stale, which is the A10
+    defect back on the envelope (the adversarial round's F2)."""
+    dated = await railroad_poll(900.0, _rail_generation(900), _rail_generation(880))
+    assert dated == (900.0, 900.0, 0.0, _BOTH_UP, [])
+    assert await railroad_poll(1000.0, _rail_generation(None), 503) == (
+        1000.0,
         None,
         None,
-        {"total": 2, "ok": 2, "failed": []},
+        {"total": 2, "ok": 1, "failed": ["MNR"]},
         [],
     )
+
+
+async def test_q7_lirr_down_after_a_headerless_success_has_no_clock_to_keep(railroad_poll):
+    """WHAT Q7 KEEPS IS THE ENVELOPE'S LAST CLOCK, and after a headerless LIRR success that
+    is null. So an LIRR outage that follows one, Metro-North decoding, ages nothing:
+    feed_age_s stays unknown and /healthz stays clean, here at 100 s and 300 s into the
+    outage. On the committed capture the first code to name it is observations-qualified,
+    600 s into the outage, and never feed-content-stale (the adversarial round's F1,
+    measured). Pinned as decided, not as endorsed: the 2026-10-12 record's live list
+    carries it for a ruling. Before Q7 the same sequence kept 900 and read
+    feed-content-stale, but only because it kept 900 through the headerless success as
+    well, which is the A10 defect."""
+    dated = await railroad_poll(900.0, _rail_generation(900), _rail_generation(880))
+    assert dated == (900.0, 900.0, 0.0, _BOTH_UP, [])
+    headerless = await railroad_poll(1000.0, _rail_generation(None), _rail_generation(880))
+    assert headerless == (1000.0, None, None, _BOTH_UP, [])
+    outage = [await railroad_poll(at, 503, _rail_generation(880)) for at in (1100.0, 1300.0)]
+    assert outage == [(1100.0, None, None, _LIRR_DOWN, []), (1300.0, None, None, _LIRR_DOWN, [])]
 
 
 async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):

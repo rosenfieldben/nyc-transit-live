@@ -1281,10 +1281,15 @@ async def fetch_railroad_trains(
     is the true feed-generation time. MNR's header is a lagging shared clock and
     is deliberately excluded, so it never drives staleness. The value is the
     oldest such trusted header (only LIRR's today, but min-across-trusted stays
-    correct if another trusted feed is added later), or None when no trusted feed
-    decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
-    undecodable protobuf) are logged and skipped, and this raises only when every
-    feed fails. failed_feeds is the sorted list of systems that dropped this poll,
+    correct if another trusted feed is added later), folded from the content-clock map
+    after the failed systems have left it, so a system the failed list names never
+    dates the envelope. None means no trusted system decoded a DATED header, and that
+    is two different polls: a trusted feed that failed, or one that decoded a header
+    carrying no time. The caller tells them apart by the failed list, never by the None
+    (pollers._refresh_railroads, Amendment 1's Q7). Mirrors fetch_subway_trains:
+    per-feed failures (a fetch error or undecodable protobuf) are logged and skipped,
+    and this raises only when every feed fails. failed_feeds is the sorted list of
+    systems that dropped this poll,
     empty on a fully successful poll. The caller owns the client (the polling task
     holds one for its lifetime).
     """
@@ -1303,7 +1308,6 @@ async def fetch_railroad_trains(
 
     trains: list[dict] = []
     seen: set[tuple[str, str]] = set()  # (system, trip_id)
-    timestamps: list[float] = []
     feed_ts_by_system: dict[str, float | None] = {}
     feed_errors: dict[str, str] = {}
     raw_by_system: dict[str, bytes] = {}  # successfully decoded, kept for placement
@@ -1331,10 +1335,9 @@ async def fetch_railroad_trains(
         # clock), so an undated LIRR left out of the map would be served its previous
         # generation's clock as current, and Metro-North's exclusion would rest on the
         # one signal that means a failure. The envelope's fold keeps its gate: only an
-        # admitted system's real time is folded, so the envelope is still LIRR's alone.
+        # admitted system's real time is folded (below, from this map), so the envelope
+        # is still LIRR's alone.
         feed_ts_by_system[system] = feed_ts if system in RAILROAD_FRESHNESS_SYSTEMS else None
-        if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
-            timestamps.append(feed_ts)
         for train in gps:
             key = (system, train["trip_id"])
             if key in seen:
@@ -1381,14 +1384,17 @@ async def fetch_railroad_trains(
     if len(feed_errors) == len(RAILROAD_FEED_URLS):
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All railroad feeds failed: {joined}")
-    feed_timestamp = min(timestamps) if timestamps else None
     # A system the placement guard above failed keeps its last-known counts, as its
     # trains are retained rather than published (_refresh_railroads). Its content clock
     # leaves the map by the same rule, since the GPS pass recorded it before the guard
     # ran: a system in the failed list must be absent, or the reader would publish this
-    # poll's value for a system it is told did not decode.
+    # poll's value for a system it is told did not decode. The envelope is folded from
+    # the map after that, for the same reason: only an admitted system carries a time
+    # there, so the gate holds, and a failed one no longer dates the envelope.
     position_steps = {s: c for s, c in steps_by_system.items() if s not in feed_errors}
     content_clocks = {s: t for s, t in feed_ts_by_system.items() if s not in feed_errors}
+    dated = [t for t in content_clocks.values() if t is not None]
+    feed_timestamp = min(dated) if dated else None
     return (
         trains,
         arrivals_by_system,

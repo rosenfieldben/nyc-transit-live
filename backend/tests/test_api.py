@@ -5536,7 +5536,7 @@ async def test_njt_static_warmup_empty_result_is_failed_then_recovers(monkeypatc
 # THE RENUMBERED PUBLICATION BEHIND #426 parses to 229 stops, and 65 of them are
 # light-rail rows (routes 4, 12 and 16, which run zero trips in this rail feed) that
 # no trip calls at. The warmup serves only called-at stops as stations
-# (warmups._njt_served_stops) and leaves the parse whole.
+# (njt_static.served_stops) and leaves the parse whole.
 
 # VERBATIM FROM THE 2026-11-06 stops.txt, header and CRLF included: the two Penn
 # stations the trip below calls at, and the two Newark light-rail platforms that no

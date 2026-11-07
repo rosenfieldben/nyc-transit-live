@@ -261,7 +261,7 @@ async def lifespan(app: FastAPI):
     # overlap the LIRR's at 75%. njt_static holds the full parsed tables so 15b
     # joins realtime without re-parsing, the way ferry_static's trip map did.
     app.state.njt_static = {}  # {stops, routes, trips, shapes, stop_times, calendar_dates} or {}
-    app.state.njt_stops = {}  # the SERVED stations: the called-at stops (_njt_served_stops)
+    app.state.njt_stops = {}  # the SERVED stations: the called-at stops (njt_static.served_stops)
     # Per-route polylines (15c). [] rather than {} because that is what
     # /api/njt-routes serves, and [] is also the honest steady state for a
     # publication that carried no shapes.txt: the group is ready and there is

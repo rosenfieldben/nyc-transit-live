@@ -2024,8 +2024,13 @@ _NJT_TRIPS = (
     "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
     "1,S,T1,NY,0,3800,s1\n"
 )
+# T1 CALLS AT BOTH IDENTITY STATIONS, because the identity check confirms the station
+# the app SERVES at each, and the app serves only a stop some scheduled trip calls at
+# (njt_static.served_stops, since the 2026-11-06 publication).
 _NJT_STOP_TIMES = (
-    "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,07:00:00,07:00:00,109,1\n"
+    "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+    "T1,07:00:00,07:00:00,109,1\n"
+    "T1,07:20:00,07:20:00,112,2\n"
 )
 _NJT_AGENCY = (
     "agency_id,agency_name,agency_url,agency_timezone\nNJT,NJ TRANSIT,https://x,America/New_York\n"
@@ -3073,8 +3078,22 @@ def _code_row(rows, code):
     return row
 
 
-def _check_njt_stops(stops):
-    return _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": stops})}))
+def _stop_times_calling_at(*stop_ids):
+    """A stop_times.txt in which T1 calls at `stop_ids`, in order, so a test whose world
+    moved Penn and Newark Penn can have the one trip call where they now are."""
+    head = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+    return head + "".join(
+        f"T1,07:{i:02d}:00,07:{i:02d}:00,{stop_id},{i + 1}\n" for i, stop_id in enumerate(stop_ids)
+    )
+
+
+def _check_njt_stops(stops, calls=None):
+    """check_njt_static over `stops`, with T1 calling at `calls` when a test names them
+    and at 109 and 112 (_NJT_STOP_TIMES) when it does not."""
+    members = {"stops.txt": stops}
+    if calls is not None:
+        members["stop_times.txt"] = _stop_times_calling_at(*calls)
+    return _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**members)}))
 
 
 def _identity_point(code):
@@ -3251,7 +3270,8 @@ def test_njt_static_identity_passes_when_every_stop_id_shifts_by_four():
     assert (by_id["113"]["stop_name"], by_id["116"]["stop_name"]) == ("North Branch", "Oradell")
     assert by_id["105"]["stop_name"] == "New Bridge Landing"
     shifted = [{**r, "stop_id": str(int(r["stop_id"]) + 4)} for r in rows]
-    result, _parsed = _check_njt_stops(_stops_txt(header, shifted))
+    # The trip moves with the stations, as stop_times did in the real renumbering.
+    result, _parsed = _check_njt_stops(_stops_txt(header, shifted), calls=("113", "116"))
     assert result.status == cm.PASS, result.detail
     assert "NY=113 'Penn Station New York'" in result.detail
     assert "NP=116 'Newark Penn Station'" in result.detail
@@ -3291,7 +3311,7 @@ def test_njt_static_identity_passes_on_the_2026_11_06_rows_past_newarks_light_ra
         row = rows[stop_id]
         distance = cm._distance_m(np_lat, np_lon, float(row["stop_lat"]), float(row["stop_lon"]))
         assert distance < cm.NJT_IDENTITY_RADIUS_M, (stop_id, distance)
-    result, _parsed = _check_njt_stops(_with_filler(six))
+    result, _parsed = _check_njt_stops(_with_filler(six), calls=("105", "107"))
     assert result.status == cm.PASS, result.detail
     assert "NY=105 'NEW YORK PENN STATION'" in result.detail
     assert "NP=107 'NEWARK PENN STATION'" in result.detail
@@ -3312,7 +3332,7 @@ def test_njt_static_identity_fails_when_newark_penn_moves_away_from_its_light_ra
     np_lat, np_lon = _identity_point("NP")
     metres = round(cm._distance_m(np_lat, np_lon, 40.743221, -74.164554))
     assert 950 < metres < 1050, metres
-    result, _parsed = _check_njt_stops(_with_filler(moved))
+    result, _parsed = _check_njt_stops(_with_filler(moved), calls=("105", "107"))
     assert result.status == cm.FAIL, result.detail
     assert result.detail == (
         f"identity code NP is stop 107 'NEWARK PENN STATION', {metres} m from "
@@ -3399,18 +3419,18 @@ def test_njt_static_identity_passes_when_the_ny_code_is_padded():
     [
         (
             "",
-            "identity code NY (Penn Station New York) is on a row the app keeps no marker "
+            "identity code NY (Penn Station New York) is on a row the app serves no station "
             "for (stop_id '')",
         ),
         (
             "1",
-            "identity code NY is stop 1 'Penn Station New York', but the app's marker at "
+            "identity code NY is stop 1 'Penn Station New York', but the app's station at "
             "stop 1 is another row, 'Aberdeen-Matawan'",
         ),
     ],
     ids=["blank-id", "id-of-an-earlier-row"],
 )
-def test_njt_static_identity_fails_when_the_ny_row_is_not_the_apps_marker(new_id, expected):
+def test_njt_static_identity_fails_when_the_ny_row_is_not_the_apps_station(new_id, expected):
     """THE ROW IS READ RAW, THE MAP IS DRAWN FROM THE PARSE (review of this check,
     2026-11-06). njt_static._parse_stops skips a row with a blank stop_id and keeps the
     FIRST of two rows sharing one, and Aberdeen-Matawan's row 1 comes before Penn's in
@@ -3419,11 +3439,68 @@ def test_njt_static_identity_fails_when_the_ny_row_is_not_the_apps_marker(new_id
     header, rows = _capture_stops()
     _code_row(rows, "NY")["stop_id"] = new_id
     assert rows[0]["stop_id"] == "1" and rows[0]["stop_name"] == "Aberdeen-Matawan"
-    result, parsed = _check_njt_stops(_stops_txt(header, rows))
+    # T1 calls at the NY row's new id, so a station IS served there (Aberdeen-Matawan,
+    # in the second world) and the failure is about which row, not about no trip.
+    result, parsed = _check_njt_stops(_stops_txt(header, rows), calls=(new_id or "109", "112"))
     # Non-vacuous: the app really has no Penn marker in either world.
     assert "Penn Station New York" not in {s["name"] for s in parsed["stops"].values()}
     assert result.status == cm.FAIL, result.detail
     assert result.detail == expected
+
+
+def test_njt_static_identity_fails_when_no_trip_calls_at_penn():
+    """THE STATION THE APP SERVES, NOT A ROW THE PARSE KEPT (whole-branch review,
+    2026-11-06). The app serves as stations only the stops a scheduled trip calls at
+    (njt_static.served_stops), so on the real 2026-11-06 rows with the one trip calling
+    at Newark Penn alone, the parse keeps 105 and the map has no Penn station. Asked of
+    the parse, the check PASSED here; asked of the served stations, it FAILs naming 105."""
+    six = (FIX / "njt_stops_2026-11-06.txt").read_bytes()
+    result, parsed = _check_njt_stops(_with_filler(six), calls=("107",))
+    served = cm.njt_static.served_stops(
+        parsed["stops"],
+        cm.njt_static.derive_njt_stop_routes(parsed["trips"], parsed["stop_times"]),
+    )
+    # Non-vacuous: the parse keeps Penn's row, and the app serves Newark Penn but not it.
+    assert "105" in parsed["stops"] and "105" not in served and "107" in served
+    assert result.status == cm.FAIL, result.detail
+    assert result.detail == (
+        "identity code NY (Penn Station New York) is on a row the app serves no station "
+        "for (stop_id '105')"
+    )
+
+
+def test_njt_static_identity_follows_the_app_when_no_trip_calls_at_any_parsed_stop():
+    """THE APP'S OWN FALLBACK, MIRRORED. A trip that calls only at ids stops.txt does not
+    carry leaves the called-at filter empty, and the app then serves the whole parse
+    (njt_static.served_stops: a filter that leaves nothing filters nothing), so Penn and
+    Newark Penn are served stations and the check PASSes, as the map would show them."""
+    six = (FIX / "njt_stops_2026-11-06.txt").read_bytes()
+    result, _parsed = _check_njt_stops(_with_filler(six), calls=("999",))
+    assert result.status == cm.PASS, result.detail
+    assert "NY=105 'NEW YORK PENN STATION', NP=107 'NEWARK PENN STATION'" in result.detail
+
+
+def test_njt_static_identity_fails_when_another_row_holds_penns_id_at_penns_place():
+    """BY PLACE ALONE THIS WOULD PASS. A row coded X1 at Penn's exact coordinates takes
+    stop_id 109 ahead of the NY row, so the parser keeps it and the app's station at 109
+    is X1's (the 2026-11-06 publication already puts two light-rail rows on one
+    coordinate). The station is compared as the app presents it, place and displayed
+    name, so the row the app serves at 109 is another row, and it FAILs."""
+    header, rows = _capture_stops()
+    ny = _code_row(rows, "NY")
+    impostor = {**ny, "stop_code": "X1", "stop_name": "Penn Station Light Rail"}
+    result, parsed = _check_njt_stops(_stops_txt(header, [impostor, *rows]))
+    # Non-vacuous: same id, same place, and the parser kept the impostor.
+    assert parsed["stops"]["109"]["name"] == "Penn Station Light Rail"
+    assert (parsed["stops"]["109"]["lat"], parsed["stops"]["109"]["lon"]) == (
+        float(ny["stop_lat"]),
+        float(ny["stop_lon"]),
+    )
+    assert result.status == cm.FAIL, result.detail
+    assert result.detail == (
+        "identity code NY is stop 109 'Penn Station New York', but the app's station at "
+        "stop 109 is another row, 'Penn Station Light Rail'"
+    )
 
 
 def _parent_and_child(child_code):

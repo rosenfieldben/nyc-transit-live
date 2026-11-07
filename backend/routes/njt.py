@@ -51,10 +51,10 @@ async def get_njt_stops(request: Request, response: Response) -> list[dict]:
     static GTFS. Flat, like the ferry docks and unlike PATH's platforms: this feed
     declares location_type and parent_station and leaves both empty on every row,
     so every parsed stop that a scheduled trip calls at is a marker. A stop no trip
-    calls at is not served (warmups._njt_served_stops: 65 light-rail rows in the
+    calls at is not served (njt_static.served_stops: 65 light-rail rows in the
     2026-11-06 publication), so every marker here carries at least one route, except
     when the filter would leave nothing, when the whole parse is served (see
-    warmups._njt_served_stops).
+    njt_static.served_stops).
 
     NO wheelchair FIELD, unlike /api/ferry-stops. The ferry feed publishes
     wheelchair_boarding and NJ Transit's publishes no accessibility data at all, so

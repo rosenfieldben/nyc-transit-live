@@ -2121,12 +2121,20 @@ def check_njt_static(
     # at either. A search by place finds three rows there; the code picks the station
     # and the radius checks it.
     #
-    # AND THE ROW MUST BE THE APP'S MARKER AT ITS ID. The rows are read raw, while the
-    # app reads the same file through njt_static._parse_stops, which skips a row with
-    # no stop_id and keeps the FIRST of two rows that share one. The id-keyed check
-    # read the parsed stops, so it could not PASS without a marker; this one is handed
-    # them for the same reason.
-    identity_failures, identity_found = _njt_identity(res.content, stops)
+    # AND THE ROW MUST BE THE STATION THE APP SERVES AT ITS ID. The rows are read raw,
+    # while the app reads the same file through njt_static._parse_stops, which skips a
+    # row with no stop_id and keeps the FIRST of two rows that share one, and then serves
+    # as stations only the stops a scheduled trip calls at (njt_static.served_stops,
+    # since the 2026-11-06 publication added 65 light-rail rows no trip calls at). The
+    # id-keyed check read the parsed stops, so it could not PASS without a marker; this
+    # one is handed the served stations, asked the app's own way, for the same reason.
+    served = njt_static.served_stops(
+        stops,
+        njt_static.derive_njt_stop_routes(
+            parsed.get("trips") or {}, parsed.get("stop_times") or {}
+        ),
+    )
+    identity_failures, identity_found = _njt_identity(res.content, served)
     for failure in identity_failures:
         statuses.append(FAIL)
         details.append(failure)
@@ -2198,16 +2206,17 @@ def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
     return missing, [c for c in NJT_STOPS_HIERARCHY_COLUMNS if c in in_use]
 
 
-def _njt_identity(body: bytes, stops: dict[str, dict]) -> tuple[list[str], list[str]]:
+def _njt_identity(body: bytes, stations: dict[str, dict]) -> tuple[list[str], list[str]]:
     """Find each NJT_IDENTITY_STOPS station BY ITS CODE, then measure it.
 
     Returns (FAIL details, PASS parts). A code fails when no row carries it, when more
     than one row does (naming every id, since which one is meant is the question), when
     its row's coordinates do not read as a latitude and a longitude, when its row lies
     outside NJT_IDENTITY_RADIUS_M of the station's point, or when its row is one the app
-    places but `stops` (the app's own parse of the same archive) holds no marker for it
-    at its id. A code that passes contributes "NY=105 'NEW YORK PENN STATION'": the id
-    and name the publication uses today.
+    places but `stations` (the stations the app serves from the same archive, by
+    njt_static.served_stops) holds no station for it at its id, or holds another row
+    there. A code that passes contributes "NY=105 'NEW YORK PENN STATION'": the id and
+    name the publication uses today.
 
     READ RAW from the archive, as _njt_stops_shape is, because njt_static._parse_stops
     keeps no stop_code (a marker does not need one) and the app's parser is not the
@@ -2267,29 +2276,36 @@ def _njt_identity(body: bytes, stops: dict[str, dict]) -> tuple[list[str], list[
                 f"{station} (limit {NJT_IDENTITY_RADIUS_M:.0f} m)"
             )
             continue
-        # THE APP'S MARKER AT THAT ID MUST BE THIS ROW (review of this check,
-        # 2026-11-06, measured on the 2026-09-01 capture). Without this arm a NY row
-        # given a blank id, or id 1 after Aberdeen-Matawan's row 1, PASSES ("NY= ..."
-        # and "NY=1 ...") while the app has no Penn marker at all: the parser skips a
-        # blank id and keeps the first row of a repeated one. Asked only of a row the
-        # parser places (a blank or "0" location_type): any other row is no marker by
-        # design, and the shape watch in check_njt_static reports that world.
-        # COMPARED BY PLACE, NOT BY NAME: the parser is free to present a name for
-        # display (njt_static.display_name mixes the 2026-11-06 publication's upper
-        # case), so a raw row's name and its own marker's can differ, while both sides
-        # parse the coordinates the same way and another row's are another place.
+        # THE STATION THE APP SERVES AT THAT ID MUST BE THIS ROW (reviews of this check,
+        # 2026-11-06, measured on the 2026-09-01 capture and the 2026-11-06 rows).
+        # Without this arm a NY row given a blank id, or id 1 after Aberdeen-Matawan's
+        # row 1, PASSES ("NY= ..." and "NY=1 ...") while the app has no Penn station at
+        # all: the parser skips a blank id and keeps the first row of a repeated one.
+        # And a NY row no trip calls at PASSES while the app serves no station there.
+        # Asked only of a row the parser places (a blank or "0" location_type): any
+        # other row is no marker by design, and the shape watch in check_njt_static
+        # reports that world.
+        # COMPARED AS THE APP PRESENTS IT: the place, and the name as the parser shows
+        # it (njt_static.display_name of the raw name, which mixes the 2026-11-06
+        # publication's upper case), so the raw "NEW YORK PENN STATION" matches its own
+        # station's "New York Penn Station", while another row at the same place (26326
+        # and 42545 share one coordinate in that publication) is still another row.
         if (row.get("location_type") or "").strip() in ("", "0"):
-            marker = stops.get(ids[0])
-            if marker is None:
+            served = stations.get(ids[0])
+            if served is None:
                 failures.append(
-                    f"identity code {code} ({station}) is on a row the app keeps no "
-                    f"marker for (stop_id {ids[0]!r})"
+                    f"identity code {code} ({station}) is on a row the app serves no "
+                    f"station for (stop_id {ids[0]!r})"
                 )
                 continue
-            if (marker.get("lat"), marker.get("lon")) != (row_lat, row_lon):
+            if (served.get("name"), served.get("lat"), served.get("lon")) != (
+                njt_static.display_name(name),
+                row_lat,
+                row_lon,
+            ):
                 failures.append(
-                    f"identity code {code} is stop {ids[0]} {name!r}, but the app's marker "
-                    f"at stop {ids[0]} is another row, {marker.get('name')!r}"
+                    f"identity code {code} is stop {ids[0]} {name!r}, but the app's station "
+                    f"at stop {ids[0]} is another row, {served.get('name')!r}"
                 )
                 continue
         found.append(f"{code}={ids[0]} {name!r}")

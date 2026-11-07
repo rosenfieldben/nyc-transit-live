@@ -866,6 +866,55 @@ def derive_njt_stop_routes(
     return fold_stop_routes(trip_routes, trip_stops)
 
 
+def served_stops(stops: dict[str, dict], station_routes: dict[str, list[str]]) -> dict[str, dict]:
+    """The NJ Transit stops served as stations: the parsed stops the routes-per-station
+    index gives at least one route, which are the stops some scheduled trip calls at (on
+    the measured publication exactly those: no trip is orphaned or routeless).
+
+    WHY A FILTER AT ALL. The 2026-11-06 publication (the renumbering monitor run #426
+    first saw, measured that day with the app's own parser) holds 229 stops, and
+    65 of them have no route. Every one of the 65 is a light-rail row (Hudson-Bergen,
+    Newark Light Rail and the River LINE: routes 4, 12 and 16, which carry zero trips
+    in this rail feed), and stop_times.txt calls at none of them. Served, each would be
+    a regional-rail square on the map with an upper-case label, a station-search row
+    and a board that can only ever read "No trains"; two of them (26326 and 42545, the
+    Newark light-rail platforms) share one coordinate about 104 m from Newark Penn. The
+    publication before it (172 stops) carried 8 rows with no route: six Amtrak-only
+    stations (BWI, Baltimore, New Carrollton, North Philadelphia, Washington,
+    Wilmington) and NJ Transit's event and seasonal stops Meadowlands (81) and Monmouth
+    Park (88), all of which production served. On that publication this rule removes
+    those 8; an event station is served only while its publication schedules a trip
+    there. The renumbered one carries none of the 8, so on it this removes exactly the
+    65.
+
+    WHY BESIDE THE PARSER AND NOT IN IT. The parse is shared with the contract
+    monitor, which must keep seeing the publication as published, and
+    app.state.njt_static keeps that full parse too, so the app's copy stays the
+    publication as published. The warmup applies this where it sets
+    app.state.njt_stops, which makes every consumer of that agree at once:
+    /api/njt-stops, /api/njt-arrivals (membership is its gate, so a filtered id is
+    "Unknown NJ Transit stop" like any other), and the realtime decoder, whose
+    _ordered_calls drops a call at a stop it was not handed exactly as it drops an
+    unknown one. And the contract monitor's identity check applies it too, so the
+    station it confirms at Penn and at Newark Penn is the one the app serves, not
+    merely a row the parse kept: a pure function here, rather than a warmup
+    private, is what lets the two ask the same question.
+
+    A FILTER THAT LEAVES NOTHING FILTERS NOTHING. Two publications the gate lets through
+    would leave it empty. One is load_njt_static's backstop for a stop_times.txt with no
+    usable rows: the index is empty, and that backstop promises the group still places
+    markers. The other is a half-renumbered publication whose stop_times.txt still calls
+    at ids its stops.txt no longer carries (stops 105 and 107, calls at 112 and 109:
+    validate_njt_publication accepted it on 2026-11-06, because it does not join the
+    two): the index is not empty, but it names no parsed stop. Either way an empty
+    result says nothing about which stops are called at. Served, it would be a ready
+    group with no stations, every /api/njt-arrivals id a 404 and every realtime call
+    dropped, so the parse is served whole, as it was before this rule.
+    """
+    served = {stop_id: stop for stop_id, stop in stops.items() if station_routes.get(stop_id)}
+    return served or stops
+
+
 def build_njt_trip_index(trips: dict[str, dict]) -> dict[str, dict]:
     """Pure: trip_id -> {route_id, headsign, short_name}, 15b's join target.
 

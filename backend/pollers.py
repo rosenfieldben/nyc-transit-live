@@ -40,6 +40,7 @@ from feeds import (
     ALERT_RETENTION_MAX_S,
     NJT_ALERTS_SERVED_EMPTY_DETAIL,
     RAILROAD_FEED_URLS,
+    RAILROAD_FRESHNESS_SYSTEMS,
     SUBWAY_FEED_URLS,
     AllAlertFeedsFailed,
     active_alert_feeds,
@@ -417,14 +418,16 @@ def _system_freshness(
     ok=True with a fetched_at one second old while serving ten minute old content,
     which is exactly what F03 measures. It follows the same last-known rule as
     fetched_at above, and for the same reason: a failed system's frozen content time
-    is informative, and blanking it would turn a real outage into an unknown, which
-    /api/status reads as healthy (see the comment at _refresh_railroads).
+    is informative, and blanking it would turn a real outage into an unknown, which the
+    page reads as no lag at all (helpers.js, systemLag). The railroad envelope keeps its
+    own clock by the same rule, for /healthz (see the comment at _refresh_railroads).
 
     NULL IS A REAL ANSWER HERE. A system whose header is not a usable freshness
     signal reports None rather than a number that would mislead. Metro-North is the
-    standing case and the exclusion is NOT restated here: _refresh_railroads passes
-    only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so this function never
-    learns MNR has a header at all.
+    standing case and the exclusion is NOT restated here: the railroad producer records
+    MNR with None whenever it decodes (feeds.RAILROAD_FRESHNESS_SYSTEMS does not admit
+    it), so this function never learns MNR has a header at all, and never mistakes the
+    exclusion for a failure either (contract 3.5's membership clause).
 
     `routes` is the optional per-system route coverage (see _routes_by_system);
     only the subway passes it, because only its entities lack a system name of
@@ -449,12 +452,14 @@ def _system_freshness(
         # THE SAME LAST-KNOWN RULE AS fetched_at, AND THE TWO REASONS A VALUE CAN BE
         # MISSING ARE NOT THE SAME ONE. A system ABSENT from the map did not decode
         # this poll, so it keeps the content time it last reported rather than
-        # blanking it. A system PRESENT with a None value decoded and sent no header,
-        # which is a fact about this poll and must be published as None: carrying the
+        # blanking it. A system PRESENT with a None value decoded and sent no usable
+        # header (none at all, or one the policy excludes, as Metro-North's), which is
+        # a fact about this poll and must be published as None: carrying the
         # previous poll's number forward there would age it by one interval every
         # interval, without bound, while the feed looked healthy. The producers
         # encode the difference deliberately (feeds/subway.py records a key for every
-        # group that decoded), and reading it with .get() would throw it away.
+        # group that decoded, and feeds/railroad.py for every system since Amendment
+        # 1's A10 repair), and reading it with .get() would throw it away.
         if system in fresh_timestamps:
             content_at = fresh_timestamps[system]
         else:
@@ -672,10 +677,12 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         now,
         # No route coverage on the railroad blocks: its trains name their own system.
         None,
-        # METRO-NORTH IS ABSENT FROM THIS MAP AND THAT IS THE WHOLE EXCLUSION. It
-        # carries only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so MNR's
-        # block reports None without this function, this call site, or the model ever
-        # naming it. The reason lives once, above that frozenset.
+        # METRO-NORTH IS IN THIS MAP WITH None, AND THAT VALUE IS THE WHOLE EXCLUSION.
+        # The map has a key for every system that decoded (contract 3.5's membership
+        # clause), and the producer writes None for one feeds.RAILROAD_FRESHNESS_SYSTEMS
+        # does not admit, so MNR's block reports None without this function, this call
+        # site, or the model ever naming it. Absence is kept for its one meaning, did
+        # not decode. The reason lives once, above that frozenset.
         feed_ts_by_system,
         # What the position ladder did with each decoded system's vehicles (contract
         # 6.3), last-known for a failed one. The rider's status line reads the
@@ -695,15 +702,30 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     # feed_timestamp comes from LIRR's header only (MNR's lagging shared clock is
     # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS). A TOTAL failure returns above
-    # and keeps the last-known timestamp; on a PARTIAL failure the surviving systems
-    # decide it, and when the only freshness-bearing system (LIRR) is the one that
-    # failed it comes back None. Keep the last-known rather than writing that None
-    # over it: /api/status reads an unknown feed age as healthy, so blanking it turns
-    # a real outage into a green light.
+    # and keeps the last-known timestamp. Below, THE LAST CLOCK IS KEPT EXACTLY WHEN A
+    # FRESHNESS-BEARING SYSTEM (LIRR) IS IN THIS POLL'S FAILED LIST (Amendment 1's Q7):
+    # Metro-North decoded and fetched_at advances, while the fold comes back None for
+    # want of LIRR. Writing that None would blank a real outage into an unknown age,
+    # which /healthz tolerates as healthy (routes/status.py, `upstream_ok`), so "LIRR
+    # down, Metro-North up" would read green; kept, a dated clock ages with each poll and
+    # /healthz reads feed-content-stale once it is FEED_STALE_AFTER_S old. WHAT IS KEPT IS
+    # WHAT THE ENVELOPE LAST PUBLISHED, and after a headerless LIRR success that is None:
+    # an outage that follows one has no clock to age, so /healthz names it only through
+    # observations-qualified, once the outage's rows pass that code's 600 s band (measured
+    # on the committed capture; the 2026-10-12 record's live list carries it, for a
+    # ruling). On every poll where LIRR decoded, the fold is written as it came back,
+    # None included: a None there is a generation whose header carried no time, a fact
+    # about this poll as it is on LIRR's own block. Before Q7 this branch keyed on the
+    # None itself and fired
+    # on that success too, so a feed that decoded every poll was served its last dated
+    # clock, aging one interval per interval into feed-content-stale (A10's arm D, 20 s
+    # to 100 s over five polls). The signal for a headerless LIRR is the contract
+    # monitor's railroad-realtime WARN, which names the cause.
+    lirr_failed = not RAILROAD_FRESHNESS_SYSTEMS.isdisjoint(failed_feeds)
     entry.update(
         data=trains,
         fetched_at=now,
-        feed_timestamp=feed_timestamp if feed_timestamp is not None else entry["feed_timestamp"],
+        feed_timestamp=entry["feed_timestamp"] if lirr_failed else feed_timestamp,
         error=None,
     )
 

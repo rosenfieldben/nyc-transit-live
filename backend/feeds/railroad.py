@@ -1249,8 +1249,13 @@ async def fetch_railroad_trains(
     (trains, arrivals_by_system, feed_timestamp, failed_feeds, feed_ts_by_system,
     steps_by_system), where feed_ts_by_system carries each freshness-authoritative
     system's OWN header (contract 6.1) so a per-system block can name which contributor
-    is behind. A system RAILROAD_FRESHNESS_SYSTEMS does not admit is simply absent from
-    it. steps_by_system carries, for each system that decoded, what the position ladder
+    is behind. IT HAS A KEY FOR EVERY SYSTEM THAT DECODED THIS POLL AND FOR NO OTHER
+    (contract 3.5's membership clause, Amendment 1's A1.3): the header's time for an
+    admitted system whose header carried one, and None both for a generation whose
+    header carried none and for a system RAILROAD_FRESHNESS_SYSTEMS does not admit, by
+    policy. A failed system is absent, which is the one thing the reader
+    (pollers._system_freshness) reads as "did not decode, keep the last clock".
+    steps_by_system carries, for each system that decoded, what the position ladder
     did with its vehicles (_position_steps, contract 6.3): the counts models.PositionSteps
     serves, one per trip, which is the (system, trip_id) dedupe below. A failed system is
     absent from it, so its block keeps its last-known counts.
@@ -1276,10 +1281,15 @@ async def fetch_railroad_trains(
     is the true feed-generation time. MNR's header is a lagging shared clock and
     is deliberately excluded, so it never drives staleness. The value is the
     oldest such trusted header (only LIRR's today, but min-across-trusted stays
-    correct if another trusted feed is added later), or None when no trusted feed
-    decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
-    undecodable protobuf) are logged and skipped, and this raises only when every
-    feed fails. failed_feeds is the sorted list of systems that dropped this poll,
+    correct if another trusted feed is added later), folded from the content-clock map
+    after the failed systems have left it, so a system the failed list names never
+    dates the envelope. None means no trusted system decoded a DATED header, and that
+    is two different polls: a trusted feed that failed, or one that decoded a header
+    carrying no time. The caller tells them apart by the failed list, never by the None
+    (pollers._refresh_railroads, Amendment 1's Q7). Mirrors fetch_subway_trains:
+    per-feed failures (a fetch error or undecodable protobuf) are logged and skipped,
+    and this raises only when every feed fails. failed_feeds is the sorted list of
+    systems that dropped this poll,
     empty on a fully successful poll. The caller owns the client (the polling task
     holds one for its lifetime).
     """
@@ -1298,7 +1308,6 @@ async def fetch_railroad_trains(
 
     trains: list[dict] = []
     seen: set[tuple[str, str]] = set()  # (system, trip_id)
-    timestamps: list[float] = []
     feed_ts_by_system: dict[str, float | None] = {}
     feed_errors: dict[str, str] = {}
     raw_by_system: dict[str, bytes] = {}  # successfully decoded, kept for placement
@@ -1319,12 +1328,16 @@ async def fetch_railroad_trains(
         steps_by_system[system] = steps
         # Only trust a freshness-authoritative system's header (see
         # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored. The
-        # per-system map keeps the SAME exclusion rather than restating it: a system
-        # that is not admitted here is simply absent from the map, so its block
-        # reports None without anything downstream knowing why.
-        if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
-            timestamps.append(feed_ts)
-            feed_ts_by_system[system] = feed_ts
+        # per-system map keeps the SAME exclusion rather than restating it, and keeps it
+        # as a VALUE, not as absence: a system that decoded is recorded whatever its
+        # header said, with None where the header carried no time or the set does not
+        # admit the system. Absence is the reader's "did not decode" (it keeps the last
+        # clock), so an undated LIRR left out of the map would be served its previous
+        # generation's clock as current, and Metro-North's exclusion would rest on the
+        # one signal that means a failure. The envelope's fold keeps its gate: only an
+        # admitted system's real time is folded (below, from this map), so the envelope
+        # is still LIRR's alone.
+        feed_ts_by_system[system] = feed_ts if system in RAILROAD_FRESHNESS_SYSTEMS else None
         for train in gps:
             key = (system, train["trip_id"])
             if key in seen:
@@ -1371,15 +1384,22 @@ async def fetch_railroad_trains(
     if len(feed_errors) == len(RAILROAD_FEED_URLS):
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All railroad feeds failed: {joined}")
-    feed_timestamp = min(timestamps) if timestamps else None
     # A system the placement guard above failed keeps its last-known counts, as its
-    # trains are retained rather than published (_refresh_railroads).
+    # trains are retained rather than published (_refresh_railroads). Its content clock
+    # leaves the map by the same rule, since the GPS pass recorded it before the guard
+    # ran: a system in the failed list must be absent, or the reader would publish this
+    # poll's value for a system it is told did not decode. The envelope is folded from
+    # the map after that, for the same reason: only an admitted system carries a time
+    # there, so the gate holds, and a failed one no longer dates the envelope.
     position_steps = {s: c for s, c in steps_by_system.items() if s not in feed_errors}
+    content_clocks = {s: t for s, t in feed_ts_by_system.items() if s not in feed_errors}
+    dated = [t for t in content_clocks.values() if t is not None]
+    feed_timestamp = min(dated) if dated else None
     return (
         trains,
         arrivals_by_system,
         feed_timestamp,
         sorted(feed_errors),
-        feed_ts_by_system,
+        content_clocks,
         position_steps,
     )

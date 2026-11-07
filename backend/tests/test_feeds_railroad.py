@@ -62,10 +62,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2 as pb
 
 import cache
 import feeds
+import main  # noqa: F401  (pollers and main import each other; main first, as the app does)
+import pollers
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SYSTEMS = ["LIRR", "MNR"]
@@ -1070,6 +1073,151 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
     assert failed == ["LIRR"]
     assert trains and all(t["system"] == "MNR" for t in trains)
     assert feed_ts is None
+
+
+# ---------------- the content-clock map's membership (contract 3.5, A10) ----------------
+
+
+def _generation(header_ts=None, own_clock=None):
+    """A railroad generation that decodes with nothing running: a header carrying the
+    version parse_feed requires, header.timestamp only when given, and, when own_clock is
+    given, one trip_update dated by it and calling at no stop, so it places nothing. The
+    own clock is there so a producer that dated an undated generation by its entities
+    would show it in the value it recorded."""
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    if header_ts is not None:
+        feed.header.timestamp = int(header_ts)
+    if own_clock is not None:
+        entity = feed.entity.add(id="own-clock")
+        entity.trip_update.trip.trip_id = "own-clock"
+        entity.trip_update.timestamp = int(own_clock)
+    return feed.SerializeToString()
+
+
+@pytest.mark.anyio
+async def test_the_content_clock_map_keys_every_system_that_decoded():
+    """THE MEMBERSHIP CLAUSE (contract 3.5, Amendment 1's A1.3 and Q6). Every system that
+    decoded has a key, and the value says what its header said: LIRR's time when it sent
+    one, None when it sent none, and Metro-North None by policy whatever its header
+    carries. Before Amendment 1 the map held only an admitted system's dated header, so
+    an undated LIRR and Metro-North were both ABSENT, which the reader takes for a system
+    that did not decode."""
+    dated = _FakeRailClient({"LIRR": _generation(900), "MNR": _generation(880)})
+    _, _, envelope, failed, clocks, _ = await feeds.fetch_railroad_trains(dated, {})
+    assert failed == []
+    assert clocks == {"LIRR": 900.0, "MNR": None}
+    assert envelope == 900.0
+
+    undated = _FakeRailClient({"LIRR": _generation(None, own_clock=990), "MNR": _generation(880)})
+    _, _, envelope, failed, clocks, _ = await feeds.fetch_railroad_trains(undated, {})
+    assert failed == []
+    # Decoded, undated: present, None. Not 990 (its trip_update's own clock) and not
+    # 880 (Metro-North's header, which the envelope's gate never folds).
+    assert clocks == {"LIRR": None, "MNR": None}
+    assert envelope is None
+
+    lirr_down = _FakeRailClient({"LIRR": b"", "MNR": _generation(880)}, down=["LIRR"])
+    _, _, envelope, failed, clocks, _ = await feeds.fetch_railroad_trains(lirr_down, {})
+    assert failed == ["LIRR"]
+    assert clocks == {"MNR": None}  # a failed system is the only absent one
+    assert envelope is None
+
+
+@pytest.mark.anyio
+async def test_metro_north_is_recorded_as_none_on_the_committed_captures():
+    """Metro-North's capture carries header 1782006692, a real number the policy refuses
+    (2.2). It is recorded as None rather than left out, so its exclusion is a value and
+    absence keeps its one meaning; its block reads null exactly as it did."""
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
+    _, _, envelope, failed, clocks, _ = await feeds.fetch_railroad_trains(client, {})
+    assert failed == []
+    assert clocks == {"LIRR": 1782006915.0, "MNR": None}
+    assert envelope == 1782006915.0
+
+
+@pytest.mark.anyio
+async def test_a_headerless_lirr_beside_a_dated_system_borrows_nothing(monkeypatch):
+    """A headerless LIRR beside a dated Metro-North reads None, and so does the envelope:
+    the dated header beside it is not admitted, so nothing is folded. With Metro-North
+    admitted to the policy set (a second freshness system, as a later probe might make
+    it), the dated system keeps its own time and the envelope is that time alone: the
+    undated one drops out of the fold rather than taking anyone's clock, which is the
+    subway's rule for a headerless group beside dated ones (feeds/subway.py)."""
+    pair = {"LIRR": _generation(None, own_clock=990), "MNR": _generation(880)}
+    _, _, envelope, _, clocks, _ = await feeds.fetch_railroad_trains(_FakeRailClient(pair), {})
+    assert clocks == {"LIRR": None, "MNR": None}
+    assert envelope is None
+
+    monkeypatch.setattr(feeds.railroad, "RAILROAD_FRESHNESS_SYSTEMS", frozenset({"LIRR", "MNR"}))
+    _, _, envelope, _, clocks, _ = await feeds.fetch_railroad_trains(_FakeRailClient(pair), {})
+    assert clocks == {"LIRR": None, "MNR": 880.0}
+    assert envelope == 880.0
+
+
+@pytest.mark.anyio
+async def test_timestamped_then_headerless_then_failed_through_the_reader():
+    """The audit's acceptance, A10's correction in its own words: "Emit explicit null for a
+    successfully decoded but undated generation; preserve prior timestamps only for actual
+    failures. Test timestamped → headerless → failed transitions." Each poll goes through the
+    real fetcher and the real block builder, the previous blocks threaded through as
+    _refresh_railroads threads them.
+
+    The headerless success at 1000 publishes (True, 1000, None), where before Amendment 1
+    it published (True, 1000, 900), the previous generation's clock as current. The failure
+    at 1100 keeps the None it last published. And the failure-only control keeps 900,
+    because a failure is what keeping the last clock is for."""
+
+    async def poll(prev, now, lirr):
+        down = ["LIRR"] if lirr is None else []
+        client = _FakeRailClient({"LIRR": lirr or b"", "MNR": _generation(now)}, down=down)
+        _, _, _, failed, clocks, steps = await feeds.fetch_railroad_trains(client, {})
+        return pollers._system_freshness(
+            prev, feeds.RAILROAD_FEED_URLS, failed, {}, now, None, clocks, positions=steps
+        )
+
+    def read(blocks, system):
+        block = blocks[system]
+        return (block["ok"], block["fetched_at"], block["feed_timestamp"])
+
+    at_900 = await poll(None, 900.0, _generation(900))
+    at_1000 = await poll(at_900, 1000.0, _generation(None, own_clock=990))
+    at_1100 = await poll(at_1000, 1100.0, None)
+    assert [read(b, "LIRR") for b in (at_900, at_1000, at_1100)] == [
+        (True, 900.0, 900.0),
+        (True, 1000.0, None),
+        (False, 1000.0, None),
+    ]
+    assert [read(b, "MNR") for b in (at_900, at_1000, at_1100)] == [
+        (True, 900.0, None),
+        (True, 1000.0, None),
+        (True, 1100.0, None),
+    ]
+
+    control = await poll(await poll(None, 900.0, _generation(900)), 1000.0, None)
+    assert read(control, "LIRR") == (False, 900.0, 900.0)
+
+
+@pytest.mark.anyio
+async def test_a_system_the_placement_guard_fails_leaves_the_map(monkeypatch):
+    """The GPS pass records a system's clock before the placement pass runs, and the
+    placement guard can still fail it (unreachable as written: the bytes already parsed
+    once). A system in the failed list must be absent from the map, as it is from the
+    position counts, or the reader would publish this poll's clock for a system it was
+    told did not decode. Nor does it date the envelope: the fold reads the map after the
+    failed systems left it, so LIRR's 900, recorded before the guard ran, is not folded."""
+
+    def refuse(raw, system, stops, now):
+        raise DecodeError("placement refused")
+
+    monkeypatch.setattr(feeds.railroad, "_decode_railroad_feed", refuse)
+    client = _FakeRailClient({"LIRR": _generation(900), "MNR": _generation(880)})
+    stops = {"LIRR": _stops("LIRR")}
+    _, _, envelope, failed, clocks, steps = await feeds.fetch_railroad_trains(client, stops)
+    assert failed == ["LIRR"]
+    assert clocks == {"MNR": None}
+    assert set(steps) == {"MNR"}
+    assert envelope is None
 
 
 @pytest.mark.anyio

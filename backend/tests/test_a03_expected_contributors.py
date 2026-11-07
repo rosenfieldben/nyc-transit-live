@@ -322,3 +322,37 @@ def test_only_a_station_with_no_contributor_reads_the_aggregate_clock():
     assert cache._oldest_contributing_fetched_at(entry, {}, "X", []) == 1000.0
     assert cache._oldest_contributing_fetched_at(entry, {}, "219", ["2", "5"]) is None
     assert cache._contributing_freshness(entry, {}, "X", []) is None
+
+
+async def test_a_zero_byte_200_is_a_failed_poll_not_an_empty_generation(world):
+    """MEASURED FOR STEP 0's ONE FAILED ROW: 1-7+S answered HTTP 200 with a 0-byte body at
+    2026-11-04T13:05:48Z (backend/tests/fixtures/subway_groups/README.md). Two readings
+    were possible, a failure (the group retained, its block ok false with its last clock)
+    or a decoded empty generation (its trains gone, its block dated by nothing, Q6's world
+    on the subway). It is the first: parse_feed refuses an empty body (its rule 1) and the
+    subway fold counts that group failed, so one poll after a healthy one /api/status lists
+    1-7+S failed, its block keeps its last decode's clocks, and its rows at 219 are served
+    `retained`, which the page words "showing last known"."""
+    from feeds.subway import _aggregate_feeds
+
+    whole = _restamp(test_f03_boards._CAPTURE.read_bytes(), NOW, 5.0)
+    await _poll(world, NOW, whole, False)
+    board = await _poll(world, NOW + POLL_S, b"", False)
+    assert board["systems"][FAILED] == {
+        "fetched_at": NOW,
+        "feed_timestamp": NOW - 5,
+        "ok": False,
+        "retained_since": NOW + POLL_S,
+        "routes": ["1", "2", "3", "4", "5", "6", "GS"],
+        "positions": None,
+    }
+    rows = [row for bucket in board["directions"].values() for row in bucket]
+    assert (len(rows), {row["provenance"] for row in rows}) == (12, {"retained"})
+    transport = httpx.ASGITransport(app=app_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://a03") as http:
+        status = (await http.get("/api/status")).json()
+    assert status["subway_feeds"] == {"total": 8, "ok": 7, "failed": [FAILED]}
+    feed_errors = _aggregate_feeds([b""], {}, NOW)[3]
+    assert feed_errors == {
+        FAILED: "undecodable protobuf (empty body served as 200 (no protobuf header))"
+    }

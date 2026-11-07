@@ -144,6 +144,21 @@ A repair to how a script runs or to the proxy a check reads, never to the fact a
 states, recorded here so a script's history tells the two apart (the form of the
 2026-10-12 directory's section of the same name).
 
+- **F10, on `claude/a03-expected-contributors`, 2026-11-07.** The fact F10 records is
+  unchanged: a tripped subway refresh deadline records 504, flips all eight envelope blocks
+  to `ok: false` and reaches `/healthz` as `subway-groups-down`. Its world gave each group's
+  one train the group key's first character for a route id, and SIR's is `S`, which no feed
+  carries (the SIR feed carries `SI` and `SS`). Step 2 of the freshness contract's Amendment
+  1 added the route-to-group table (Q1) and a non-gating `/healthz` code,
+  `subway-route-unmapped`, raised once a live group serves a route the table lacks, so the
+  world raised it beside the one code its two `/healthz` checks pin
+  (`degraded == ['subway-groups-down']`), and both turned red with nothing about the
+  deadline changed. Each train now takes the first of its group's routes in the table (`1`,
+  `A`, `B`, `G`, `J`, `N`, `L`, `SI`), so only SIR's moves, and `seed_state` starts the
+  table's latch empty, as a fresh process does. **No other check changed**: 12 of 12 pass,
+  FIXED as before. The original world over this branch's tree exits 1 at exactly those two
+  checks (`degraded = ['subway-groups-down', 'subway-route-unmapped']`); the repaired one
+  exits 0.
 - **F13, on `claude/step0-subway-group-probe`, 2026-11-03.** The fact F13 records is
   unchanged: nothing in this repository checks the deployment between two runs of the
   contract monitor, because Railway polls `/healthz` only while a deployment is being

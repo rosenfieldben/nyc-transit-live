@@ -209,6 +209,7 @@ def f03_world(monkeypatch):
     primed = {
         "feed_cache": {"subways": app_module._fresh_entry()},
         "subway_feed_health": None,
+        "subway_unmapped_routes": {},
         "subway_static_status": "ready",
         "subway_stops": stops,
         "subway_stations": stations,

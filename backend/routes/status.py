@@ -25,6 +25,7 @@ from models import (
     HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_SUBWAY_GROUPS_DOWN,
     HEALTH_SUBWAY_LINES_DEGRADED,
+    HEALTH_SUBWAY_ROUTE_UNMAPPED,
     HEALTH_SUBWAY_STATIC_FAILED,
     AlertFeed,
     HealthzResponse,
@@ -214,6 +215,9 @@ async def get_status(request: Request, response: Response) -> dict:
         # two vantage points stay independent on purpose.
         "static_archives": static_shared.archive_status(),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
+        # The route-to-group table's check (Amendment 1, Q1): the routes it lacks, by name,
+        # for the code /healthz raises over them (models.HEALTH_SUBWAY_ROUTE_UNMAPPED).
+        "subway_unmapped_routes": getattr(app.state, "subway_unmapped_routes", None) or {},
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         # The position ladder's counts per railroad system (contract 6.3), beside
         # railroad_feeds rather than inside it: see models.StatusResponse.
@@ -278,6 +282,7 @@ def _health_codes(
     observations_qualified: bool = False,
     njt_mint_allowance: bool = False,
     subway_lines_degraded: bool = False,
+    subway_route_unmapped: bool = False,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
 
@@ -404,6 +409,15 @@ def _health_codes(
     # defaulted, for the reason observations-qualified is.
     if subway_lines_degraded:
         codes.append(HEALTH_SUBWAY_LINES_DEGRADED)
+
+    # A ROUTE THE ROUTE-TO-GROUP TABLE LACKS, AND NOT A REASON TO 503 (Amendment 1, Q1).
+    # A live group served a route feeds.SUBWAY_ROUTE_GROUPS has no row for, so a station
+    # board can miss that route's group among its expected contributors;
+    # models.HEALTH_SUBWAY_ROUTE_UNMAPPED says why it is latched and never gates.
+    # /api/status names the routes. LAST, and defaulted, for the reason
+    # observations-qualified is.
+    if subway_route_unmapped:
+        codes.append(HEALTH_SUBWAY_ROUTE_UNMAPPED)
     return codes
 
 
@@ -694,6 +708,7 @@ async def healthz(request: Request) -> JSONResponse:
             getattr(app.state, "subway_static_status", None) == "ready"
             and not _draws_a_line(getattr(app.state, "subway_routes", None) or [])
         ),
+        subway_route_unmapped=bool(getattr(app.state, "subway_unmapped_routes", None)),
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

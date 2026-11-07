@@ -309,7 +309,18 @@ PRODUCTION_HEALTH_CODES = (
     "observations-qualified",
     "njt-mint-allowance",
     "subway-lines-degraded",
+    "subway-route-unmapped",
 )
+
+# THE ONE RECOGNIZED CODE THAT IS A WARN, NOT A FAIL. Every other code names a state
+# riders are paying for now; subway-route-unmapped (Amendment 1, Q1) names a route a live
+# subway group served that the app's route-to-group table has no row for. Nothing is
+# broken for riders at that moment: what it costs is that a station served by that route
+# may not name the route's group on its board when the group goes dark, so it asks for a
+# table row in the next deploy, not a page. The run reads the routes and their groups from
+# /api/status's subway_unmapped_routes and prints them (_unmapped_route_names). MIRRORED
+# as a literal for the reason PRODUCTION_HEALTH_CODES is.
+_WARN_HEALTH_CODES = ("subway-route-unmapped",)
 
 # Prose for the codes whose NAME does not say what the operator should do. Four need
 # it. "njt-mint-quota" reports a budget that is spent, which is a different
@@ -363,6 +374,13 @@ _HEALTH_CODE_NOTES = {
         "failing now); known false positive: a sparsely served LIRR (a late night with few "
         f"trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
         "nothing wrong"
+    ),
+    "subway-route-unmapped": (
+        "a live subway group served a route the app's route-to-group table "
+        "(feeds.SUBWAY_ROUTE_GROUPS) has no row for, so a station that route serves may not "
+        "name the group on its board when the group goes dark; add the row from a capture of "
+        "the feeds and redeploy, which is also what clears the code, since a running process "
+        "keeps it until a restart"
     ),
 }
 
@@ -2494,7 +2512,10 @@ def _fetch_health(
 
 
 def _check_production_health(
-    fetch: Fetcher, sleep: Callable[[float], None], health_url: str
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    health_url: str,
+    unmapped_routes: object = None,
 ) -> Result:
     """The /healthz classification, surfaced rather than re-derived.
 
@@ -2510,6 +2531,12 @@ def _check_production_health(
     Echoing an unrecognized string there would let anything that can answer that
     URL write into the job summary. Unrecognized codes are COUNTED instead, which
     still says "this deployment knows something I do not" without quoting it.
+
+    EVERY RECOGNIZED CODE FAILS THE RUN BUT ONE. subway-route-unmapped alone is a WARN
+    (_WARN_HEALTH_CODES says why), and it names the routes and the groups that served
+    them, read from /api/status's subway_unmapped_routes, which run_all hands over as
+    `unmapped_routes`; the names are printed only when they look like a route id and a
+    group key, under the rule above, and counted otherwise.
     """
     res, detail = _fetch_health(fetch, health_url, sleep)
     if res is None:
@@ -2548,11 +2575,43 @@ def _check_production_health(
             # sentence, so the job summary answers "what do I do about this"
             # without the reader having to know the vocabulary.
             parts += [_HEALTH_CODE_NOTES[code] for code in known if code in _HEALTH_CODE_NOTES]
+            if "subway-route-unmapped" in known:
+                parts.append(_unmapped_route_names(unmapped_routes))
         if unknown:
             # Counted, never quoted. See the docstring.
             parts.append(f"{unknown} unrecognized code(s), newer than this monitor")
-        return Result("production:healthz", FAIL, "; ".join(parts))
+        failing = bool(unknown) or any(code not in _WARN_HEALTH_CODES for code in known)
+        return Result("production:healthz", FAIL if failing else WARN, "; ".join(parts))
     return Result("production:healthz", PASS, "no degraded states reported")
+
+
+# A subway route id as the feeds and routes.txt spell them ("1", "6X", "GS", "SI"). The
+# names in subway_unmapped_routes come off the wire, so only what matches this is printed.
+_SAFE_ROUTE_RE = re.compile(r"^[A-Za-z0-9]{1,8}\Z")
+
+
+def _unmapped_route_names(unmapped_routes: object) -> str:
+    """The routes /api/status says the route-to-group table lacks, each with the groups
+    that served it, for subway-route-unmapped's WARN. A route or group that does not look
+    like one is counted, never quoted (_check_production_health's rule)."""
+    if not isinstance(unmapped_routes, dict) or not unmapped_routes:
+        return "/api/status names no route (subway_unmapped_routes is empty or unreadable)"
+    shown, hidden = [], 0
+    for route in sorted(unmapped_routes, key=str):
+        groups = unmapped_routes[route]
+        if (
+            isinstance(route, str)
+            and _SAFE_ROUTE_RE.match(route)
+            and isinstance(groups, list)
+            and groups
+            and all(isinstance(g, str) and _SAFE_GROUP_RE.match(g) for g in groups)
+        ):
+            shown.append(f"route {route} (served by {' and '.join(sorted(groups))})")
+        else:
+            hidden += 1
+    if hidden:
+        shown.append(f"{hidden} with an unprintable name")
+    return "not in the route-to-group table: " + ", ".join(shown)
 
 
 def _served_at_of(payload: object) -> float | None:
@@ -2840,7 +2899,11 @@ def check_production(
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
     results.append(_check_production_served_at(fetch, sleep, data, url))
-    results.append(_check_production_health(fetch, sleep, _resolve_health_url(status_url)))
+    results.append(
+        _check_production_health(
+            fetch, sleep, _resolve_health_url(status_url), data.get("subway_unmapped_routes")
+        )
+    )
     # 15c, and LAST for the same reason the F1 pair comes after the payload lines:
     # it is another READ of the deployment, not another field of the one already
     # parsed. /api/status publishes nothing at all about route geometry, which is

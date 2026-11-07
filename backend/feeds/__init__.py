@@ -114,6 +114,8 @@ from feeds.shared import (
 from feeds.subway import (
     _SUBWAY_BASE,
     SUBWAY_FEED_URLS,
+    SUBWAY_ROUTE_GROUPS,
+    SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE,
     _aggregate_feeds,
     _decode_feed,
     _decode_trains,
@@ -121,6 +123,7 @@ from feeds.subway import (
     combine_group_arrivals,
     combine_group_trains,
     fetch_subway_trains,
+    routes_outside_the_table,
 )
 
 __all__ = [
@@ -174,11 +177,14 @@ __all__ = [
     "decode_njt_trip_updates",
     "_SUBWAY_BASE",
     "SUBWAY_FEED_URLS",
+    "SUBWAY_ROUTE_GROUPS",
+    "SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE",
     "_platform_direction",
     "_decode_feed",
     "_decode_trains",
     "_aggregate_feeds",
     "fetch_subway_trains",
+    "routes_outside_the_table",
     "RAILROAD_FEED_URLS",
     "RAILROAD_FRESHNESS_SYSTEMS",
     "_decode_railroad_vehicles",

@@ -325,6 +325,10 @@ async def lifespan(app: FastAPI):
     # Same, for the NYC Ferry realtime feeds (VehiclePositions + TripUpdates,
     # polled as one all-or-nothing feed).
     app.state.ferry_feed_health = None
+    # Every route a live subway group has served in this process that has no row in
+    # feeds.SUBWAY_ROUTE_GROUPS (Amendment 1, Q1), route id to the groups that served it.
+    # Empty until one appears, and latched: see the check in pollers._refresh_subways.
+    app.state.subway_unmapped_routes = {}
     # Background warmups: static GTFS (each group retries on failure) and the bus
     # route index. Startup never waits on any of them.
     app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))

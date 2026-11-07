@@ -118,6 +118,7 @@ import njt_auth  # noqa: E402
 import pollers  # noqa: E402
 from feeds import (  # noqa: E402
     SUBWAY_FEED_URLS,
+    SUBWAY_ROUTE_GROUPS,
     combine_group_arrivals,
     combine_group_trains,
 )
@@ -248,7 +249,11 @@ def make_healthy_subway_fetch(now_fn):
         for index, group in enumerate(SUBWAY_FEED_URLS):
             train = dict(TRAIN_TEMPLATE)
             train["trip_id"] = f"trip-{group}"
-            train["route_id"] = group[0]
+            # A route the group's feed really carries, from the route-to-group table. The
+            # group key's first character served here until Amendment 1's Q1 added the
+            # table and its check, and SIR's "S" is no route (the SIR feed carries SI and
+            # SS), so this world raised subway-route-unmapped beside the code it records.
+            train["route_id"] = min(r for r, g in SUBWAY_ROUTE_GROUPS.items() if g == group)
             train["next_time"] = now + 60 + index
             trains_by_group[group] = [train]
             arrivals_by_group[group] = {}
@@ -310,6 +315,7 @@ def seed_state() -> None:
     # whose geometry failed.
     APP.state.subway_routes = [{"route": "1", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}]
     APP.state.subway_feed_health = None
+    APP.state.subway_unmapped_routes = {}
     APP.state.railroad_feed_health = None
     APP.state.path_feed_health = None
     APP.state.ferry_feed_health = None

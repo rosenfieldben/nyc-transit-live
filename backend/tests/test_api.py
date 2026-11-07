@@ -111,6 +111,7 @@ def cache():
         "njt": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
+    app_module.app.state.subway_unmapped_routes = {}
     app_module.app.state.railroad_feed_health = None
     app_module.app.state.path_feed_health = None
     app_module.app.state.ferry_feed_health = None

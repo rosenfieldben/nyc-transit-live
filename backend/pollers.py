@@ -51,6 +51,7 @@ from feeds import (
     match_path_identities,
     merge_alert_generations,
     merge_system_generations,
+    routes_outside_the_table,
 )
 from feeds import njt as njt_feed
 
@@ -533,6 +534,17 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
+    # THE ROUTE-TO-GROUP TABLE'S CHECK (Amendment 1, Q1): every route a group that decoded
+    # this poll served is in feeds.SUBWAY_ROUTE_GROUPS. A route outside it is a station
+    # whose expected groups miss one, so it is named on /api/status and raises the
+    # non-gating subway-route-unmapped on /healthz. LATCHED FOR THE PROCESS, never cleared
+    # by a later poll: the table is code, so only a deploy can add the row, and a route
+    # that runs for an hour overnight would otherwise be gone before the six-hourly
+    # monitor could read it. Route id to the sorted groups that served it.
+    unmapped = dict(getattr(app.state, "subway_unmapped_routes", None) or {})
+    for route, group in routes_outside_the_table(trains_by_group, arrivals_by_group):
+        unmapped[route] = sorted({*unmapped.get(route, []), group})
+    app.state.subway_unmapped_routes = unmapped
     now = time.time()
     # C2: carry a FAILED group's trains and arrivals forward instead of publishing
     # survivors only, so its riders see stale-but-labelled data rather than an empty

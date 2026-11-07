@@ -4056,11 +4056,70 @@ def test_the_lines_code_is_watched_and_explained_in_words():
     assert "never re-fetches" in health.detail and "subway-static check" in health.detail
 
 
-@pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)
+def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
+    """subway-route-unmapped (Amendment 1, Q1) is the one recognized code that WARNs: a
+    route a live group served is missing from the route-to-group table, which asks for a
+    row in the next deploy rather than a page. The WARN names each route and the groups
+    that served it, read from /api/status's subway_unmapped_routes; a name that does not
+    look like a route id or a group key is counted, never printed. Beside any other
+    recognized code the run still FAILs."""
+    import models
+
+    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped",)
+    assert "subway-route-unmapped" not in models.HEALTH_GATING_CODES
+    unmapped = {"X9": ["NQRW"], "Y1": ["ACE", "BDFM"]}
+    fetch = _healthy_prod(
+        health=_healthz_json(degraded=["subway-route-unmapped"]), subway_unmapped_routes=unmapped
+    )
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert (health.status, health.detail) == (
+        cm.WARN,
+        "degraded: subway-route-unmapped; "
+        + cm._HEALTH_CODE_NOTES["subway-route-unmapped"]
+        + "; not in the route-to-group table: route X9 (served by NQRW), "
+        "route Y1 (served by ACE and BDFM)",
+    )
+
+    fetch = _healthy_prod(
+        health=_healthz_json(degraded=["subway-groups-down", "subway-route-unmapped"]),
+        subway_unmapped_routes={"<b>": ["NQRW"], "Z7": ["G G"], "W2": ["L"]},
+    )
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert health.status == cm.FAIL
+    assert health.detail.endswith(
+        "not in the route-to-group table: route W2 (served by L), 2 with an unprintable name"
+    )
+    assert "<b>" not in health.detail and "G G" not in health.detail
+
+    fetch = _healthy_prod(health=_healthz_json(degraded=["subway-route-unmapped"]))
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert health.status == cm.WARN
+    assert health.detail.endswith(
+        "/api/status names no route (subway_unmapped_routes is empty or unreadable)"
+    )
+
+
+@pytest.mark.parametrize(
+    "code", [code for code in cm.PRODUCTION_HEALTH_CODES if code not in cm._WARN_HEALTH_CODES]
+)
 def test_every_degraded_code_fails_the_run(code):
     """Each state the probe can report has to reach a nonzero exit. Parametrized
     over the tuple itself so a code added to both sides without a witness cannot
-    slip through: the new code gets a test the moment it is listed."""
+    slip through: the new code gets a test the moment it is listed. The one code
+    that WARNs instead is pinned by name in the test above, so a code cannot leave
+    this list without a test being told."""
     fetch = _healthy_prod(health=_healthz_json(status="fail", degraded=[code]))
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
     health = next(r for r in results if r.name == "production:healthz")

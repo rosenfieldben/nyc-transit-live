@@ -12,6 +12,16 @@ samples over a full service day, the overnight included. This is the collector f
 samples and the reduction that folds them into the capture. It is a DATA PROBE in 6.0's
 shape (the bus probe): it measures, it decides nothing, and it imports no decoder.
 
+THE COLLECTION IS DONE (2026-11-03 to 2026-11-05). A temporary workflow,
+.github/workflows/probe-subway-groups.yml, ran this script on GitHub's runners: it was on
+main from #133's merge (2026-11-03 17:40:59 UTC) until commit f0f7780 deleted it (#136,
+merged as b656636). The capture is backend/tests/fixtures/subway_groups/capture.json, the
+reduction of the 246 samples it took from 2026-11-03T22:34:52Z to the cut at
+2026-11-05T19:37:29Z, fifteen artifacts in all (the scheduled runs after the cut are
+outside it), and README.md beside it is the account. The script stays, with its tests, to
+regenerate that capture (--reduce) and to sample by hand (--out-dir, provenance local).
+"The workflow" below is that deleted one, and what is said of it is history.
+
 THE THREE MODES.
 
   sample (the default)  fetches each of the eight group feeds in SUBWAY_FEED_URLS once, in
@@ -21,22 +31,25 @@ THE THREE MODES.
                         placement), and appends one JSON line per feed to
                         <out-dir>/<sampled_at>.jsonl, the name being the sample's UTC time
                         in basic ISO 8601 (20261103T141007Z), which is also what the
-                        workflow names the artifact by. It prints that path on stdout and
-                        a one-line tally on stderr.
+                        workflow named each scheduled run's artifact by
+                        (subway-groups-<time>). It prints that path on stdout and a
+                        one-line tally on stderr.
   --loop-minutes M      takes a sample every SAMPLE_INTERVAL_S (ten minutes) for M minutes,
                         every row of every sample into ONE file named for the loop's start,
-                        so a dispatched run carries a few hours of samples in one artifact
+                        which is how each of the workflow's dispatched runs carried a few
+                        hours of samples in one artifact (subway-groups-loop-<start>)
                         rather than depending on GitHub's schedule. THE STOP RULE: a sample
                         runs only at a slot (the start plus a whole number of intervals)
                         that is strictly before the start plus M minutes, so a loop never
-                        begins a sample past its budget, and M=340 ends inside the
-                        workflow's step timeout with the upload still to come. A sample
-                        that overruns its interval skips the slots it missed rather than
-                        bursting to catch up, so samples stay on the ten-minute grid. Each
-                        sample is appended (and the file closed) as it completes, so a loop
-                        killed partway keeps every sample it finished.
-  --reduce DIR          folds every *.jsonl under DIR (recursively, since a download of
-                        workflow artifacts puts each in its own directory) into the capture:
+                        begins a sample past its budget; the workflow's dispatched default,
+                        M=340, ended inside its step timeout (350 minutes, the job's 358)
+                        with the upload still to come. A sample that overruns its interval
+                        skips the slots it missed rather than bursting to catch up, so
+                        samples stay on the ten-minute grid. Each sample is appended (and
+                        the file closed) as it completes, so a loop killed partway keeps
+                        every sample it finished.
+  --reduce DIR          folds every *.jsonl under DIR (recursively, since a download of the
+                        workflow's artifacts put each in its own directory) into the capture:
                         per route id, the groups that carried it with sample counts, first
                         and last seen and the UTC hours seen; per group, its route set; the
                         hour-of-day coverage and the weekday windows; the failed and the
@@ -51,10 +64,13 @@ two machines' clocks, so a few seconds of it may be skew), fetched_at, entities 
 by payload kind, plus `empty` for an entity that carries none, plus `total`), route_ids
 (each route id seen in trip updates and in vehicle positions, with its entity count), and
 no_route_id (entities whose trip names no route), and provenance: how the sample was
-taken, `scheduled` (a run GitHub's schedule started), `dispatched` (a loop started by hand
-or by a check-in) or `local` (anywhere else, the default). Every row carries every key; a
-failed row carries nulls where it measured nothing. The reduction counts samples by
-provenance, and a row from before the field existed counts as `unrecorded`.
+taken, `scheduled` (a run the workflow's schedule started), `dispatched` (a loop the
+workflow ran on a dispatch, by hand or by a check-in) or `local` (anywhere else, the
+default). No workflow produces the first two any more; --provenance still accepts all
+three, and all three stay valid values in the data (the capture counts 7 scheduled and 238
+dispatched samples). Every row carries every key; a failed row carries nulls where it
+measured nothing. The reduction counts samples by provenance, and a row from before the
+field existed counts as `unrecorded`.
 
 A FEED THAT FAILS IS A ROW, NEVER AN ABORT. A transport error, a non-200, an empty body,
 bytes that do not parse and a message with no feed header are each recorded as a row with
@@ -66,8 +82,8 @@ and not quiet feeds because FeedMessage.ParseFromString(b"") succeeds with no en
 a 200 with nothing in it would otherwise read as a group carrying no routes at that hour,
 which is exactly the wrong kind of evidence for a coverage table. A message with a real
 header and zero entities is a quiet feed and is ok (parse_feed's rule 4). The sample exits
-0 whenever its file is written, whatever failed: a failure is data, and the run's artifact
-is how it is kept.
+0 whenever its file is written, whatever failed: a failure is data, and the file is how it
+is kept (under the workflow, the file was the run's artifact).
 
 LIVE, STALE AND UNDATED, which the reduction decides and the row does not. An ok row is
 LIVE when its header is dated and at most STALE_AFTER_S old at fetch, the repo's own
@@ -87,18 +103,21 @@ any live row saw it in, and every route with more than one, in the archive or no
 listed apart with its groups. The table Step 2 writes is the reader's decision; the
 capture's job is to make it visible.
 
-THE WEEKDAY WINDOWS. The collection is judged by coverage, not by duration (GitHub's
-schedule drifts by hours: see the workflow), and the bar is every hour of the day sampled
-across one weekday service day and its overnight. A window here is the 24 hours from
-05:00 New York time on a weekday to 05:00 the next morning, so a weekday's daytime and the
-night that follows it are one window rather than a night split across two. The 05:00 edge
-is this script's convention, not an MTA service-day boundary; it decides only which
-window an overnight sample is credited to. A Monday to Friday date is a weekday service day
-when the archive's calendar runs a weekday service on it (a calendar.txt service running
-Monday to Friday and no weekend day, not removed that date by calendar_dates.txt), so a
-holiday on Sunday service (Thanksgiving, 2026-11-26) is listed but never counts as covered.
-Given routes.txt alone there is no calendar, the capture says so, and every Monday to
-Friday counts.
+THE WEEKDAY WINDOWS. A collection is judged by coverage, not by duration, and the bar is
+every hour of the day sampled across one weekday service day and its overnight. The
+workflow's collection was judged so because GitHub's schedule drifted by hours and dropped
+runs: its first scheduled run came 4h53m38s after #133 merged, and only 8 scheduled runs
+were created in the 299 ten-minute slots to the cut (subway_groups/README.md). Wednesday
+2026-11-04 met the bar, the only weekday window in the capture to do so. A window here is
+the 24 hours from 05:00 New York time on a weekday to 05:00 the next morning, so a weekday's
+daytime and the night that follows it are one window rather than a night split across two.
+The 05:00 edge is this script's convention, not an MTA service-day boundary; it decides only
+which window an overnight sample is credited to. A Monday to Friday date is a weekday
+service day when the archive's calendar runs a weekday service on it (a calendar.txt service
+running Monday to Friday and no weekend day, not removed that date by calendar_dates.txt),
+so a holiday on Sunday service (Thanksgiving, 2026-11-26) is listed but never counts as
+covered. Given routes.txt alone there is no calendar, the capture says so, and every Monday
+to Friday counts.
 
 DETERMINISM. The reduction reads its inputs and nothing else (no wall clock), sorts every
 list, and writes JSON with sorted keys, so the same samples give the same bytes however
@@ -116,14 +135,26 @@ feeds must not quietly sample a simulator. Reduce mode makes no request at all.
 NJ TRANSIT. The URL table lives in the feeds package, and importing it imports the whole
 package, NJ Transit's modules included (njt_auth reads its mint allowance from the
 environment at import, so a malformed NJT_DAILY_MINT_ALLOWANCE stops this script from
-starting). Nothing here CALLS an NJ Transit path, and the workflow that runs it maps no
-secret and declares no environment, so the credentials cannot exist there and nothing here
-can spend an NJ Transit mint.
+starting). Importing env_seams and the feeds package also runs load_dotenv on the project
+root's .env, so a hand run on a machine whose .env holds real NJ Transit credentials has
+them in its environment. That spends nothing, because nothing here CALLS an NJ Transit
+path: sample mode GETs the eight SUBWAY_FEED_URLS (the MTA's keyless feeds) and nothing
+else, nothing in njt_auth or feeds.njt is called beyond their import, so no token is
+requested, and reduce mode makes no request at all. So nothing here can spend an NJ Transit
+mint, wherever it runs. That is read from the code, not pinned by a test: the suite scrubs
+the credentials, so a call into njt_auth gated on them would pass every test, and
+test_importing_the_script_opens_no_socket watches only this file's own top-level code (the
+test module has imported the feeds package, env_seams with it, before the watch starts).
+What the tests pin is the URLs a sample asks its fetch for, through take_sample
+(test_a_sample_fetches_each_group_url_once_in_order_and_nothing_else) and through main's
+client (test_the_cli_sample_prints_the_path_and_exits_zero_with_failures). The workflow
+had a second guard, gone with it: it mapped no secret and declared no environment, so the
+credentials could not exist there.
 
 RUN, from backend/:
     python scripts/probe_subway_groups.py --out-dir SAMPLES
     python scripts/probe_subway_groups.py --reduce SAMPLES --routes gtfs_subway.zip \\
-        --output tests/fixtures/<capture>.json
+        --output tests/fixtures/subway_groups/capture.json
 """
 
 from __future__ import annotations
@@ -160,7 +191,7 @@ FORMAT = 1  # the reduced capture's shape; bump it when a key changes meaning
 FETCH_TIMEOUT_S = 30.0  # the app's own httpx timeout for these feeds (pollers.py)
 STALE_AFTER_S = 600.0  # cache.OPERATOR_STALE_AFTER_S (see LIVE, STALE AND UNDATED)
 SAMPLE_SUFFIX = ".jsonl"
-SAMPLE_INTERVAL_S = 600  # a loop's spacing: the schedule's own ten minutes
+SAMPLE_INTERVAL_S = 600  # a loop's spacing: ten minutes, the deleted workflow's cron (*/10)
 PROVENANCES = ("scheduled", "dispatched", "local")
 NEW_YORK = ZoneInfo("America/New_York")
 WINDOW_START_HOUR = 5  # the weekday window's edge, New York time (see THE WEEKDAY WINDOWS)
@@ -203,8 +234,8 @@ def _parse_iso(stamp: str) -> datetime:
 
 
 def sample_filename(sampled_at: float) -> str:
-    """The sample's file name: its UTC time in basic ISO 8601, which an artifact name can
-    carry (no colon), plus .jsonl."""
+    """The sample's file name: its UTC time in basic ISO 8601, plus .jsonl. It carries no
+    colon, which an artifact name cannot, so the workflow could name its artifacts by it."""
     return _utc(sampled_at).strftime(_FILE_STAMP) + SAMPLE_SUFFIX
 
 

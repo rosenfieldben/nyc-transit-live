@@ -1,0 +1,87 @@
+{
+  "path": {
+    "board": {
+      "fetched_at": null,
+      "stop_id": "26734",
+      "stop_name": "World Trade Center",
+      "directions": {},
+      "feed_timestamp": null,
+      "served_at": 1782993600.0,
+      "systems": {
+        "PATH": {
+          "fetched_at": null,
+          "feed_timestamp": null,
+          "ok": false,
+          "retained_since": null,
+          "routes": null,
+          "positions": null
+        }
+      }
+    },
+    "detail": "Upstream PATH bridge feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>"
+  },
+  "ferry": {
+    "board": {
+      "fetched_at": null,
+      "stop_id": "18",
+      "stop_name": "Wall St/Pier 11",
+      "routes": {},
+      "feed_timestamp": null,
+      "served_at": 1782993600.0,
+      "systems": {
+        "ferry": {
+          "fetched_at": null,
+          "feed_timestamp": null,
+          "ok": false,
+          "retained_since": null,
+          "routes": null,
+          "positions": null
+        }
+      }
+    },
+    "detail": "Upstream NYC Ferry feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>"
+  },
+  "njt": {
+    "board": {
+      "fetched_at": null,
+      "stop_id": "109",
+      "stop_name": "New York Penn Station",
+      "arrivals": [],
+      "feed_timestamp": null,
+      "served_at": 1782993600.0,
+      "systems": {
+        "njt": {
+          "fetched_at": null,
+          "feed_timestamp": null,
+          "ok": false,
+          "retained_since": null,
+          "routes": null,
+          "positions": null
+        }
+      }
+    },
+    "detail": "Upstream NJ Transit feed error: NJ Transit returned HTTP 503: Q10-RESPONSE-BODY-MARKER"
+  },
+  "lirr": {
+    "board": {
+      "fetched_at": null,
+      "system": "LIRR",
+      "stop_id": "12",
+      "stop_name": "Jamaica",
+      "directions": {},
+      "feed_timestamp": null,
+      "served_at": 1782993600.0,
+      "systems": {
+        "LIRR": {
+          "fetched_at": null,
+          "feed_timestamp": null,
+          "ok": false,
+          "retained_since": null,
+          "routes": null,
+          "positions": null
+        }
+      }
+    },
+    "detail": "All railroad feeds failed: LIRR: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> MNR: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>"
+  }
+}

@@ -38,7 +38,9 @@ from cache import (
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
+    FERRY_SYSTEM,
     NJT_ALERTS_SERVED_EMPTY_DETAIL,
+    PATH_SYSTEM,
     RAILROAD_FEED_URLS,
     RAILROAD_FRESHNESS_SYSTEMS,
     SUBWAY_FEED_URLS,
@@ -177,7 +179,16 @@ async def _bounded_refresh(entry: dict, coro, mark_degraded=None) -> None:
 # unclassified failure has to mark. Buses are absent on purpose: that source
 # publishes no per-feed health dict, so there is nothing to mark beyond its error.
 _FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
-_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry", "njt": "njt"}
+_SINGLE_FEED_HEALTH = {"path": PATH_SYSTEM, "ferry": FERRY_SYSTEM, "njt": njt_feed.SYSTEM}
+# The systems each board family's poll tries, for the never-decoded block a failed first
+# poll writes (Amendment 1, Q10; _mark_all_systems_failed). The subway is not here: Q10
+# named the single-system boards and a railroad board with both railroads failing.
+_BOARD_SYSTEMS = {
+    "railroads": tuple(RAILROAD_FEED_URLS),
+    "path": (PATH_SYSTEM,),
+    "ferry": (FERRY_SYSTEM,),
+    "njt": (njt_feed.SYSTEM,),
+}
 
 
 def _feed_degrader(app: FastAPI, name: str, entry: dict):
@@ -203,8 +214,9 @@ def _feed_degrader(app: FastAPI, name: str, entry: dict):
             label = _SINGLE_FEED_HEALTH[name]
             setattr(app.state, f"{name}_feed_health", {"total": 1, "ok": 0, "failed": [label]})
         # The per-system freshness block, where this envelope has one. Same helper the
-        # total-failure paths use, so a rider sees the same dimming either way.
-        _mark_all_systems_failed(entry)
+        # total-failure paths use, so a rider sees the same dimming either way, and the
+        # same never-decoded block for a board family whose first poll this was (Q10).
+        _mark_all_systems_failed(entry, _BOARD_SYSTEMS.get(name, ()))
         # And the kept rows whose time has passed (Q9), which a refresher's own failure
         # arms prune and a deadline or an unclassified failure never reaches.
         _drop_departed_kept_rows(app, name)
@@ -355,7 +367,7 @@ def _merge_feed_systems(
     return merged, retained_since
 
 
-def _mark_all_systems_failed(entry: dict) -> None:
+def _mark_all_systems_failed(entry: dict, systems: Iterable[str] = ()) -> None:
     """Flip every per-system `ok` to False after a TOTAL poll failure.
 
     The total-failure paths return early, keeping the whole last-known envelope
@@ -371,11 +383,24 @@ def _mark_all_systems_failed(entry: dict) -> None:
     restarting that clock here would be the same defect the write-ordering comments
     in the refreshers guard against.
 
-    A no-op before the first successful poll: with no block there is nothing to
-    correct, and the warming cache serves 503 rather than an envelope.
+    `systems` NAMES THE SYSTEMS A FAILED POLL TRIED, and each one with no block yet gets
+    the block of a system that has NEVER DECODED (Amendment 1, Q10): fetched_at null,
+    feed_timestamp null, ok false, written by _system_freshness like every other block.
+    That block is what lets a single-system board, and a railroad board with both
+    railroads failing, answer a failed first poll with a 200 board saying so rather than
+    the recorded 502 (cache._require_filled_cache). A caller whose poll never ran (a
+    static group still loading, NJ Transit not configured) passes none, and neither does
+    the subway, which Q10 did not name: with no block there is nothing to correct, and
+    the warming cache serves 503 (or the recorded error) rather than an envelope.
     """
     for block in (entry.get("systems") or {}).values():
         block["ok"] = False
+    missing = [system for system in systems if system not in (entry.get("systems") or {})]
+    if missing:
+        entry["systems"] = {
+            **(entry.get("systems") or {}),
+            **_system_freshness(None, missing, missing, {}, time.time()),
+        }
 
 
 # THE ARRIVALS INDEX EACH FAMILY KEEPS WHOLE ON A TOTAL FAILURE, which Amendment 1's Q9
@@ -668,7 +693,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        _mark_all_systems_failed(entry, RAILROAD_FEED_URLS)
         _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
@@ -678,7 +703,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        _mark_all_systems_failed(entry, RAILROAD_FEED_URLS)
         _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
@@ -823,13 +848,15 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
     try:
         trains, arrivals, feed_timestamp, unresolved = await main.fetch_path_trains(client, stops)
     except httpx.HTTPError as exc:
-        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": [PATH_SYSTEM]}
+        _mark_all_systems_failed(entry, (PATH_SYSTEM,))
         _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, f"Upstream PATH bridge feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (bridge error page, proxy HTML).
-        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": [PATH_SYSTEM]}
+        _mark_all_systems_failed(entry, (PATH_SYSTEM,))
         _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, "Upstream PATH bridge feed returned undecodable data")
         return
@@ -865,7 +892,24 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
         trains,
         getattr(app.state, "path_station_order", None) or {},
     )
-    entry.update(data=served, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    now = time.time()
+    entry.update(
+        data=served,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE BOARD'S PER-SYSTEM BLOCK (Amendment 1, Q10), single-entry as NJ Transit's is,
+        # so a PATH station board can say `ok` in a field: nothing at a board's top level
+        # does. The vehicle envelope does not serve it (cache._serve_cached opts the
+        # aggregates in, and PATH's top-level fetched_at already says what a block would).
+        # Its content clock is None BY POLICY: feed_timestamp here is the bridge's WRITE
+        # time, which advances on every regeneration whether or not anything upstream
+        # moved, so it dates nothing a rider is shown; the board dates its rows by their
+        # own trip clocks (cache._oldest_row_observed_at).
+        systems=_system_freshness(
+            entry.get("systems"), [PATH_SYSTEM], [], {}, now, None, {PATH_SYSTEM: None}
+        ),
+    )
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache, less
     # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
@@ -908,13 +952,15 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
             client, getattr(app.state, "ferry_static", {})
         )
     except httpx.HTTPError as exc:
-        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": [FERRY_SYSTEM]}
+        _mark_all_systems_failed(entry, (FERRY_SYSTEM,))
         _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, f"Upstream NYC Ferry feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
-        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": [FERRY_SYSTEM]}
+        _mark_all_systems_failed(entry, (FERRY_SYSTEM,))
         _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, "Upstream NYC Ferry feed returned undecodable data")
         return
@@ -922,7 +968,20 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
     # feed_timestamp is the VehiclePositions header time (the boats' feed); a
     # failed poll keeps the last-known timestamp, same as the other caches. An
     # empty boats list REPLACES the cache here on purpose (see the docstring).
-    entry.update(data=boats, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    now = time.time()
+    entry.update(
+        data=boats,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE BOARD'S PER-SYSTEM BLOCK (Amendment 1, Q10), as PATH's above. Its content
+        # clock is None BY POLICY: feed_timestamp here is the VehiclePositions header, which
+        # dates the BOATS and not the dock predictions a board shows, and the board dates
+        # those by the TripUpdates header each row carries (cache._oldest_row_observed_at).
+        systems=_system_freshness(
+            entry.get("systems"), [FERRY_SYSTEM], [], {}, now, None, {FERRY_SYSTEM: None}
+        ),
+    )
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache, less
     # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
@@ -958,7 +1017,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     """
     entry = app.state.feed_cache["njt"]
 
-    def fail(status: int, detail: str, *, log: bool = True) -> None:
+    def fail(status: int, detail: str, *, log: bool = True, polled: bool = True) -> None:
         """Record one failed NJT poll on all three surfaces it has to reach.
 
         THE THIRD SURFACE IS THE ONE THAT WAS MISSED, and the contract tier is what
@@ -977,8 +1036,11 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         already true, and the frozen fetched_at beside the envelope's advancing one
         IS the staleness signal the client measures.
         """
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _mark_all_systems_failed(entry)
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": [njt_feed.SYSTEM]}
+        # A poll that ran and failed writes NJ Transit's never-decoded block if it has none
+        # (Amendment 1, Q10); one that never ran (static loading, not configured) does not,
+        # so its board keeps answering 503 with the app's own reason.
+        _mark_all_systems_failed(entry, (njt_feed.SYSTEM,) if polled else ())
         _drop_departed_kept_rows(app, "njt")
         _note_failure(entry, status, detail, log=log)
 
@@ -995,6 +1057,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
                 "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
                 "no realtime poll is attempted.",
                 log=False,
+                polled=False,
             )
         else:
             fail(
@@ -1002,6 +1065,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
                 "Static NJ Transit GTFS is still loading; it will retry automatically. "
                 "Try again shortly.",
                 log=False,
+                polled=False,
             )
         return
     try:
@@ -1013,7 +1077,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # Unreachable behind the status guard above, and handled anyway so the
         # distinct state cannot degrade into a generic 500 two frames from where
         # the distinction was made.
-        fail(503, str(exc), log=False)
+        fail(503, str(exc), log=False, polled=False)
         return
     except njt_auth.NjtAuthError as exc:
         # A rejected token AFTER the one permitted re-mint, or a failed mint. Not

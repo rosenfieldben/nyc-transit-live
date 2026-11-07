@@ -13,7 +13,9 @@ from cache import (
     _require_filled_cache,
     _serve_cached,
     _static_endpoint_ready,
+    _system_freshness_block,
 )
+from feeds import FERRY_SYSTEM
 from models import FerryFeed, FerryRoute, FerryStationArrivals, FerryStop
 
 router = APIRouter()
@@ -119,6 +121,8 @@ async def get_ferry_arrivals(request: Request, stop_id: str) -> dict:
         "stop_name": stops[stop_id]["name"],
         "routes": rows,
         "served_at": time.time(),
-        # No systems block exists for the ferry: it is one all-or-nothing feed pair.
-        "systems": None,
+        # THE FERRY'S ONE BLOCK (Amendment 1, Q10), as PATH's: the ferry is one
+        # all-or-nothing feed pair, and its board now says `ok` in a field, with
+        # fetched_at null when the pair has never decoded in this process.
+        "systems": _system_freshness_block(entry, FERRY_SYSTEM),
     }

@@ -501,9 +501,9 @@ class PathStationArrivals(BaseModel):
     # bug.
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, taken from the ROWS rather than
-    # from this envelope's siblings: PATH is one feed with no per-system block, and
-    # the cache entry's own clock is the bridge's WRITE time, which advances every
-    # regeneration whether or not anything upstream moved (see
+    # from this envelope's siblings: PATH is one feed, its one block carries no content
+    # clock, and the cache entry's own clock is the bridge's WRITE time, which advances
+    # every regeneration whether or not anything upstream moved (see
     # _oldest_row_observed_at).
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
@@ -514,6 +514,10 @@ class PathStationArrivals(BaseModel):
     # response never carries None for it, on every one of the five.
     feed_timestamp: float | None = None
     served_at: float | None = None
+    # THE systems MAP NAMES PATH'S ONE SYSTEM ON EVERY ANSWER since Amendment 1's Q10,
+    # where it was always null: `ok` is then a field of the board, fetched_at null and ok
+    # false meaning the feed has never decoded in this process, the 200 a failed first
+    # poll now answers in place of a 502 carrying the upstream's error text.
     systems: dict[str, SystemFreshness] | None = None
 
 
@@ -822,9 +826,9 @@ class FerryStationArrivals(BaseModel):
     # bug.
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, taken from the ROWS: the ferry is
-    # one all-or-nothing feed pair with no per-system block, and this envelope's own
-    # clock is the VehiclePositions header, which dates the BOATS rather than the dock
-    # predictions these rows came from (see _oldest_row_observed_at).
+    # one all-or-nothing feed pair whose one block carries no content clock, and this
+    # envelope's own clock is the VehiclePositions header, which dates the BOATS rather
+    # than the dock predictions these rows came from (see _oldest_row_observed_at).
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
     # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
@@ -834,6 +838,10 @@ class FerryStationArrivals(BaseModel):
     # response never carries None for it, on every one of the five.
     feed_timestamp: float | None = None
     served_at: float | None = None
+    # THE systems MAP NAMES THE FERRY'S ONE SYSTEM ON EVERY ANSWER since Amendment 1's Q10,
+    # where it was always null: `ok` is then a field of the board, fetched_at null and ok
+    # false meaning the pair has never decoded in this process, the 200 a failed first
+    # poll now answers in place of a 502 carrying the upstream's error text.
     systems: dict[str, SystemFreshness] | None = None
 
 

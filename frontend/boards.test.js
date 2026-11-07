@@ -303,15 +303,19 @@ function boards(S) {
 }
 
 // Render one board on both surfaces, in a fresh context: the popup's markup, the
-// panel's detail area, and what the panel's live region said on selection.
-function render(name) {
+// panel's detail area, and what the panel's live region said on selection. `body`
+// replaces the fixture's board where given, and `error` stands in the panel's
+// failed-fetch path (what a non-200's `detail` became), with no body and no popup.
+function render(name, { body, error = null } = {}) {
   const h = loadFrontend();
   const board = boards(h.sandbox)[name];
-  const popup = board.popup(board.body);
+  const served = error === null ? (body ?? board.body) : null;
+  const popup = served === null ? "" : board.popup(served);
   h.sandbox.__entry = board.entry;
-  h.sandbox.__body = board.body;
+  h.sandbox.__body = served;
+  h.sandbox.__error = error;
   h.run(
-    "panelStation = __entry; panelBody = __body; panelError = null;" +
+    "panelStation = __entry; panelBody = __body; panelError = __error;" +
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
   return {
@@ -848,4 +852,53 @@ test("6.2 UNDATED_SYSTEMS is exactly the railroad systems the backend never date
   const dated = [...admitted[1].matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
   assert.deepEqual(systems, ["LIRR", "MNR"]);
   assert.deepEqual([...H.UNDATED_SYSTEMS].sort(), systems.filter((x) => !dated.includes(x)));
+});
+
+/* Q10 OF THE FRESHNESS CONTRACT'S AMENDMENT 1, AND H6's RIDER HALF, RENDERED. A single-system
+   board, and a railroad board with both railroads failing, used to answer a failed FIRST poll with
+   HTTP 502 and `{"detail": ...}`: the upstream exception's own text with only its URLs scrubbed,
+   which the panel printed and spoke (and the popup printed), so a reason phrase or a response body
+   the UPSTREAM chose reached a rider. The bodies here are what the backend serves now, from
+   backend/tests/test_q10_first_poll_boards.py, which drives each family's real first poll against
+   a stub carrying one marker in its reason phrase and one in its body and holds the served boards
+   and the operator's copy of each failure to tests/e2e/fixtures/q10_first_poll_boards.json.
+
+   THE CONTROL FIRST: the operator's detail, through the panel's failed-fetch path, IS read out, so
+   this harness sees a marker when one reaches a rider. Then the board: every surface reads the
+   empty board as it reads today (Step 3 gives the never-decoded block its words), and neither
+   marker is anywhere in it. */
+test("Q10 a failed first poll reaches the rider as a board, never as the upstream's own text", () => {
+  const served = JSON.parse(
+    readFileSync(join(__dirname, "..", "tests", "e2e", "fixtures", "q10_first_poll_boards.json"), "utf8"),
+  );
+  const markers = ["Q10-REASON-PHRASE-MARKER", "Q10-RESPONSE-BODY-MARKER"];
+  const expected = {
+    path: ["World Trade Center (PATH)", "No trains"],
+    ferry: ["Wall St/Pier 11 (Ferry)", "No boats"],
+    njt: ["New York Penn Station (NJ Transit)", "No trains"],
+    lirr: ["Jamaica (LIRR)", "No trains"],
+  };
+  assert.deepEqual(Object.keys(served).sort(), ["ferry", "lirr", "njt", "path"]);
+  for (const [family, [heading, words]] of Object.entries(expected)) {
+    const { board, detail } = served[family];
+    const station = heading.replace(/ \(.*\)$/, "");
+    const label = heading.match(/\((.*)\)$/)[1];
+
+    const before = render(family, { error: detail });
+    assert.deepEqual(before.panel.at(-1), `p.station-detail-note ${detail}`, family);
+    assert.equal(before.spoken, `${station}, ${label}. ${detail}`, family);
+    assert.ok(markers.some((m) => before.spoken.includes(m)), `${family}: the control sees a marker`);
+
+    const after = render(family, { body: board });
+    assert.equal(after.spoken, `${station}, ${label}. ${words}.`, family);
+    assert.equal(after.panel[0], `h3 ${heading}`, family);
+    assert.equal(after.panel.at(-1), `p ${words}.`, family);
+    assert.ok(
+      after.popup.endsWith(`<div class="pt"><span>${station}</span></div>\n<div class="arr-none">${words}</div>\n`),
+      after.popup,
+    );
+    for (const surface of [after.popup, after.panel.join("\n"), after.spoken]) {
+      for (const marker of markers) assert.ok(!surface.includes(marker), `${family}: ${marker}`);
+    }
+  }
 });

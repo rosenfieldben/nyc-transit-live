@@ -308,7 +308,10 @@ def _serve_cached(
         # PATH and ferry are each a single upstream, so their top-level fetched_at
         # already means what a per-system block would say, and adding an empty or
         # one-entry block to their envelopes would be noise the client has to
-        # special-case. See THE PER-SYSTEM RULE above.
+        # special-case. See THE PER-SYSTEM RULE above. Their station BOARDS are
+        # another matter (Amendment 1, Q10): nothing at a board's top level says
+        # `ok`, so PATH's and the ferry's pollers write the block and their boards
+        # serve it, while these vehicle envelopes still leave it out.
         if with_systems:
             body["systems"] = entry.get("systems")
         return body
@@ -322,11 +325,24 @@ def _serve_cached(
 def _require_filled_cache(entry: dict) -> None:
     """Warming gate shared by the arrivals endpoints: until the feed's cache
     has filled once there is no per-station index worth serving, so surface
-    the recorded upstream error when there is one, else the generic warming
-    503. Same contract _serve_cached keeps for the feed endpoints; the three
-    arrivals endpoints each carried an identical inline copy until the
-    13d-era cleanup."""
-    if entry["data"] is None:
+    the recorded error when there is one, else the generic warming 503. Same
+    contract _serve_cached keeps for the feed endpoints; the three arrivals
+    endpoints each carried an identical inline copy until the 13d-era cleanup.
+
+    EXCEPT A FAMILY WHOSE POLL RAN AND FAILED BEFORE IT EVER DECODED (Amendment 1,
+    Q10). Its poller has written each system it tried a never-decoded block
+    (pollers._mark_all_systems_failed: fetched_at null, ok false), and the board
+    answers 200 with that block and no rows, where it used to raise the recorded
+    error: a 502 whose detail was the upstream's own text with only its URLs
+    scrubbed, which the popup and the panel printed and the panel spoke (H6 on the
+    2026-10-12 record's live list). The detail stays on /api/status, the operator's
+    surface. Which boards that reaches is the pollers' choice of who writes the
+    block: PATH, the ferry and NJ Transit, and a railroad board with both railroads
+    failing. A poll that never ran writes none, so the 503 before any poll stays,
+    and so does the recorded 503 of a static group still loading or of NJ Transit
+    not configured; the subway writes none either. The vehicle envelopes do not
+    change: _serve_cached keeps raising the recorded error until data arrives."""
+    if entry["data"] is None and not entry.get("systems"):
         if entry["error"]:
             raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
         raise HTTPException(
@@ -362,9 +378,10 @@ def _static_endpoint_ready(status: str, response: Response, warming_detail: str)
 def _oldest_row_observed_at(rows) -> float | None:
     """The oldest observation time among the arrival rows actually served.
 
-    THE THIRD SELECTOR, for the two endpoints whose envelope has no per-system block
-    to read: PATH and the ferry are single-feed sources and no poller ever writes
-    them a `systems` map. Reading the cache entry's own feed_timestamp instead would
+    THE THIRD SELECTOR, for the two endpoints whose per-system block carries no content
+    clock to read: PATH and the ferry are single-feed sources, and the one block each
+    board serves since Amendment 1's Q10 holds None there by policy, for the reasons
+    below. Reading the cache entry's own feed_timestamp instead would
     be wrong on both, and differently wrong on each: PATH's is the bridge's WRITE
     time, which advances on every regeneration whether or not anything upstream
     moved, and the ferry's is the VehiclePositions header, which dates the BOATS and

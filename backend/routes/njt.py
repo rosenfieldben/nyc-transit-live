@@ -37,11 +37,14 @@ router = APIRouter()
 # route layer entirely.
 _NJT_SYSTEM = "njt"
 
-# NJT stop ids are small integers (1..176 as of the 2026-08-05 probe); allow up to
-# six digits for headroom. Like the other station-id regexes this is only a cheap
+# NJT stop ids are integers: 1..176 at the 2026-08-05 probe, and up to 43599 in the
+# 2026-11-06 publication, after NJ Transit renumbered its stops (13 rail stations now
+# carry five-digit ids); six digits still leave headroom.
+# They are not stable across publications, so nothing may hold one from an earlier
+# archive. Like the other station-id regexes this is only a cheap
 # malformed-input pre-filter: membership in app.state.njt_stops is the real gate.
-# NJT ids live in their own namespace (84.9% of them collide with an id in one of
-# our other feeds), so this never mixes with those regexes.
+# NJT ids live in their own namespace (84.9% of the 2026-08-05 ids collided with an
+# id in one of our other feeds), so this never mixes with those regexes.
 _NJT_STOP_ID_RE = re.compile(r"^[0-9]{1,6}$")
 
 
@@ -50,7 +53,11 @@ async def get_njt_stops(request: Request, response: Response) -> list[dict]:
     """NJ Transit rail station markers ({id, name, lat, lon, routes}) from the
     static GTFS. Flat, like the ferry docks and unlike PATH's platforms: this feed
     declares location_type and parent_station and leaves both empty on every row,
-    so every parsed stop is a marker.
+    so every parsed stop that a scheduled trip calls at is a marker. A stop no trip
+    calls at is not served (njt_static.served_stops: 65 light-rail rows in the
+    2026-11-06 publication), so every marker here carries at least one route, except
+    when the filter would leave nothing, when the whole parse is served (see
+    njt_static.served_stops).
 
     NO wheelchair FIELD, unlike /api/ferry-stops. The ferry feed publishes
     wheelchair_boarding and NJ Transit's publishes no accessibility data at all, so
@@ -72,9 +79,11 @@ async def get_njt_stops(request: Request, response: Response) -> list[dict]:
     stops = getattr(app.state, "njt_stops", None) or {}
     station_routes = getattr(app.state, "njt_station_routes", None) or {}
     # Merge the routes-per-station index (H5) onto each stop dict without mutating
-    # the cached app.state stops. Port Jervis stations come back carrying MAIN and
-    # BERG, which is what the feed says: Port Jervis has no route id of its own and
-    # its identity lives only in trip_headsign (see njt_static.derive_njt_stop_routes).
+    # the cached app.state stops. Each station carries the route ids its trips run
+    # under, which is what the feed says: Port Jervis's came back as MAIN and BERG
+    # while it had no route id of its own (2026-08-05 probe), and from the 2026-11-06
+    # publication it has one, route 6 "Port Jervis Line" (see
+    # njt_static.derive_njt_stop_routes, whose docstring the fixture refresh revisits).
     return [{**stop, "routes": station_routes.get(sid, [])} for sid, stop in stops.items()]
 
 
@@ -149,7 +158,10 @@ async def get_njt_arrivals(request: Request, stop_id: str) -> dict:
 
     FLAT AND CHRONOLOGICAL, unlike the bucketed subway/railroad/ferry arrivals:
     every row carries its own route and headsign, and a departure board reads by
-    time. Penn Station New York is stop 109.
+    time. A stop id names a station only within one publication: Penn Station New
+    York was stop 109 until NJ Transit renumbered its stops (between contract
+    monitor runs #425 and #426, 2026-11-02/03) and is stop 105 in the 2026-11-06
+    publication, where 109 is North Elizabeth. Its stop_code, NY, held.
 
     THE PHANTOM CANNOT BE HERE. A trip-level CANCELED trip keeps full arrival and
     departure times on every stop it marks SKIPPED (8% of peak Penn
@@ -159,7 +171,7 @@ async def get_njt_arrivals(request: Request, stop_id: str) -> dict:
 
     503 while the NJT cache has never filled (consistent with the other arrivals
     endpoints); 404 for a malformed or unknown stop id (regex plus membership in
-    the static NJT stops).
+    the served NJT stops, so a parsed stop no trip calls at is unknown here too).
     """
     app = request.app
     entry = app.state.feed_cache["njt"]

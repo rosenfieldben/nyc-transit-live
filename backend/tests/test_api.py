@@ -6,11 +6,13 @@ manually per test and no real MTA endpoint is ever contacted.
 
 import asyncio
 import copy
+import io
 import itertools
 import json
 import logging
 import time
 import types
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -5527,6 +5529,200 @@ async def test_njt_static_warmup_empty_result_is_failed_then_recovers(monkeypatc
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+# ---------------- NJ Transit stops no trip calls at (2026-11-06) ----------------
+#
+# THE RENUMBERED PUBLICATION BEHIND #426 parses to 229 stops, and 65 of them are
+# light-rail rows (routes 4, 12 and 16, which run zero trips in this rail feed) that
+# no trip calls at. The warmup serves only called-at stops as stations
+# (njt_static.served_stops) and leaves the parse whole.
+
+# VERBATIM FROM THE 2026-11-06 stops.txt, header and CRLF included: the two Penn
+# stations the trip below calls at, and the two Newark light-rail platforms that no
+# trip calls at, sharing one coordinate about 104 m from Newark Penn.
+_RENUMBERED_STOPS = (
+    "\r\n".join(
+        [
+            "stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,"
+            "location_type,parent_station,stop_timezone,wheelchair_boarding",
+            '105,NY,"NEW YORK PENN STATION","NYP",40.750046,-73.992358,329,,,,,',
+            '107,NP,"NEWARK PENN STATION","NWK",40.734221,-74.164554,336,,,,,',
+            '26326,30771,"PENN STATION LIGHT RAIL DEPARTURE","30771",40.73481,-74.163603,336,,,,,',
+            '42545,31061,"PENN STATION LIGHT RAIL ARRIVAL","31061",40.73481,-74.163603,0,,,,,',
+        ]
+    )
+    + "\r\n"
+)
+
+
+def _renumbered_publication(now: float) -> bytes:
+    """A whole NJ Transit archive around _RENUMBERED_STOPS: one Northeast Corridor
+    trip (route 9, its id since the renumbering) from Newark Penn to New York Penn, and
+    route 12, Newark Light Rail, published with no trips, as the real one is.
+
+    THE SERVICE DATES ARE RELATIVE TO `now` because the warmup's loader reads the wall
+    clock, and its service-date guard refuses a publication whose schedule has expired.
+    The shape draws (two points, referenced by the trip), so the cached check records
+    nothing degraded and the archive is the ordinary healthy case in every way but the
+    one under test."""
+    dates = [time.strftime("%Y%m%d", time.localtime(now + days * 86400)) for days in (0, 1, 30)]
+    members = {
+        "agency.txt": (
+            "agency_id,agency_name,agency_url,agency_timezone\r\n"
+            "NJT,NJ TRANSIT,https://www.njtransit.com,America/New_York\r\n"
+        ),
+        "routes.txt": (
+            "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\r\n"
+            "9,NEC,Northeast Corridor,113,DD3439,\r\n"
+            "12,NLR,Newark Light Rail,113,009AD1,\r\n"
+        ),
+        "stops.txt": _RENUMBERED_STOPS,
+        "trips.txt": (
+            "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\r\n"
+            "9,SVC1,T1,NEW YORK PENN STATION,0,3800,s9\r\n"
+        ),
+        "stop_times.txt": (
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\r\n"
+            "T1,07:00:00,07:00:00,107,1\r\n"
+            "T1,07:20:00,07:20:00,105,2\r\n"
+        ),
+        "calendar_dates.txt": (
+            "service_id,date,exception_type\r\n" + "".join(f"SVC1,{d},1\r\n" for d in dates)
+        ),
+        "shapes.txt": (
+            "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\r\n"
+            "s9,1,40.734221,-74.164554\r\n"
+            "s9,2,40.750046,-73.992358\r\n"
+        ),
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in members.items():
+            zf.writestr(name, body)
+    return buf.getvalue()
+
+
+async def test_njt_light_rail_rows_no_trip_calls_at_stay_in_the_parse_and_are_not_stations(
+    client, cache, monkeypatch, tmp_path
+):
+    """THE RULE, END TO END. A stop no scheduled trip calls at is absent from
+    /api/njt-stops and is "Unknown NJ Transit stop" on /api/njt-arrivals, while the two
+    Penn stations the trip calls at are served with their route. AND THE PARSE IS WHOLE:
+    app.state.njt_static still carries both light-rail rows, because the contract
+    monitor shares that parser and has to see the publication as published.
+
+    Through the REAL loader from a cached archive that is fresh and valid, so nothing is
+    downloaded and no request is allowed. That is what makes the whole-parse assertion
+    about njt_static's own parse rather than about a dict a fake loader handed over: a
+    filter moved into the parser turns it red, where a faked load could not see one."""
+    configure_njt(monkeypatch)
+    monkeypatch.setattr(njt_auth, "TOKEN_CACHE", njt_auth.TokenCache())
+    # RECORDED AS WELL AS RAISED: load_njt_static's download arm catches any exception
+    # and falls back to the cached copy, so a raise alone would be swallowed and a
+    # request this test forbids would pass unseen. The list is what is asserted.
+    sent: list[str] = []
+
+    async def no_network(url, form, timeout_s):
+        sent.append(url)
+        raise AssertionError(f"no NJ Transit request is allowed here, but {url!r} was sent")
+
+    monkeypatch.setattr(njt_auth, "_httpx_post", no_network)
+    zip_path = tmp_path / "gtfs_njt.zip"
+    zip_path.write_bytes(_renumbered_publication(time.time()))
+    monkeypatch.setattr(app_module.njt_static, "NJT_STATIC_ZIP", zip_path)
+    # The cached check records into module state that outlives the app; a fresh map
+    # keeps this test's record out of every other test.
+    monkeypatch.setattr(static_shared, "_ARCHIVE_STATUS", {})
+    app = app_module.app
+    for name, value in (
+        ("njt_static_status", "loading"),
+        ("njt_static", {}),
+        ("njt_stops", {}),
+        ("njt_station_routes", {}),
+        ("njt_routes", []),
+        ("njt_trips", {}),
+        ("njt_stop_schedule", {}),
+        ("njt_arrivals", {}),
+    ):
+        monkeypatch.setattr(app.state, name, value, raising=False)
+
+    await asyncio.wait_for(app_module._warm_njt_static(app), timeout=5)
+
+    assert sent == []
+    assert app.state.njt_static_status == "ready"
+    # NOT VACUOUS: both light-rail rows really are in the parsed archive, and no trip
+    # calls at either of them, which is the world the rule is about.
+    assert set(app.state.njt_static["stops"]) == {"105", "107", "26326", "42545"}
+    assert set(app.state.njt_station_routes) == {"105", "107"}
+
+    res = await client.get("/api/njt-stops")
+    assert res.status_code == 200
+    assert {stop["id"]: stop["routes"] for stop in res.json()} == {"105": ["9"], "107": ["9"]}
+
+    cache["njt"].update(data=[], fetched_at=time.time(), error=None)
+    for stop_id in ("26326", "42545"):
+        res = await client.get(f"/api/njt-arrivals/{stop_id}")
+        assert res.status_code == 404
+        assert res.json()["detail"] == f"Unknown NJ Transit stop {stop_id}."
+    res = await client.get("/api/njt-arrivals/107")
+    assert res.status_code == 200
+    # The publication's "NEWARK PENN STATION", as njt_static.display_name presents it.
+    assert res.json()["stop_name"] == "Newark Penn Station"
+
+
+async def test_an_njt_load_whose_stop_times_came_up_empty_still_serves_every_parsed_stop(
+    monkeypatch,
+):
+    """A FILTER THAT LEAVES NOTHING FILTERS NOTHING, the empty-index way. load_njt_static
+    keeps a group whose stop_times.txt parsed to no rows ready, on the promise that its
+    stops still place markers; an index with nothing in it says nothing about which
+    stops are called at, and the called-at rule applied to it would serve a ready group
+    with no stations at all and hand the realtime decoder no stop to place a train at."""
+    _njt_configured(monkeypatch)
+
+    async def fake_load():
+        return {**NJT_STATIC_DATA, "stop_times": {}}
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", fake_load)
+    app = _fake_app(njt_static_status="loading")
+    await app_module._warm_njt_static(app)
+
+    assert app.state.njt_static_status == "ready"
+    assert app.state.njt_station_routes == {}
+    assert app.state.njt_stops == NJT_STATIC_DATA["stops"]
+
+
+async def test_an_njt_load_whose_trips_call_at_no_parsed_stop_still_serves_every_parsed_stop(
+    monkeypatch,
+):
+    """A FILTER THAT LEAVES NOTHING FILTERS NOTHING, the non-empty-index way. A
+    publication renumbered in stops.txt (Penn Stations 105 and 107, verbatim names) whose
+    stop_times.txt still calls at the old ids (112 then 109) yields an index that is NOT
+    empty and names no parsed stop. validate_njt_publication accepted exactly this on
+    2026-11-06, because it does not join stops.txt to stop_times.txt. Filtered, the group
+    would reach ready with no stations, every arrivals id a 404 and every realtime call
+    dropped; before the rule it served both stations and placed trains, and so it must
+    still."""
+    _njt_configured(monkeypatch)
+    renumbered = {
+        "105": {"id": "105", "name": "NEW YORK PENN STATION", "lat": 40.750046, "lon": -73.992358},
+        "107": {"id": "107", "name": "NEWARK PENN STATION", "lat": 40.734221, "lon": -74.164554},
+    }
+
+    async def fake_load():
+        return {**NJT_STATIC_DATA, "stops": renumbered}
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", fake_load)
+    app = _fake_app(njt_static_status="loading")
+    await app_module._warm_njt_static(app)
+
+    assert app.state.njt_static_status == "ready"
+    # NOT VACUOUS: the index is not empty (so this is not the empty-index case above),
+    # and it names no parsed stop, so the called-at rule alone would serve nothing.
+    assert app.state.njt_station_routes == {"112": ["1"], "109": ["1"]}
+    assert not set(app.state.njt_station_routes) & set(renumbered)
+    assert app.state.njt_stops == renumbered
 
 
 # ---------------------------------------------------------------------------

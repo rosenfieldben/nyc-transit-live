@@ -440,13 +440,19 @@ async def _warm_njt_static(app: FastAPI) -> None:
             )
             continue
         app.state.njt_static = data
-        app.state.njt_stops = data["stops"]
         # Routes-per-station index (H5): the field /api/njt-stops merges onto each
-        # marker. Port Jervis stations come back carrying MAIN and BERG, which is
-        # what the feed actually says (see derive_njt_stop_routes).
-        app.state.njt_station_routes = njt_static.derive_njt_stop_routes(
-            data["trips"], data["stop_times"]
-        )
+        # marker. Each station carries the route ids its trips run under, which is
+        # what the feed actually says (see derive_njt_stop_routes): MAIN and BERG at
+        # Port Jervis in the 2026-08-05 probe, route 6 "Port Jervis Line" from the
+        # 2026-11-06 publication.
+        station_routes = njt_static.derive_njt_stop_routes(data["trips"], data["stop_times"])
+        app.state.njt_station_routes = station_routes
+        # ONLY A CALLED-AT STOP IS A STATION (2026-11-06, the publication behind #426):
+        # 65 of its 229 stops are light-rail rows no trip calls at. Filtered here, not in
+        # the parse, which app.state.njt_static and the contract monitor keep whole; see
+        # njt_static.served_stops for the numbers and for why a filter that leaves nothing
+        # filters nothing.
+        app.state.njt_stops = njt_static.served_stops(data["stops"], station_routes)
         # Route lines (15c), built here from the tables the load already parsed, the
         # same place and the same way the railroad block builds its own. Empty when
         # the publication carried no shapes.txt: the group still reaches ready,

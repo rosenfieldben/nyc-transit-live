@@ -214,7 +214,9 @@ one flat directory gave identical files. A different publication of the archive 
 The commit that added this directory deleted `.github/workflows/probe-subway-groups.yml` and
 the workflow section of `backend/tests/test_probe_subway_groups.py`. The script stays, with its
 tests: it regenerates this file, and a later probe can sample by hand
-(`--out-dir`, provenance `local`). Its docstring still speaks of the workflow in the present
-tense (`backend/scripts/probe_subway_groups.py` lines 24, 33, 91 and 119, the last being the
-argument that nothing it runs can spend an NJ Transit mint, which the deleted workflow test
-pinned); recasting those lines is for a branch that may touch `backend/scripts`.
+(`--out-dir`, provenance `local`). Its docstring and comments spoke of the workflow in the
+present tense until `claude/njt-stop-identity` recast them in the past tense, touching
+comments and docstrings only. That includes the argument that nothing it runs can spend an
+NJ Transit mint, which the deleted workflow test pinned: it now rests on the script calling
+no NJ Transit path, read from the code (the tests pin only the URLs a sample asks for), which
+holds on a hand run whose `.env` carries real credentials.

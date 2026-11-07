@@ -27,7 +27,7 @@ treated as ground truth by the validators below:
     said. Ferry's marker has one because the ferry feed publishes one.
   * NO parent stations and NO location_type VALUES. Both columns are declared in
     the stops.txt header (they were not on 2026-08-05; they are as of the
-    2026-09-04 capture) and both are empty on every row, so the feed is still
+    2026-09-01 capture) and both are empty on every row, so the feed is still
     172 flat stops with ids 1..176.
 
 WHAT IT SHIPS THAT NOTHING ELSE HERE DOES:
@@ -104,6 +104,7 @@ import asyncio
 import csv
 import io
 import logging
+import re
 import time
 import zipfile
 from collections import defaultdict
@@ -178,17 +179,93 @@ _REQUIRED_MEMBERS = (
 # March look current because someone published a cancellation for December.
 _SERVICE_ADDED = "1"
 
+# ACRONYMS THE PUBLICATION SPELLS IN CAPITALS, which display_name keeps upper. Each
+# is a whole letter run in a real stop name or headsign of the 2026-11-06 capture:
+# PORT IMPERIAL HBLR STATION, MLK DRIVE LIGHT RAIL STATION, MSU, MIDDLETOWN NJ,
+# NJPAC/CENTRE STREET LIGHT RAIL STATION, MIDDLETOWN NY, 30TH ST. PHL. and WAYNE/ROUTE
+# 23 TRANSIT CENTER [RR]. None is a guess: a token the feed never prints would be a
+# rule no published name can test.
+_DISPLAY_ACRONYMS = frozenset({"HBLR", "MLK", "MSU", "NJ", "NJPAC", "NY", "PHL", "RR"})
+_LETTER_RUN = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
+
+
+def display_name(value: str | None) -> str | None:
+    """A stop name or trip headsign as a rider should see it: the publisher's words
+    in the publisher's order, with an all-caps string given ordinary case.
+
+    THE PUBLICATION UPPER-CASED EVERY NAME between contract monitor runs #425 and
+    #426 (2026-11-02/03). All 229 stop names and all 38 trip headsigns of the
+    2026-11-06 capture are capitals, while every other system on the map is mixed
+    case. Of the 164 stations of the committed 2026-09-01 fixture, joined by
+    stop_code, 133 differ only by case and 31 were reworded. THE RULE IS CASE ONLY:
+    rewording is the publisher's call, so "PRINCETON JCT." becomes "Princeton Jct."
+    and never "Princeton Junction". Restoring an old wording would be inventing a
+    name the feed no longer publishes.
+
+    WHY CASE MATTERS: these strings reach riders unchanged, on map labels, popups,
+    boards, station search, aria-labels and the arrivals spoken through
+    #stations-announce, and no stylesheet transforms them. All-caps labels shout
+    beside every other system, and a screen reader may spell a short all-caps token
+    letter by letter. That is exactly why the real acronyms (_DISPLAY_ACRONYMS) stay
+    upper: MSU and NJ are meant to be read as letters, and JCT and CTR are not.
+
+    THE RULE, per word: an acronym stays upper; a word directly after a digit is an
+    ordinal suffix and goes lower ("30TH" is "30th", "2ND" is "2nd"); every other
+    word is Capitalised. A word is a maximal run of letters, an accented capital
+    counting like any other, with any apostrophe inside it kept in the word, so an
+    upper-cased "NEWARK INT'L AIRPORT" would be "Newark Int'l Airport" and never
+    "Int'L" (the 2026-11-06 publication has no apostrophe; the 2026-09-01 capture
+    spelled that station "Newark Int'l Airport"). Digits, spaces and other
+    punctuation are untouched, so "WAYNE/ROUTE 23 TRANSIT CENTER [RR]" is
+    "Wayne/Route 23 Transit Center [RR]" and "SALISBURY MILLS-CORNWALL" is
+    "Salisbury Mills-Cornwall".
+
+    A STRING WITH ANY LOWERCASE LETTER IS RETURNED UNCHANGED. A publication that
+    already chose its case is left alone byte for byte: every name and headsign of the
+    2026-09-01 fixture passes through as committed, so the goldens built on it hold,
+    and a case the publisher chose (the small l of the fixture's "Newark Int'l
+    Airport", or an inner capital such as a hypothetical "MetroPark") is never
+    flattened by a rule written for capitals. A return to mixed case needs no change
+    here.
+
+    IT RUNS INSIDE THE SHARED PARSER (_parse_stops, _parse_trips), so the contract
+    monitor, which parses through this same code, sees the names the map does. That
+    cannot hide drift: what #426 caught was a different station under the id
+    (NORTH ELIZABETH at 109), and no case rule turns one station into another.
+
+    Blank or None is None, which is what both parsers returned for a blank field
+    before this existed.
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    if any(ch.islower() for ch in text):
+        return text
+
+    def recase(match: re.Match[str]) -> str:
+        word = match.group(0)
+        if word in _DISPLAY_ACRONYMS:
+            return word
+        before = text[match.start() - 1] if match.start() else ""
+        if before.isascii() and before.isdigit():
+            return word.lower()
+        return word.capitalize()
+
+    return _LETTER_RUN.sub(recase, text)
+
 
 def _parse_stops(raw: IO[bytes]) -> dict[str, dict]:
     """stops.txt -> stop_id -> {id, name, lat, lon}.
 
     FLAT, like the ferry and unlike PATH: this feed declares location_type and
     parent_station in its stops.txt header and leaves both EMPTY on every row (164 of
-    164 in the trimmed 2026-09-04 capture, the publication's own 172 of 172; the
+    164 in the trimmed 2026-09-01 capture, the publication's own 172 of 172; the
     columns were absent altogether in the 2026-08-05 probe), so every row with a
     usable id and coordinate is a marker.
     Rows with a blank stop_id or a missing/malformed coordinate are skipped;
-    first-writer-wins on a duplicate stop_id.
+    first-writer-wins on a duplicate stop_id. The name goes through display_name, so
+    the all-caps names published since #426 (2026-11-03) reach riders in ordinary
+    case and a mixed-case name is kept exactly as published.
 
     THE ONE THING NOT ASSUMED, because the cost of being wrong is visible to riders:
     a row whose location_type is anything but blank or "0" is NOT a boardable stop.
@@ -227,7 +304,7 @@ def _parse_stops(raw: IO[bytes]) -> dict[str, dict]:
             continue
         stops[stop_id] = {
             "id": stop_id,
-            "name": (row.get("stop_name") or "").strip() or None,
+            "name": display_name(row.get("stop_name")),
             "lat": lat,
             "lon": lon,
         }
@@ -270,7 +347,9 @@ def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:
 def _parse_trips(raw: IO[bytes]) -> dict[str, dict]:
     """trips.txt -> trip_id -> {route_id, direction_id, service_id, headsign,
     short_name, shape_id}, each a stripped string or None when blank. Rows with no
-    trip_id are skipped; first-writer-wins on a duplicate trip_id.
+    trip_id are skipped; first-writer-wins on a duplicate trip_id. The headsign goes
+    through display_name, like a stop name, because riders read and hear it too and
+    all 38 in the 2026-11-06 capture are capitals.
 
     shape_id IS THE ONLY LINK BETWEEN A ROUTE AND ITS GEOMETRY in this feed (15c).
     NJT shape_ids are opaque integers that encode no route, so the route a shape
@@ -302,7 +381,7 @@ def _parse_trips(raw: IO[bytes]) -> dict[str, dict]:
             "route_id": (row.get("route_id") or "").strip() or None,
             "direction_id": (row.get("direction_id") or "").strip() or None,
             "service_id": (row.get("service_id") or "").strip() or None,
-            "headsign": (row.get("trip_headsign") or "").strip() or None,
+            "headsign": display_name(row.get("trip_headsign")),
             "short_name": (row.get("trip_short_name") or "").strip() or None,
             "shape_id": (row.get("shape_id") or "").strip() or None,
         }
@@ -785,6 +864,55 @@ def derive_njt_stop_routes(
         trip_id: [call["stop_id"] for call in calls] for trip_id, calls in stop_times.items()
     }
     return fold_stop_routes(trip_routes, trip_stops)
+
+
+def served_stops(stops: dict[str, dict], station_routes: dict[str, list[str]]) -> dict[str, dict]:
+    """The NJ Transit stops served as stations: the parsed stops the routes-per-station
+    index gives at least one route, which are the stops some scheduled trip calls at (on
+    the measured publication exactly those: no trip is orphaned or routeless).
+
+    WHY A FILTER AT ALL. The 2026-11-06 publication (the renumbering monitor run #426
+    first saw, measured that day with the app's own parser) holds 229 stops, and
+    65 of them have no route. Every one of the 65 is a light-rail row (Hudson-Bergen,
+    Newark Light Rail and the River LINE: routes 4, 12 and 16, which carry zero trips
+    in this rail feed), and stop_times.txt calls at none of them. Served, each would be
+    a regional-rail square on the map with an upper-case label, a station-search row
+    and a board that can only ever read "No trains"; two of them (26326 and 42545, the
+    Newark light-rail platforms) share one coordinate about 104 m from Newark Penn. The
+    publication before it (172 stops) carried 8 rows with no route: six Amtrak-only
+    stations (BWI, Baltimore, New Carrollton, North Philadelphia, Washington,
+    Wilmington) and NJ Transit's event and seasonal stops Meadowlands (81) and Monmouth
+    Park (88), all of which production served. On that publication this rule removes
+    those 8; an event station is served only while its publication schedules a trip
+    there. The renumbered one carries none of the 8, so on it this removes exactly the
+    65.
+
+    WHY BESIDE THE PARSER AND NOT IN IT. The parse is shared with the contract
+    monitor, which must keep seeing the publication as published, and
+    app.state.njt_static keeps that full parse too, so the app's copy stays the
+    publication as published. The warmup applies this where it sets
+    app.state.njt_stops, which makes every consumer of that agree at once:
+    /api/njt-stops, /api/njt-arrivals (membership is its gate, so a filtered id is
+    "Unknown NJ Transit stop" like any other), and the realtime decoder, whose
+    _ordered_calls drops a call at a stop it was not handed exactly as it drops an
+    unknown one. And the contract monitor's identity check applies it too, so the
+    station it confirms at Penn and at Newark Penn is the one the app serves, not
+    merely a row the parse kept: a pure function here, rather than a warmup
+    private, is what lets the two ask the same question.
+
+    A FILTER THAT LEAVES NOTHING FILTERS NOTHING. Two publications the gate lets through
+    would leave it empty. One is load_njt_static's backstop for a stop_times.txt with no
+    usable rows: the index is empty, and that backstop promises the group still places
+    markers. The other is a half-renumbered publication whose stop_times.txt still calls
+    at ids its stops.txt no longer carries (stops 105 and 107, calls at 112 and 109:
+    validate_njt_publication accepted it on 2026-11-06, because it does not join the
+    two): the index is not empty, but it names no parsed stop. Either way an empty
+    result says nothing about which stops are called at. Served, it would be a ready
+    group with no stations, every /api/njt-arrivals id a 404 and every realtime call
+    dropped, so the parse is served whole, as it was before this rule.
+    """
+    served = {stop_id: stop for stop_id, stop in stops.items() if station_routes.get(stop_id)}
+    return served or stops
 
 
 def build_njt_trip_index(trips: dict[str, dict]) -> dict[str, dict]:

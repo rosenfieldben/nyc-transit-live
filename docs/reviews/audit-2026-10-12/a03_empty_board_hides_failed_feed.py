@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""A03 (Medium) "Empty arrival boards can hide a failed or stale feed" : reproduction.
+"""A03 (Medium) "Empty arrival boards can hide a failed or stale feed": the backend half's
+repair, pinned, and the frontend half's defect, recorded.
 
 THE AUDIT'S CLAIM (the 2026-10-12 report, finding A03), verbatim:
 
@@ -26,6 +27,38 @@ THE AUDIT'S CLAIM (the 2026-10-12 report, finding A03), verbatim:
     Cited (where to look, never asserted here): backend/cache.py:441,
     backend/feeds/shared.py:519, backend/routes/subway.py:108, frontend/helpers.js:2395,
     frontend/helpers.js:2462, frontend/stations.js:701.
+
+PARTLY FIXED ON claude/a03-expected-contributors, Step 2 of the freshness contract's
+Amendment 1, by its decisions Q1 and Q2 (A1.3, A1.4, A1.6). A station board names the
+groups it EXPECTS, read from the static routes-per-station index through a route-to-group
+table, UNITED with the groups that have rows indexed there, and a group that has never
+decoded in this process is named as a block reading fetched_at null and ok false. So the
+backend half of the repair the audit names, "Maintain station-to-feed coverage
+independently of displayed predictions; preserve expected failed contributors after
+expiry or retention limits", is built. The frontend half, "Carry availability, unknown
+clocks and source-content age through the board renderer", is Step 3's, and it is still
+the defect this script records.
+
+BEFORE (this script's record from 32a34f5 to 11e0dc5, VERIFIED, the numbers the ledger's
+A03 row carried): after 219's last retained prediction expired (T0+194 s), the T0+200 s
+board served empty directions, systems: null, no content clock and the healthy
+aggregate's fetched_at, 0 s old where one poll earlier it was 180 s; at the T0+620 s cap
+the same; in the stale-content and never-decoded worlds the same. Each of those four
+boards, every clock read relative to the instant it was served, was identical to
+genuinely fresh empty service's, and the page read the expiry and cap boards exactly as
+fresh empty service: "No trains" and nothing else.
+
+AFTER, asserted below as nine regression checks, each printing its BEFORE beside what it
+measures: after expiry 219 names 1-7+S, ok false, its fetched_at T0 (200 s old) and its
+content T0-5; at the cap it names 1-7+S, ok false, 620 s old; in the stale-content world
+it names 1-7+S ok with content 620 s old; in the never-decoded world it names 1-7+S with
+fetched_at null; none of the four is identical to fresh empty service's board; and the
+page reads the expiry and cap boards differently from fresh empty service (its board line,
+"as of 3m ago" and "as of 10m ago"), because today's renderer already dates a failed
+contributor's last decode once it is 90 s old. Still recorded as the defect, Step 3's to
+turn: the page reads the stale-content and never-decoded boards exactly as fresh empty
+service, as served and as section (d) builds them, because no renderer reads a block's
+`ok` or its content clock on an empty board.
 
 RUN IT (from the repository root):
 
@@ -64,9 +97,12 @@ WHAT IS INJECTED (the faults, stated plainly):
     clock (F03's "header ten minutes old") and served identically on every poll, so
     every call at 219 is past the decoder's 60 s grace and the board is empty while
     the poll is current. Never decoded: 1-7+S answers 503 from the first poll.
-  * THE FRONTEND BOARDS. The served board never carries an empty board's contributor
-    (that is the backend half), so the frontend half is tested on the shape a backend
-    repair would serve: the REAL served empty board with its `systems` filled by the
+  * THE FRONTEND BOARDS. Until the backend half was built the served board never carried
+    an empty board's contributor, so the frontend half is tested on the shape a backend
+    repair would serve, and still is, so that its record does not lean on the backend
+    half (since that half is built, the served boards carry this shape themselves, and
+    section (d)'s and the served ones agree): the REAL served empty board with its
+    `systems` filled by the
     group's REAL block from the same poll's /api/subways, and its two clocks set the
     way the endpoint's own selectors date one contributor (fetched_at its block's, or
     the aggregate when the block has none; feed_timestamp its block's). Each one is
@@ -159,13 +195,17 @@ and below is disabled because the script reads the same failure off /api/status 
 The page runs under the node named by the NODE environment variable (run_all.sh's
 override), else the first node on PATH.
 
-RECORDED DISPOSITION: VERIFIED. Exit 0 while the finding behaves as recorded; exit 1
-with the failed checks named the moment it stops, including a read that is not served
-(HTTP 200), a page that does not boot, a request of the page's that the harness could
-not answer from the app, and an import that fails. Each check is tagged
-[backend], [frontend], [rider] or [world]. [rider] checks are end to end: the board the
-backend served, rendered by the page, so a repair of either half that reaches the rider
-turns them red, while a [backend] or [frontend] check moves only with its own half.
+RECORDED DISPOSITION: PARTLY (claude/a03-expected-contributors): the backend half fixed,
+the frontend half open. Exit 0 while both hold: the repaired half's nine regression checks
+and the open half's records; exit 1 with the failed checks named the moment either stops,
+including a read that is not served (HTTP 200), a page that does not boot, a request of
+the page's that the harness could not answer from the app, and an import that fails. A
+regression check that fails on its BEFORE value says the finding is back. Each check is
+tagged [backend], [frontend], [rider] or [world]. [rider] checks are end to end: the board
+the backend served, rendered by the page, so a repair of either half that reaches the
+rider moves them, while a [backend] or [frontend] check moves only with its own half.
+Step 3 (A03's frontend half) turns the [frontend] checks for A and B and the [rider]
+checks for the stale-content and never-decoded boards, and completes the flip to FIXED.
 """
 
 from __future__ import annotations
@@ -248,12 +288,21 @@ class Halt(Exception):
     """A read the rest of the run depends on did not happen; already a failed check."""
 
 
-def check(ok: bool, arm: str, label: str, detail: str = "") -> bool:
-    """A named assertion, tagged with the half of the finding it records."""
+def check(
+    ok: bool, arm: str, label: str, detail: str = "", before: str = "", back: bool = False
+) -> bool:
+    """A named assertion, tagged with the half of the finding it records. A REGRESSION
+    CHECK on the repaired half carries `before`, this script's record before the repair,
+    printed beside what it measures; `back` is whether the measurement is that record
+    again, which a failure then names as the finding being back."""
     tag = f"[{arm}] {label}"
+    notes = [detail] if detail else []
+    if before:
+        notes.append(f"BEFORE: {before}")
     if not ok:
-        failures.append(f"{tag}{(': ' + detail) if detail else ''}")
-    print(f"  [{'PASS' if ok else 'FAIL'}] {tag}" + (f"  ({detail})" if detail else ""))
+        reason = "; ".join(notes)
+        failures.append(f"{tag}{(': ' + reason) if reason else ''}" + ("; the finding is back" if back else ""))
+    print(f"  [{'PASS' if ok else 'FAIL'}] {tag}" + (f"  ({'; '.join(notes)})" if notes else ""))
     return bool(ok)
 
 
@@ -1175,18 +1224,27 @@ def main_script() -> None:
         f"fetched_at {age(before['board']):.0f} s old",
     )
     check(
-        rows(ab) == [] and ab["systems"] is None and ab["feed_timestamp"] is None,
+        rows(ab) == []
+        and keys(ab) == [FAILED]
+        and ab["systems"][FAILED]["ok"] is False
+        and ab["feed_timestamp"] == T0 - FRESH_LAG_S,
         "backend",
         f"AFTER expiry (T0{after['at'] - T0:+.0f} s, the first poll past it): empty directions, "
-        "systems: null, no content clock: the failed contributor dropped out of the map rather "
-        "than being reported failed",
-        f"keys {keys(ab) or 'none (systems null)'}",
+        f"and the health map still names {FAILED}, failed, with its content clock (T0-5): the "
+        "failed contributor is reported failed rather than dropping out of the map",
+        f"keys {keys(ab) or 'none (systems null)'}, feed_timestamp "
+        + ("null" if ab["feed_timestamp"] is None else f"T0{ab['feed_timestamp'] - T0:+.0f}"),
+        before="empty directions, systems: null, no content clock",
+        back=rows(ab) == [] and ab["systems"] is None and ab["feed_timestamp"] is None,
     )
     check(
-        ab["fetched_at"] == after["at"] == after["vehicles"]["fetched_at"],
+        ab["fetched_at"] == T0,
         "backend",
-        "AFTER expiry the board's fetched_at is the healthy aggregate's, current",
+        f"AFTER expiry the board's fetched_at is {FAILED}'s last decode (T0), not the healthy "
+        "aggregate's",
         f"{age(ab):.0f} s old, was {age(before['board']):.0f} s one poll earlier",
+        before="the healthy aggregate's, 0 s old, was 180 s one poll earlier",
+        back=ab["fetched_at"] == after["at"] == after["vehicles"]["fetched_at"],
     )
     blk = after["vehicles"]["systems"][FAILED]
     check(
@@ -1206,12 +1264,13 @@ def main_script() -> None:
     fresh_rel = relative(fresh[-1]["board"], fresh[-1]["at"])
     after_diff = differences(relative(ab, after["at"]), fresh_rel)
     check(
-        not after_diff,
+        bool(after_diff),
         "backend",
         "AFTER expiry the WHOLE served board, every clock relative to the instant it was "
-        "served, is identical to genuinely fresh empty service's: nothing in it says a "
-        "contributor is failing",
+        "served, differs from genuinely fresh empty service's: it says a contributor is failing",
         f"differs at {after_diff}" if after_diff else "identical",
+        before="identical",
+        back=not after_diff,
     )
 
     # ---- (b) backend: the cap road ----------------------------------------
@@ -1235,33 +1294,67 @@ def main_script() -> None:
     cb = cap_after["board"]
     check(
         rows(cb) == []
-        and cb["systems"] is None
-        and cb["fetched_at"] == cap_after["at"]
+        and keys(cb) == [FAILED]
+        and cb["systems"][FAILED]["ok"] is False
+        and cb["fetched_at"] == T0
         and cap_after["status"]["subway_feeds"]["failed"] == [FAILED],
         "backend",
-        f"at the cap: empty directions, systems: null, a current fetched_at, {FAILED} still failed",
+        f"at the cap: empty directions, and the health map still names {FAILED}, failed, its "
+        f"fetched_at its last decode (T0, {age(cb):.0f} s old), {FAILED} still failed",
         f"keys {keys(cb) or 'none'}",
+        before="empty directions, systems: null, a current fetched_at",
+        back=rows(cb) == [] and cb["systems"] is None and cb["fetched_at"] == cap_after["at"],
     )
     cap_diff = differences(relative(cb, cap_after["at"]), fresh_rel)
     check(
-        not cap_diff,
+        bool(cap_diff),
         "backend",
-        "at the cap the WHOLE served board is identical to fresh empty service's",
+        "at the cap the WHOLE served board differs from fresh empty service's",
         f"differs at {cap_diff}" if cap_diff else "identical",
+        before="identical",
+        back=not cap_diff,
     )
     # The frontend arm's two worlds reach the rider through the same backend rule: the
     # stale group decodes, but none of its calls at 219 survives the decoder's grace, and
-    # the never-decoded group has nothing indexed anywhere, so neither board names it.
-    for snap, road in (
-        (stale[-1], f"stale content ({FAILED} ok, content {STALE_LAG_S + POLL_S:.0f} s old)"),
-        (never[-1], f"never decoded ({FAILED} failing from the first poll)"),
+    # the never-decoded group has nothing indexed anywhere. Before the backend half
+    # neither board named it; now both do, because 219 expects 1-7+S.
+    # EACH ALSO NAMES ITS FIELD, because "differs from fresh empty service's" alone is a
+    # weak check now: fresh empty service's board names 219's expected group too, so a
+    # board that dropped the contributor would differ from it as well. A1.6's acceptance
+    # names the fields: world B "names 1-7+S with fetched_at: null".
+    stale_board, never_board = stale[-1]["board"], never[-1]["board"]
+    stale_block = (stale_board["systems"] or {}).get(FAILED) or {}
+    never_block = (never_board["systems"] or {}).get(FAILED) or {}
+    for snap, road, named, field in (
+        (
+            stale[-1],
+            f"stale content ({FAILED} ok, content {STALE_LAG_S + POLL_S:.0f} s old)",
+            keys(stale_board) == [FAILED]
+            and stale_block.get("ok") is True
+            and stale_board["served_at"] - (stale_block.get("feed_timestamp") or 0.0)
+            == STALE_LAG_S + POLL_S,
+            f"names {FAILED} ok with its content {STALE_LAG_S + POLL_S:.0f} s old",
+        ),
+        (
+            never[-1],
+            f"never decoded ({FAILED} failing from the first poll)",
+            keys(never_board) == [FAILED]
+            and never_block.get("ok") is False
+            and "fetched_at" in never_block
+            and never_block["fetched_at"] is None,
+            f"names {FAILED} with fetched_at null and ok false",
+        ),
     ):
         diff = differences(relative(snap["board"], snap["at"]), fresh_rel)
         check(
-            not diff,
+            named and bool(diff),
             "backend",
-            f"{road}: the WHOLE served board is identical to fresh empty service's as well",
-            f"differs at {diff}" if diff else "identical",
+            f"{road}: the board {field}, and the WHOLE served board differs from fresh empty "
+            "service's as well",
+            (f"keys {keys(snap['board']) or 'none (systems null)'}; ")
+            + (f"differs at {diff}" if diff else "identical"),
+            before="identical, systems null",
+            back=not diff,
         )
 
     # ---- the boards, on the page ------------------------------------------
@@ -1288,9 +1381,28 @@ def main_script() -> None:
     )
     for name in served:
         show(name, views[name])
+    # THE TWO RIDER CHECKS THE BACKEND HALF TURNS. A board that names its failed contributor
+    # reaches today's renderer, which dates that contributor's last decode once it is 90 s
+    # old, so the page reads these two differently from fresh empty service with no
+    # frontend change at all (Amendment 1, A1.6: the reverse order is safe).
     for name, road in (
         ("after expiry, as served", f"after expiry, with {FAILED} still failing"),
         ("at the cap, as served", f"at the cap, with {FAILED} still failing"),
+    ):
+        changed = moved(views[name], served_fresh)
+        check(
+            {"popup", "panel", "spoken"} <= set(changed),
+            "rider",
+            f"{road}, every surface reads differently from genuinely fresh empty service",
+            f"differs on {changed}: {extra_lines(views[name], served_fresh)}"
+            if changed
+            else "identical on popup, panel and spoken",
+            before='identical on popup, panel and spoken: "No trains" and nothing else',
+            back=rider_text(views[name]) == rider_text(served_fresh),
+        )
+    # STILL THE DEFECT, Step 3's to turn: no renderer reads a block's `ok` or its content
+    # clock on an empty board.
+    for name, road in (
         (
             "A (stale content), as served",
             f"with {FAILED}'s content {STALE_LAG_S + POLL_S:.0f} s old",
@@ -1416,16 +1528,20 @@ def main_script() -> None:
     if failures:
         raise Halt
     print(
-        f"DISPOSITION: VERIFIED  With {FAILED} failing (HTTP 503) and {HEALTHY} and six other "
-        f"groups healthy, Prospect Av ({STATION})'s last retained prediction "
-        f"(T0{last_call - T0:+.0f} s) expired by the T0{after['at'] - T0:+.0f} s poll and its "
-        f"board went from health map [{FAILED}] and a {age(before['board']):.0f} s old fetched_at "
-        f"to empty directions, systems: null and a {age(ab):.0f} s old fetched_at, identical to "
-        f"fresh empty service's board, while /api/status still listed {FAILED} failed (the "
-        f"retention cap does the same at T0{cap_after['at'] - T0:+.0f} s). The real page renders "
-        f"an empty board with {content_age:.0f} s old content behind a {poll_age:.0f} s old "
-        "poll, and one for a never-decoded failed contributor, exactly as genuinely fresh empty "
-        'service: "No trains" with no warning on the popup or the panel.'
+        "FIXED: the backend half (Step 2 of the freshness contract's Amendment 1, "
+        "claude/a03-expected-contributors). OPEN: the frontend half (its Step 3)."
+    )
+    print(
+        "DISPOSITION: PARTLY (claude/a03-expected-contributors)  BACKEND HALF FIXED: with "
+        f"{FAILED} failing (HTTP 503) and {HEALTHY} and six other groups healthy, Prospect Av "
+        f"({STATION})'s board still names {FAILED}, failed, after its last retained prediction "
+        f"(T0{last_call - T0:+.0f} s) expired by the T0{after['at'] - T0:+.0f} s poll, its "
+        f"fetched_at {age(ab):.0f} s old (BEFORE: systems null, 0 s old), and at the cap "
+        f"(T0{cap_after['at'] - T0:+.0f} s); the stale-content and never-decoded boards name it "
+        "too, and none of the four is identical to fresh empty service's board. FRONTEND HALF "
+        f"OPEN: the real page renders an empty board with {content_age:.0f} s old content behind "
+        f"a {poll_age:.0f} s old poll, and one for a never-decoded failed contributor, exactly as "
+        'genuinely fresh empty service: "No trains" with no warning on the popup or the panel.'
     )
 
 

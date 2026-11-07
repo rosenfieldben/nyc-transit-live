@@ -4787,6 +4787,126 @@ async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
     assert {t["trip_id"] for t in cache["railroads"]["data"]} == {"mnr-1", "lirr-1"}
 
 
+# ---------------- Q7: when the railroad envelope keeps its last clock (A10) ----------------
+#
+# Both arms of pollers._refresh_railroads' keep-last-known branch, which nothing pinned
+# before Amendment 1 (A1.4: 441 of 441 tests across every file that drives the refresh
+# passed with the branch deleted outright). They drive the REAL fetcher over a fake
+# client, so the producer's map, the envelope and the served bodies are production's.
+
+
+def _rail_generation(header_ts):
+    """A railroad generation that decodes with nothing running, its header dated by
+    header_ts or, given None, carrying no time; one trip_update dated 990 and calling at
+    no stop, so an undated generation still carries a clock of its own that a repair
+    could have reached for and must not."""
+    from google.transit import gtfs_realtime_pb2 as pb
+
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    if header_ts is not None:
+        feed.header.timestamp = int(header_ts)
+    entity = feed.entity.add(id="own-clock")
+    entity.trip_update.trip.trip_id = "own-clock"
+    entity.trip_update.timestamp = 990
+    return feed.SerializeToString()
+
+
+class _RailUpstream:
+    """Stands in for the poller's httpx client: per system, bytes served as a 200 or an
+    int served as that status, which raise_for_status turns into a failed system."""
+
+    def __init__(self, lirr, mnr):
+        self._by_url = {
+            feeds.RAILROAD_FEED_URLS["LIRR"]: lirr,
+            feeds.RAILROAD_FEED_URLS["MNR"]: mnr,
+        }
+
+    async def get(self, url):
+        body = self._by_url[url]
+        request = httpx.Request("GET", url)
+        if isinstance(body, int):
+            return httpx.Response(body, request=request)
+        return httpx.Response(200, content=body, request=request)
+
+
+@pytest.fixture
+def railroad_poll(client, healthz_env, monkeypatch):
+    """One real railroad refresh at a pinned clock, then what the app serves: the
+    envelope's content clock, /api/status's feed_age_s and railroad_feeds, and /healthz.
+    A bus entry is kept fresh at every clock so that /healthz has one fresh feed and the
+    railroad's own reading is the only thing that can degrade it."""
+    clock = [0.0]
+    monkeypatch.setattr(app_module.time, "time", lambda: clock[0])
+    # railroad_arrivals is NOT patched here: healthz_env already patched it to {}, and a
+    # second patch of one app.state name on one MonkeyPatch raises at the undo under
+    # pytest 9.2 (PR #130).
+    for name in ("railroad_stops", "railroad_positions"):
+        monkeypatch.setattr(app_module.app.state, name, {}, raising=False)
+
+    async def poll(at, lirr, mnr):
+        clock[0] = at
+        healthz_env["buses"].update(data=[1], fetched_at=at, feed_timestamp=at - 5, error=None)
+        await app_module._refresh_railroads(app_module.app, _RailUpstream(lirr, mnr))
+        status = (await client.get("/api/status")).json()
+        return (
+            (await client.get("/api/railroads")).json()["feed_timestamp"],
+            status["feeds"]["railroads"]["feed_age_s"],
+            status["railroad_feeds"],
+            (await client.get("/healthz")).json()["degraded"],
+        )
+
+    return poll
+
+
+async def test_q7_a_headerless_lirr_success_publishes_no_envelope_clock(railroad_poll):
+    """THE SUCCESS ARM. A dated poll at 900, then five headerless polls 20 s apart, each
+    decoding: the envelope reads null and feed_age_s unknown on every one of them, and
+    /healthz stays clean. Before Q7 the branch kept 900 on each, so feed_age_s read 100.0
+    at 1000 and /healthz read feed-content-stale on a feed that decoded every poll."""
+    ok = {"total": 2, "ok": 2, "failed": []}
+    assert await railroad_poll(900.0, _rail_generation(900), _rail_generation(880)) == (
+        900.0,
+        0.0,
+        ok,
+        [],
+    )
+    served = [
+        await railroad_poll(at, _rail_generation(None), _rail_generation(880))
+        for at in (1000.0, 1020.0, 1040.0, 1060.0, 1080.0)
+    ]
+    assert served == [(None, None, ok, [])] * 5
+
+
+async def test_q7_lirr_failed_beside_a_decoding_metro_north_keeps_its_last_clock(railroad_poll):
+    """THE FAILURE ARM. LIRR answers 503 while Metro-North decodes: the envelope keeps 900,
+    so its age grows with each poll and /healthz reads feed-content-stale once it is 90 s
+    old (60 s at 960 is inside the band; 100 s at 1000 is past it). Deleting the branch
+    outright, which the producer's fix alone might suggest, publishes null here and leaves
+    /healthz clean through the outage. The first decoding LIRR after it, headerless at
+    1100, drops the kept clock, as a success does."""
+    assert await railroad_poll(900.0, _rail_generation(900), _rail_generation(880)) == (
+        900.0,
+        0.0,
+        {"total": 2, "ok": 2, "failed": []},
+        [],
+    )
+    down = {"total": 2, "ok": 1, "failed": ["LIRR"]}
+    assert await railroad_poll(960.0, 503, _rail_generation(880)) == (900.0, 60.0, down, [])
+    assert await railroad_poll(1000.0, 503, _rail_generation(880)) == (
+        900.0,
+        100.0,
+        down,
+        [models.HEALTH_FEED_CONTENT_STALE],
+    )
+    assert await railroad_poll(1100.0, _rail_generation(None), _rail_generation(880)) == (
+        None,
+        None,
+        {"total": 2, "ok": 2, "failed": []},
+        [],
+    )
+
+
 async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
     # The client never fetches /api/status, so the per-system block has to ride on
     # /api/alerts. It is a projection of the health map C1 made truthful.

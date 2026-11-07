@@ -1944,6 +1944,45 @@ test("6.2 a system with NO content clock borrows nobody's: Metro-North beside a 
   assert.equal(staleness(older, now), "railroad: as of 5m ago; MNR position age unavailable");
 });
 
+test("A10: a headerless LIRR poll says nothing new on the status line", () => {
+  // Amendment 1's Q6 and Q7 change what the railroad serves for a decoded LIRR generation
+  // whose header carried no time: LIRR's block and the envelope publish a null content
+  // clock where they published the last dated header. A1.4's frontend table has no row for
+  // either, because null is a state the page already reads (systemLag: no content lag, the
+  // poll age alone). This pins that it stays that way: a dated poll at 900 and five
+  // headerless polls 20 s apart each read exactly as a current dated poll does, which is
+  // no line at all, with LIRR's 24 withheld trains riding nothing.
+  const positions = { reported: 27, estimated: 0, qualified: 17, placed: 0, suppressed: 24 };
+  const served = (at, lirrClock) => ({
+    label: "railroad",
+    fetchedAt: at,
+    servedAt: at,
+    feedTimestamp: lirrClock,
+    systems: ingestSystems(
+      {
+        fetched_at: at,
+        feed_timestamp: lirrClock,
+        systems: {
+          LIRR: { fetched_at: at, feed_timestamp: lirrClock, ok: true, retained_since: null, positions },
+          MNR: { fetched_at: at, feed_timestamp: null, ok: true, retained_since: null },
+        },
+      },
+      "railroads",
+    ),
+  });
+  assert.equal(staleness(served(900, 900), 900), null);
+  for (const at of [920, 940, 960, 980, 1000]) {
+    assert.equal(staleness(served(at, null), at), null);
+  }
+  // The control, and what the backend served there before Q6 and Q7: the same poll at 1000
+  // carrying the last dated clock, 900, raises a line about content nobody measured.
+  assert.equal(
+    staleness(served(1000, 900), 1000),
+    "railroad: LIRR as of 100s ago; LIRR 24 trains not shown, last seen over 10m ago; " +
+      "MNR position age unavailable",
+  );
+});
+
 test("6.2 staleness' THIRD population: content old while the poll is fresh, in a clause of its own", () => {
   const now = 20_000;
   const subways = (systems) => ({

@@ -1249,8 +1249,13 @@ async def fetch_railroad_trains(
     (trains, arrivals_by_system, feed_timestamp, failed_feeds, feed_ts_by_system,
     steps_by_system), where feed_ts_by_system carries each freshness-authoritative
     system's OWN header (contract 6.1) so a per-system block can name which contributor
-    is behind. A system RAILROAD_FRESHNESS_SYSTEMS does not admit is simply absent from
-    it. steps_by_system carries, for each system that decoded, what the position ladder
+    is behind. IT HAS A KEY FOR EVERY SYSTEM THAT DECODED THIS POLL AND FOR NO OTHER
+    (contract 3.5's membership clause, Amendment 1's A1.3): the header's time for an
+    admitted system whose header carried one, and None both for a generation whose
+    header carried none and for a system RAILROAD_FRESHNESS_SYSTEMS does not admit, by
+    policy. A failed system is absent, which is the one thing the reader
+    (pollers._system_freshness) reads as "did not decode, keep the last clock".
+    steps_by_system carries, for each system that decoded, what the position ladder
     did with its vehicles (_position_steps, contract 6.3): the counts models.PositionSteps
     serves, one per trip, which is the (system, trip_id) dedupe below. A failed system is
     absent from it, so its block keeps its last-known counts.
@@ -1319,12 +1324,17 @@ async def fetch_railroad_trains(
         steps_by_system[system] = steps
         # Only trust a freshness-authoritative system's header (see
         # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored. The
-        # per-system map keeps the SAME exclusion rather than restating it: a system
-        # that is not admitted here is simply absent from the map, so its block
-        # reports None without anything downstream knowing why.
+        # per-system map keeps the SAME exclusion rather than restating it, and keeps it
+        # as a VALUE, not as absence: a system that decoded is recorded whatever its
+        # header said, with None where the header carried no time or the set does not
+        # admit the system. Absence is the reader's "did not decode" (it keeps the last
+        # clock), so an undated LIRR left out of the map would be served its previous
+        # generation's clock as current, and Metro-North's exclusion would rest on the
+        # one signal that means a failure. The envelope's fold keeps its gate: only an
+        # admitted system's real time is folded, so the envelope is still LIRR's alone.
+        feed_ts_by_system[system] = feed_ts if system in RAILROAD_FRESHNESS_SYSTEMS else None
         if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
             timestamps.append(feed_ts)
-            feed_ts_by_system[system] = feed_ts
         for train in gps:
             key = (system, train["trip_id"])
             if key in seen:
@@ -1373,13 +1383,17 @@ async def fetch_railroad_trains(
         raise RuntimeError(f"All railroad feeds failed: {joined}")
     feed_timestamp = min(timestamps) if timestamps else None
     # A system the placement guard above failed keeps its last-known counts, as its
-    # trains are retained rather than published (_refresh_railroads).
+    # trains are retained rather than published (_refresh_railroads). Its content clock
+    # leaves the map by the same rule, since the GPS pass recorded it before the guard
+    # ran: a system in the failed list must be absent, or the reader would publish this
+    # poll's value for a system it is told did not decode.
     position_steps = {s: c for s, c in steps_by_system.items() if s not in feed_errors}
+    content_clocks = {s: t for s, t in feed_ts_by_system.items() if s not in feed_errors}
     return (
         trains,
         arrivals_by_system,
         feed_timestamp,
         sorted(feed_errors),
-        feed_ts_by_system,
+        content_clocks,
         position_steps,
     )

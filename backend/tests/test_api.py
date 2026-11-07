@@ -2352,7 +2352,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def fake_fetch_railroads(client, stops):
-        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}, {}
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0, "MNR": None}, {}
 
     async def fake_fetch_path(client, stops):
         return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
@@ -2571,7 +2571,7 @@ async def test_poll_cycle_deadline_bounds_a_wedged_refresh(monkeypatch, cache):
         return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def rr_fetch(client, stops):
-        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}, {}
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0, "MNR": None}, {}
 
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", bus_fetch)
     monkeypatch.setattr(app_module, "fetch_subway_trains", sub_fetch)
@@ -4725,7 +4725,7 @@ async def test_c2_total_railroad_failure_also_reports_every_system_down(client, 
     mnr = {**RAILROADS[0], "system": "MNR", "trip_id": "m1"}
 
     async def healthy(client_arg, stops_arg):
-        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, [], {"LIRR": 990.0}, {}
+        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, [], {"LIRR": 990.0, "MNR": None}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", healthy)
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
@@ -4762,7 +4762,7 @@ async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
             {"MNR": {"1": {"Trains": []}}, "LIRR": {"2": {"Trains": []}}},
             990.0,
             [],
-            {"LIRR": 990.0},
+            {"LIRR": 990.0, "MNR": None},
             {},
         )
 
@@ -4916,7 +4916,7 @@ async def test_c2_retention_clock_is_not_reset_by_the_systems_write(client, cach
             {"MNR": {"1": {"Trains": [{"trip_id": "m1", "arrival": 1e12}]}}},
             990.0,
             [],
-            {"LIRR": 990.0},
+            {"LIRR": 990.0, "MNR": None},
             {},
         )
 
@@ -5037,7 +5037,14 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
     app_module.app.state.railroad_stops = {"MNR": {"1": {"name": "G", "lat": 40.7, "lon": -73.9}}}
 
     async def railroads(client_arg, stops_arg):
-        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, [], {}, {}
+        return (
+            [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}],
+            {},
+            990.0,
+            [],
+            {"LIRR": 990.0, "MNR": None},
+            {},
+        )
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", railroads)
     await app_module._refresh_railroads(app_module.app, client=None)

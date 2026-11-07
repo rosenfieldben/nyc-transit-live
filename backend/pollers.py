@@ -422,9 +422,10 @@ def _system_freshness(
 
     NULL IS A REAL ANSWER HERE. A system whose header is not a usable freshness
     signal reports None rather than a number that would mislead. Metro-North is the
-    standing case and the exclusion is NOT restated here: _refresh_railroads passes
-    only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so this function never
-    learns MNR has a header at all.
+    standing case and the exclusion is NOT restated here: the railroad producer records
+    MNR with None whenever it decodes (feeds.RAILROAD_FRESHNESS_SYSTEMS does not admit
+    it), so this function never learns MNR has a header at all, and never mistakes the
+    exclusion for a failure either (contract 3.5's membership clause).
 
     `routes` is the optional per-system route coverage (see _routes_by_system);
     only the subway passes it, because only its entities lack a system name of
@@ -449,12 +450,14 @@ def _system_freshness(
         # THE SAME LAST-KNOWN RULE AS fetched_at, AND THE TWO REASONS A VALUE CAN BE
         # MISSING ARE NOT THE SAME ONE. A system ABSENT from the map did not decode
         # this poll, so it keeps the content time it last reported rather than
-        # blanking it. A system PRESENT with a None value decoded and sent no header,
-        # which is a fact about this poll and must be published as None: carrying the
+        # blanking it. A system PRESENT with a None value decoded and sent no usable
+        # header (none at all, or one the policy excludes, as Metro-North's), which is
+        # a fact about this poll and must be published as None: carrying the
         # previous poll's number forward there would age it by one interval every
         # interval, without bound, while the feed looked healthy. The producers
         # encode the difference deliberately (feeds/subway.py records a key for every
-        # group that decoded), and reading it with .get() would throw it away.
+        # group that decoded, and feeds/railroad.py for every system since Amendment
+        # 1's A10 repair), and reading it with .get() would throw it away.
         if system in fresh_timestamps:
             content_at = fresh_timestamps[system]
         else:
@@ -672,10 +675,12 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         now,
         # No route coverage on the railroad blocks: its trains name their own system.
         None,
-        # METRO-NORTH IS ABSENT FROM THIS MAP AND THAT IS THE WHOLE EXCLUSION. It
-        # carries only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so MNR's
-        # block reports None without this function, this call site, or the model ever
-        # naming it. The reason lives once, above that frozenset.
+        # METRO-NORTH IS IN THIS MAP WITH None, AND THAT VALUE IS THE WHOLE EXCLUSION.
+        # The map has a key for every system that decoded (contract 3.5's membership
+        # clause), and the producer writes None for one feeds.RAILROAD_FRESHNESS_SYSTEMS
+        # does not admit, so MNR's block reports None without this function, this call
+        # site, or the model ever naming it. Absence is kept for its one meaning, did
+        # not decode. The reason lives once, above that frozenset.
         feed_ts_by_system,
         # What the position ladder did with each decoded system's vehicles (contract
         # 6.3), last-known for a failed one. The rider's status line reads the

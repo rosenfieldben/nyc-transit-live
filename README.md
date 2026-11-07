@@ -598,6 +598,43 @@ routes carry `route_type=113`, the GTFS *extended* Rail Service type that anythi
 switch-casing the classic 0-7 falls through. `shapes.txt` is present and
 deliberately unparsed: it is 10 MB of the 11.1 MB payload and nothing reads it yet.
 
+**NJ Transit's stop ids are not stable across publications; its `stop_code`s have
+been.** Between contract monitor runs #425 (2026-11-02 21:45 UTC) and #426
+(2026-11-03 06:55 UTC) NJ Transit republished with its stop ids reassigned. Joined
+by `stop_code`, all 164 rail stations of the committed fixture (the 2026-09-01
+capture, `0a5f251`) are in the 2026-11-06 publication: 49 kept their id and 115
+moved, 99 of them by +1 to -16, 13 to five-digit ids, and three further (New Bridge
+Landing 105 to 110, Roselle Park 141 to 31, Philadelphia 30th St. 126 to 1), so 95
+of the capture's ids now name a different station and 20 name none. Penn Station New York went from 109 to 105 and Newark Penn
+Station from 112 to 107; 109 is now North Elizabeth and 112 is Orange. The code
+held on 164 of 164, across the two publications seen, which is a record and not a
+promise. **Penn Station New York is `NY` and Newark Penn Station is `NP`**, and the
+monitor's `njt-static` identity check keys on exactly that: the row coded `NY` must
+lie within 200 m of 40.7500,-73.9924 and the row coded `NP` within 200 m of
+40.7342,-74.1646, each must be the station the app serves at its id, and the PASS
+line prints the id and name each carries today. Nothing the app runs holds an NJ
+Transit stop id from one archive to the next, since every join is within the archive
+it loaded (three fixture scripts under `backend/scripts` still name the old ids; on
+the live list). A browser tab opened before a deploy does, until it fetches the stop
+table again, which a reload within the hour may not do (`/api/njt-stops` is served
+`max-age=3600`; on the live list). The same
+publication also upper-cased every stop name and trip headsign (133 of the 164
+stations by case alone, 31 reworded), which the app shows in mixed case by case
+alone (`njt_static.display_name`: "PRINCETON JCT." is "Princeton Jct."); added 65
+light-rail rows that no trip in this feed calls at, which the app does not serve as
+stations; and rewrote `routes.txt` (16 routes, Port Jervis now its own route 6,
+"Port Jervis Line"). The figures in the paragraph above are the 2026-08-05 probe's
+(its `shapes.txt` sentence also predates 15c, which parses the member), and the
+2026-11-06 publication differs (2,063 `calendar_dates` rows, 16 routes, a 25 MB
+`shapes.txt`); the fixture refresh that re-probes them is on the live list.
+To compare any two captures without spending a mint:
+
+```bash
+python backend/scripts/diff_njt_stops.py OLD NEW   # each a stops.txt or a GTFS zip
+```
+
+It joins on `stop_code` and ends `VERDICT: RENUMBERED`, `RENAMED` or `UNCHANGED`.
+
 The committed test fixture under `backend/tests/fixtures/njt_gtfs/` is generated
 from the live archive, which needs credentials; nothing in CI touches the live API.
 

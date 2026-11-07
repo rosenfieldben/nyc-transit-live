@@ -441,8 +441,10 @@ async def _warm_njt_static(app: FastAPI) -> None:
             continue
         app.state.njt_static = data
         # Routes-per-station index (H5): the field /api/njt-stops merges onto each
-        # marker. Port Jervis stations come back carrying MAIN and BERG, which is
-        # what the feed actually says (see derive_njt_stop_routes).
+        # marker. Each station carries the route ids its trips run under, which is
+        # what the feed actually says (see derive_njt_stop_routes): MAIN and BERG at
+        # Port Jervis in the 2026-08-05 probe, route 6 "Port Jervis Line" from the
+        # 2026-11-06 publication.
         station_routes = njt_static.derive_njt_stop_routes(data["trips"], data["stop_times"])
         app.state.njt_station_routes = station_routes
         # ONLY A CALLED-AT STOP IS A STATION (2026-11-06, the publication behind #426):

@@ -2208,7 +2208,7 @@ poll with a 200 board whose block reads `fetched_at: null`, `ok: false`, rather 
 recorded 502, the 503 before any poll staying
 (`_require_filled_cache`, `backend/cache.py:321-333`, the recorded error raised at `:328-330`,
 called at `backend/routes/path.py:111`, `backend/routes/ferry.py:106`,
-`backend/routes/njt.py:166` and `backend/routes/railroad.py:150`). `/api/status` gains nothing for the boards. **Amended 2026-11-01 (Q5):** its
+`backend/routes/njt.py:178` and `backend/routes/railroad.py:150`). `/api/status` gains nothing for the boards. **Amended 2026-11-01 (Q5):** its
 health code reads the four states, which requires a block on the rule's input for PATH, the
 ferry and NJ Transit, an operator copy of NJ Transit's failure (H5 closes with it), the
 first-attempt clock, and the exclusion of a family that is not configured.
@@ -2243,7 +2243,7 @@ as their being up".
 #### The monitor
 
 The monitor reads one rider board, and it is two checks on one fetch, not one:
-`_fetch_production_board` (`backend/scripts/contract_monitor.py:3028-3052`) reads
+`_fetch_production_board` (`backend/scripts/contract_monitor.py:3225-3249`) reads
 `/api/subway-arrivals/G08` (the station chosen at `:368-377`), and `production:board-clock`
 (`:3147-3199`) and `production:board-contributors` (`:3211-3277`) judge it; the README
 "Monitoring" section describes both (README at `1d17aa0`, lines 1121-1138). Both FAIL a populated

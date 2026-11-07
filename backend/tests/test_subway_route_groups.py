@@ -23,6 +23,7 @@ import test_f03_boards
 from google.transit import gtfs_realtime_pb2 as pb
 from test_f03_boards import NOW, _quiet_feed, _Upstream
 
+import cache
 import main as app_module
 import models
 import pollers
@@ -103,8 +104,9 @@ def test_the_check_is_route_in_table_not_route_under_this_group():
     }
     arrivals = {
         "ACE": {"A02": {"Northbound": [{"route_id": "Y1"}, {"route_id": "E"}]}},
-        "NQRW": {"R01": {"Southbound": [{"route_id": "X9"}]}},
+        "NQRW": {"R01": {"Southbound": [{"route_id": "N"}]}},
     }
+    # X9 only among the placed trains, Y1 only among the arrival rows: each input is read.
     assert routes_outside_the_table(trains, arrivals) == {("X9", "NQRW"), ("Y1", "ACE")}
     assert routes_outside_the_table({"NQRW": [{"route_id": "D"}]}, {}) == set()
     assert routes_outside_the_table({"SIR": [{"route_id": "SS"}]}, {}) == set()
@@ -117,9 +119,11 @@ def world(monkeypatch):
     return inspect.unwrap(test_f03_boards.f03_world)(monkeypatch)
 
 
-def _feed(at: float, trips: list[tuple[str, str, str]]) -> bytes:
+def _feed(at: float, trips: list[tuple[str, str, str]], start_time: str = "") -> bytes:
     """A dated group feed whose trips each call once at a 219 platform two minutes on, so
-    each reaches the arrivals index with its route id."""
+    each reaches the arrivals index with its route id. `start_time` (New York, on the
+    world's day) makes every trip one not yet started, which the decoder indexes for
+    arrivals and does not place."""
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "1.0"
     feed.header.timestamp = int(at)
@@ -128,6 +132,9 @@ def _feed(at: float, trips: list[tuple[str, str, str]]) -> bytes:
         entity.id = trip_id
         entity.trip_update.trip.trip_id = trip_id
         entity.trip_update.trip.route_id = route_id
+        if start_time:
+            entity.trip_update.trip.start_date = "20260702"
+            entity.trip_update.trip.start_time = start_time
         call = entity.trip_update.stop_time_update.add()
         call.stop_id = stop_id
         call.arrival.time = int(at + 120)
@@ -185,3 +192,50 @@ async def test_ss_and_d_on_nqrw_raise_nothing(world):
     health, status = await _probe()
     assert models.HEALTH_SUBWAY_ROUTE_UNMAPPED not in health.json()["degraded"]
     assert status["subway_unmapped_routes"] == {}
+
+
+async def test_a_trip_not_yet_started_latches_its_route_and_two_groups_merge(world):
+    """The arrivals-only path the check reads: X9 on NQRW is a trip that starts at 09:00
+    New York, an hour after the world's clock (08:00), so the decoder indexes it for
+    arrivals and does not place it. ACE serves X9 too, placed. The latch names both groups."""
+    await pollers._refresh_subways(
+        app_module.app,
+        _upstream(
+            NOW,
+            {
+                "NQRW": _feed(NOW, [("x9-later", "X9", "219N")], start_time="09:00:00"),
+                "ACE": _feed(NOW, [("x9-now", "X9", "219S")]),
+            },
+        ),
+    )
+    placed = app_module.app.state.feed_cache["subways"]["data"]
+    assert [train["trip_id"] for train in placed if train.get("route_id") == "X9"] == ["x9-now"]
+    _, status = await _probe()
+    assert status["subway_unmapped_routes"] == {"X9": ["ACE", "NQRW"]}
+
+
+async def test_a_static_route_outside_the_table_is_named_and_expects_nothing(world):
+    """THE SIDE MEMBERSHIP READS (this branch's adversarial round, its F2). The static
+    routes-per-station index names X9 at 219 beside 2 and 5, and no feed serves it: /healthz
+    raises subway-route-unmapped, /api/status names X9 as listed in the static index, and
+    219's board still expects 1-7+S through 2 and 5 and answers 200, X9 expecting nothing.
+    When a feed serves X9 as well, both sources are named."""
+    app_module.app.state.subway_station_routes["219"] = ["2", "5", "X9"]
+    await pollers._refresh_subways(app_module.app, _upstream(NOW, {}))
+    health, status = await _probe()
+    assert health.status_code == 200
+    assert models.HEALTH_SUBWAY_ROUTE_UNMAPPED in health.json()["degraded"]
+    assert status["subway_unmapped_routes"] == {"X9": ["static"]}
+    transport = httpx.ASGITransport(app=app_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://q1") as http:
+        board = await http.get("/api/subway-arrivals/219")
+    assert board.status_code == 200
+    assert sorted(board.json()["systems"]) == ["1-7+S"]
+    assert cache._expected_groups(["2", "5", "X9"]) == {"1-7+S"}
+
+    world[0] = NOW + 20
+    await pollers._refresh_subways(
+        app_module.app, _upstream(NOW + 20, {"NQRW": _feed(NOW + 20, [("x9-1", "X9", "219N")])})
+    )
+    _, status = await _probe()
+    assert status["subway_unmapped_routes"] == {"X9": ["NQRW", "static"]}

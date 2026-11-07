@@ -218,8 +218,8 @@ async def test_the_upstreams_text_stays_on_the_operators_surface(fresh):
 
 async def test_the_503_before_any_poll_stays(fresh, monkeypatch):
     """Nothing tried, nothing to say: before any poll every board answers the warming 503,
-    and so do NJ Transit unconfigured and a PATH static group still loading, whose polls
-    never run and so write no block."""
+    and so do NJ Transit unconfigured, a PATH static group still loading and NJ Transit's
+    static still loading, whose polls never run and so write no block."""
     for _, board_path, _, _ in FAMILIES.values():
         response = await _get(board_path)
         assert (response.status_code, response.json()["detail"]) == (
@@ -237,6 +237,33 @@ async def test_the_503_before_any_poll_stays(fresh, monkeypatch):
     await pollers._refresh_path(app_module.app, _H6Upstream())
     assert app_module.app.state.feed_cache["path"].get("systems") is None
     assert app_module.app.state.feed_cache["path"]["error"]["status"] == 503
+    app_module.app.state.njt_static_status = "loading"
+    await pollers._refresh_njt(app_module.app, None)
+    assert app_module.app.state.feed_cache["njt"].get("systems") is None
+    response = await _get("/api/njt-arrivals/109")
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("Static NJ Transit GTFS is still loading")
+
+
+@pytest.mark.parametrize("family", ["path", "ferry"])
+async def test_an_undecodable_first_poll_writes_the_same_block(fresh, monkeypatch, family):
+    """A 200 whose body is not a protobuf, on the process's first poll: PATH's and the
+    ferry's own arm for it writes the never-decoded block too, so the board answers 200."""
+    from google.protobuf.message import DecodeError
+
+    async def html(*_args):
+        raise DecodeError("not a protobuf")
+
+    if family == "path":
+        monkeypatch.setattr(app_module, "fetch_path_trains", html)
+        await pollers._refresh_path(app_module.app, None)
+        response, system = await _get("/api/path-arrivals/26734"), "PATH"
+    else:
+        monkeypatch.setattr(app_module, "fetch_ferry_data", html)
+        await pollers._refresh_ferry(app_module.app, None)
+        response, system = await _get("/api/ferry-arrivals/18"), "ferry"
+    assert response.status_code == 200
+    assert response.json()["systems"] == {system: NEVER_DECODED}
 
 
 async def test_a_deadline_on_the_first_poll_writes_the_same_block(fresh, monkeypatch):

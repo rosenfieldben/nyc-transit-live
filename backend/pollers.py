@@ -606,10 +606,11 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
-    # THE ROUTE-TO-GROUP TABLE'S CHECK (Amendment 1, Q1): every route a group that decoded
-    # this poll served is in feeds.SUBWAY_ROUTE_GROUPS. A route outside it is a station
-    # whose expected groups miss one, so it is named on /api/status and raises the
-    # non-gating subway-route-unmapped on /healthz. LATCHED FOR THE PROCESS, never cleared
+    # THE ROUTE-TO-GROUP TABLE'S CHECK, ITS FEED SIDE (Amendment 1, Q1): every route a
+    # group that decoded this poll served is in feeds.SUBWAY_ROUTE_GROUPS. A route outside
+    # it is named on /api/status and raises the non-gating subway-route-unmapped on
+    # /healthz, beside the static index's side, which those surfaces read themselves
+    # (routes/status.py, _unmapped_subway_routes). LATCHED FOR THE PROCESS, never cleared
     # by a later poll: the table is code, so only a deploy can add the row, and a route
     # that runs for an hour overnight would otherwise be gone before the six-hourly
     # monitor could read it. Route id to the sorted groups that served it.

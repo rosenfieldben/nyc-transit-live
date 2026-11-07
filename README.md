@@ -917,9 +917,10 @@ And one is read off the subway's route-to-group table. A station board names the
 groups the station expects, read from its static routes through that table
 (`SUBWAY_ROUTE_GROUPS` in `backend/feeds/subway.py`, one row per route, written from a
 committed capture of which feed carries which route), so a route the table lacks is a
-station that may not name a dark group on its board. `subway-route-unmapped` says a live
-subway group has served such a route since the process started. `/api/status`'s
-`subway_unmapped_routes` names each route and the groups that served it, and the contract
+station that may not name a dark group on its board. `subway-route-unmapped` says the
+static routes index lists such a route, or a live subway group has served one since the
+process started. `/api/status`'s `subway_unmapped_routes` names each route and where it
+was seen (the feed groups that served it, and `static` for the index), and the contract
 monitor prints them in a `WARN`, the one recognized code that warns rather than fails,
 because what it asks for is a table row in the next deploy. It holds for the life of the
 process, since only a deploy can add the row, and it never gates.

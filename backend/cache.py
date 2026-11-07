@@ -463,8 +463,9 @@ def _expected_groups(station_routes: Iterable[str]) -> set[str]:
     "Expected" is "may serve", not "is serving": the index is a union over weekday,
     Saturday and Sunday service, so a weekend station can expect a group whose route runs
     there only on weekdays, which is harmless (a healthy group with no rows is fresh and
-    empty). A route the table lacks expects nothing here; the poller's route check
-    (feeds.routes_outside_the_table) names it on /api/status and /healthz.
+    empty). A route the table lacks expects nothing here; routes/status.py's
+    _unmapped_subway_routes names it on /api/status and raises subway-route-unmapped on
+    /healthz, whether the static index lists it or a live feed serves it.
     """
     return {SUBWAY_ROUTE_GROUPS[route] for route in station_routes if route in SUBWAY_ROUTE_GROUPS}
 

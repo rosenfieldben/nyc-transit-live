@@ -313,3 +313,48 @@ async def test_a_total_outage_goes_quiet_on_healthz_once_its_last_kept_row_depar
     assert "observations-qualified" in codes[620]
     assert "observations-qualified" not in codes[720]
     assert app_module.app.state.path_arrivals == {}
+
+
+@pytest.mark.parametrize("family", ["path", "ferry"])
+async def test_an_undecodable_body_prunes_and_marks_like_any_failure(world, monkeypatch, family):
+    """PATH's and the ferry's own arm for a 200 whose body is not a protobuf (a proxy's
+    HTML), beside their HTTP-error arm: it prunes the departed kept row like any total
+    failure, keeps the undeparted one, and leaves the board naming the system failed."""
+    from google.protobuf.message import DecodeError
+
+    if family == "path":
+        rows = {"To New Jersey": [_row("soon", T + 30), _row("later", T + 300)]}
+        board_path, fetch, key = (
+            "/api/path-arrivals/26733",
+            "fetch_path_trains",
+            "directions",
+        )
+
+        async def healthy(client, stops):
+            return [], {"26733": rows}, OBSERVED, 0
+
+        refresh = pollers._refresh_path
+    else:
+        rows = {"East River": [_row("soon", T + 30, T + 30), _row("later", T + 300, T + 330)]}
+        board_path, fetch, key = (
+            "/api/ferry-arrivals/18",
+            "fetch_ferry_data",
+            "routes",
+        )
+
+        async def healthy(client, static):
+            return [], {"18": rows}, OBSERVED
+
+        refresh = pollers._refresh_ferry
+
+    async def html(*_args):
+        raise DecodeError("not a protobuf")
+
+    monkeypatch.setattr(app_module, fetch, healthy)
+    await refresh(app_module.app, None)
+    monkeypatch.setattr(app_module, fetch, html)
+    world[0] = T + 40
+    await refresh(app_module.app, None)
+    board = await _board(board_path)
+    assert [r["arrival"] for bucket in board[key].values() for r in bucket] == [T + 300]
+    assert [block["ok"] for block in board["systems"].values()] == [False]

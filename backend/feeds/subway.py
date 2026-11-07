@@ -116,10 +116,11 @@ def routes_outside_the_table(
     table".
 
     ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP. A D trip on the NQRW feed passes, because D
-    has a row; what this catches is a route id the table has never heard of, which is the
-    case where a station's expected groups would silently miss one. Both outputs are read,
-    placed trains and arrival rows, because a trip not yet started is indexed for arrivals
-    and skipped for placement. A row with no route id says nothing.
+    has a row; what this catches is a route id the table has never heard of. This is the
+    FEED side of the check; the side membership reads, the static routes-per-station index,
+    is checked where both are served (routes/status.py, _unmapped_subway_routes). Both
+    outputs are read, placed trains and arrival rows, because a trip not yet started is
+    indexed for arrivals and skipped for placement. A row with no route id says nothing.
     """
     found: set[tuple[str, str]] = set()
     for group, trains in trains_by_group.items():

@@ -864,9 +864,11 @@ test("6.2 UNDATED_SYSTEMS is exactly the railroad systems the backend never date
    and the operator's copy of each failure to tests/e2e/fixtures/q10_first_poll_boards.json.
 
    THE CONTROL FIRST: the operator's detail, through the panel's failed-fetch path, IS read out, so
-   this harness sees a marker when one reaches a rider. Then the board: every surface reads the
-   empty board as it reads today (Step 3 gives the never-decoded block its words), and neither
-   marker is anywhere in it. */
+   this harness sees a marker when one reaches a rider. Then the board: neither marker is anywhere
+   in it, and every surface reads it exactly as fresh empty service. THAT LAST HALF IS THE INTERIM,
+   pinned as decided and on the 2026-10-12 record's live list (Step 2's adversarial round, its F1):
+   no renderer reads the never-decoded block's `ok` until Step 3 gives it its words, so these
+   literals are the ones Step 3 moves. */
 test("Q10 a failed first poll reaches the rider as a board, never as the upstream's own text", () => {
   const served = JSON.parse(
     readFileSync(join(__dirname, "..", "tests", "e2e", "fixtures", "q10_first_poll_boards.json"), "utf8"),

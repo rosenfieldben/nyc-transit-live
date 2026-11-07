@@ -2711,8 +2711,11 @@ with `fetched_at: null` and `ok: false`; in world A 1-7+S `ok` with its content 
 none of the four is identical to fresh empty service's board. The witness moved the nine
 checks A1.4 measured and reads PARTLY, the backend half fixed. The route-to-group table has
 30 rows, the 29 the live archive lists and SS, with D in BDFM and its one NQRW sample recorded
-as an exception; Q1's check is a non-gating `/healthz` code, `subway-route-unmapped`, which
-`/api/status` names and the contract monitor prints as a `WARN`. The f03 world now carries
+as an exception; Q1's check is a non-gating `/healthz` code, `subway-route-unmapped`, over the
+routes live groups serve and, since the branch's adversarial round, the routes the static index
+lists, the side membership reads, which `/api/status` names and the contract monitor prints as
+a `WARN`. Its review also found that Q10's never-decoded block reads, until Step 3, as fresh
+empty service (the paragraph below the steps says so). The f03 world now carries
 219's real static routes (the committed census of production's stations), and the golden
 stayed equal under the union, as A1.4 measured. The monitor's two board lines read the four
 states. Three things the build measured and did not change, because Q9 and Q10 named their
@@ -2743,6 +2746,17 @@ failed contributor in front of today's renderer makes an empty board read `as of
 from 90 s after the last decode (A03's world C, the control), never less honest than now.
 The one surface Step 2 cannot leave for later is the monitor: a never-decoded block fails both
 of its board lines (A1.4), so their four-state reading lands with Step 2.
+**Amended 2026-11-07, measured by Step 2's adversarial round (its F1):** that safety holds for a
+contributor that decoded and is failing, and not for Q10's never-decoded block. A single-system
+board, or a railroad board with both railroads failing, that answers a failed first poll with a
+200 and that block reaches today's renderer, which reads no block's `ok`, as fresh empty
+service ("World Trade Center, PATH. No trains.", "Wall St/Pier 11, Ferry. No boats."), where
+the 502 it replaces printed and spoke an error, in the upstream's words. So between Step 2 and
+Step 3 those four boards say less on a failed first poll than they did; the subway, whose
+never-decoded group already read as fresh empty service, is unchanged. The page is not silent:
+the vehicle envelopes still answer the recorded 502, and its detail, the upstream's text
+included, reaches the status line. Landing Steps 2 and 3 together closes that window, and the
+2026-10-12 record's live list carries it for a ruling.
 
 ### Decisions, 2026-11-01
 

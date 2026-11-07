@@ -1083,11 +1083,12 @@ class StatusResponse(BaseModel):
     # so every earlier /api/status fixture validates unchanged.
     njt_mint_allowance: NjtMintAllowance | None = None
     subway_feeds: SubwayFeedHealth | None
-    # Every route a live subway group has served in this process that has no row in the
-    # route-to-group table (Amendment 1, Q1; feeds.SUBWAY_ROUTE_GROUPS), route id to the
-    # sorted groups that served it; {} when every one is placed. Beside subway_feeds rather
-    # than inside it, because that dict is replaced every poll and this is held for the
-    # process (HEALTH_SUBWAY_ROUTE_UNMAPPED says why).
+    # Every subway route outside the route-to-group table (Amendment 1, Q1;
+    # feeds.SUBWAY_ROUTE_GROUPS), route id to where it was seen, sorted: the feed groups
+    # that served it in this process and "static" when the static routes-per-station index
+    # names it; {} when every one is placed. Beside subway_feeds rather than inside it,
+    # because that dict is replaced every poll and this is held for the process
+    # (HEALTH_SUBWAY_ROUTE_UNMAPPED says why).
     subway_unmapped_routes: dict[str, list[str]] = {}
     railroad_feeds: RailroadFeedHealth | None
     # THE POSITION LADDER'S COUNTS PER RAILROAD SYSTEM (contract 6.3), a SIBLING of
@@ -1183,10 +1184,11 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # served arrival rows are more than 600 seconds old (526 are past a rider's 90), because
 # LIRR dates each prediction by its trip_update.timestamp and most of those are old on
 # an ordinary evening. An any-row rule would therefore be on permanently, and the
-# contract monitor fails its run on ANY recognized code, so a code that is always on is
-# a monitor nobody reads. The whole-system rule is quiet on that capture (45 of its 97
-# trips carry a prediction inside the band) and fires in every case the code exists
-# for: a subway group serving content older than the band while polled fresh (the F03
+# contract monitor fails its run on any recognized code but one (subway-route-unmapped,
+# its only WARN), so a code that is always on is a monitor nobody reads. The whole-system
+# rule is quiet on that capture (45 of its 97 trips carry a prediction inside the band)
+# and fires in every case the code exists for: a subway group serving content older
+# than the band while polled fresh (the F03
 # world, once past its ten minutes), a carried-forward system whose rows have aged past
 # the band, a total outage whose rows age past it, PATH's bridge serving fresh write
 # times over trip clocks older than it, and a dropped system. The last is the fallback
@@ -1257,16 +1259,17 @@ HEALTH_NJT_MINT_ALLOWANCE = "njt-mint-allowance"
 HEALTH_SUBWAY_LINES_DEGRADED = "subway-lines-degraded"
 # A ROUTE THE ROUTE-TO-GROUP TABLE DOES NOT KNOW (Amendment 1 to the freshness contract,
 # Q1). A subway station's board names the groups it EXPECTS, read from the static
-# routes-per-station index through feeds.SUBWAY_ROUTE_GROUPS, so a route a live group
-# serves and the table lacks is a station whose expected groups miss one: a group that has
-# never decoded, or whose rows have expired, would drop out of that board unnamed, which is
-# the defect A03 measured. Raised once any group that decoded has served such a route in
-# this process, and held for the life of the process, because the table is code and only a
-# deploy can add the row (pollers._refresh_subways). ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP: a D
-# trip on the NQRW feed does not raise it, D having a row. /api/status's
-# subway_unmapped_routes names each route and the groups that served it, and the contract
-# monitor prints them in a WARN. Degraded rather than gating: the table's drift is not a
-# reason to refuse a build, the build that fixes it included.
+# routes-per-station index through feeds.SUBWAY_ROUTE_GROUPS, so a route the index names
+# and the table lacks is a station whose expected groups miss one: a group that has never
+# decoded, or whose rows have expired, would drop out of that board unnamed, which is the
+# defect A03 measured. Raised while the index names such a route, or once any group that
+# decoded has served one in this process, and held for the life of the process, because
+# the table is code and only a deploy can add the row (routes/status.py,
+# _unmapped_subway_routes). ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP: a D trip on the
+# NQRW feed does not raise it, D having a row. /api/status's subway_unmapped_routes names
+# each route and where it was seen, and the contract monitor prints them in a WARN.
+# Degraded rather than gating: the table's drift is not a reason to refuse a build, the
+# build that fixes it included.
 HEALTH_SUBWAY_ROUTE_UNMAPPED = "subway-route-unmapped"
 
 HEALTH_DEGRADED_CODES = (

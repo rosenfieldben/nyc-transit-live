@@ -313,8 +313,9 @@ PRODUCTION_HEALTH_CODES = (
 )
 
 # THE ONE RECOGNIZED CODE THAT IS A WARN, NOT A FAIL. Every other code names a state
-# riders are paying for now; subway-route-unmapped (Amendment 1, Q1) names a route a live
-# subway group served that the app's route-to-group table has no row for. Nothing is
+# riders are paying for now; subway-route-unmapped (Amendment 1, Q1) names a route that a
+# live subway group served, or the static routes index lists, and the app's route-to-group
+# table has no row for. Nothing is
 # broken for riders at that moment: what it costs is that a station served by that route
 # may not name the route's group on its board when the group goes dark, so it asks for a
 # table row in the next deploy, not a page. The run reads the routes and their groups from
@@ -376,8 +377,9 @@ _HEALTH_CODE_NOTES = {
         "nothing wrong"
     ),
     "subway-route-unmapped": (
-        "a live subway group served a route the app's route-to-group table "
-        "(feeds.SUBWAY_ROUTE_GROUPS) has no row for, so a station that route serves may not "
+        "a live subway group served, or the static routes index lists, a route the app's "
+        "route-to-group table (feeds.SUBWAY_ROUTE_GROUPS) has no row for, so a station that "
+        "route serves may not "
         "name the group on its board when the group goes dark; add the row from a capture of "
         "the feeds and redeploy, which is also what clears the code, since a running process "
         "holds it for its life"
@@ -2591,27 +2593,39 @@ _SAFE_ROUTE_RE = re.compile(r"^[A-Za-z0-9]{1,8}\Z")
 
 
 def _unmapped_route_names(unmapped_routes: object) -> str:
-    """The routes /api/status says the route-to-group table lacks, each with the groups
-    that served it, for subway-route-unmapped's WARN. A route or group that does not look
-    like one is counted, never quoted (_check_production_health's rule)."""
+    """The routes /api/status says the route-to-group table lacks, each with where it was
+    seen, for subway-route-unmapped's WARN: the feed groups that served it, and "static"
+    when the app's static routes-per-station index lists it. A route or a source that does
+    not look like one is counted, never quoted (_check_production_health's rule), and so is
+    a route listing more sources than there are (eight feed groups and the index). At most
+    _MAX_NAMED_SYSTEMS routes are named and the rest counted, for the reason that cap
+    exists: one oversized line can cost the job summary its whole table."""
     if not isinstance(unmapped_routes, dict) or not unmapped_routes:
         return "/api/status names no route (subway_unmapped_routes is empty or unreadable)"
     shown, hidden = [], 0
     for route in sorted(unmapped_routes, key=str):
-        groups = unmapped_routes[route]
-        if (
+        sources = unmapped_routes[route]
+        if not (
             isinstance(route, str)
             and _SAFE_ROUTE_RE.match(route)
-            and isinstance(groups, list)
-            and groups
-            and all(isinstance(g, str) and _SAFE_GROUP_RE.match(g) for g in groups)
+            and isinstance(sources, list)
+            and 0 < len(sources) <= 9
+            and all(isinstance(g, str) and _SAFE_GROUP_RE.match(g) for g in sources)
         ):
-            shown.append(f"route {route} (served by {' and '.join(sorted(groups))})")
-        else:
             hidden += 1
+            continue
+        groups = sorted(g for g in sources if g != "static")
+        where = [f"served by {' and '.join(groups)}"] if groups else []
+        if "static" in sources:
+            where.append("listed in the static routes index")
+        shown.append(f"route {route} ({', '.join(where)})")
+    parts = shown[:_MAX_NAMED_SYSTEMS]
+    over = len(shown) - len(parts)
+    if over:
+        parts.append(f"{over} more not named (over the {_MAX_NAMED_SYSTEMS} name cap)")
     if hidden:
-        shown.append(f"{hidden} with an unprintable name")
-    return "not in the route-to-group table: " + ", ".join(shown)
+        parts.append(f"{hidden} with an unprintable name")
+    return "not in the route-to-group table: " + ", ".join(parts)
 
 
 def _served_at_of(payload: object) -> float | None:
@@ -3398,10 +3412,17 @@ class _BoardClocks(NamedTuple):
 
 def _never_decoded(block: object) -> bool:
     """Whether the board names this contributor as one that has NEVER DECODED in the
-    deployment's process (the freshness contract's Amendment 1, Q2): ok false AND
-    fetched_at null. Both, because a block can carry a null clock with ok true (a
-    page's substitute block has exactly that shape), and that is not this state."""
-    return isinstance(block, dict) and block.get("ok") is False and block.get("fetched_at") is None
+    deployment's process (the freshness contract's Amendment 1, Q2): ok false, fetched_at
+    null AND feed_timestamp null, the block the backend writes for it. All three: a block
+    can carry a null poll clock with ok true (a page's substitute block has exactly that
+    shape), which is not this state, and one that carries a content clock is a clock to
+    judge, never one to excuse."""
+    return (
+        isinstance(block, dict)
+        and block.get("ok") is False
+        and block.get("fetched_at") is None
+        and block.get("feed_timestamp") is None
+    )
 
 
 def _board_contributor_clocks(board: dict) -> tuple[_BoardClocks | None, str]:
@@ -3445,6 +3466,14 @@ def _board_contributor_clocks(board: dict) -> tuple[_BoardClocks | None, str]:
     undated = [name for name, clock in clocks.items() if clock is None]
     if undated:
         missing.append("a feed_timestamp on " + _group_list(undated))
+    if never and not clocks:
+        # Rows, and not one contributor that has decoded to date them: whatever served
+        # them, the board cannot say how old they are, which is this rule's whole case.
+        missing.append(
+            "a contributor that has decoded (never decoded in this process: "
+            + _group_list(never)
+            + ")"
+        )
     if missing or served_at is None:
         return None, "lacks " + ", ".join(missing)
     dated = {name: clock for name, clock in clocks.items() if clock is not None}

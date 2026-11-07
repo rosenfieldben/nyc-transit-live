@@ -4861,6 +4861,71 @@ def test_a_never_decoded_contributor_on_a_populated_board_is_its_own_state():
         assert "lacks a feed_timestamp on BDFM." in line.detail
 
 
+def test_a_populated_board_no_decoded_contributor_dates_still_fails_both_lines():
+    """THE ROUND'S F3. Rows on the board and every contributor never decoded: nothing dates
+    those rows, which is the case the populated-board FAIL exists for, so the never-decoded
+    excuse must not reach it. And a block reading ok false and fetched_at null that still
+    carries a content clock is no never-decoded block: its clock is judged."""
+    board = _g08({"ACE": None, "BDFM": None}, ACE=_NEVER, BDFM=_NEVER)
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert (
+            "lacks a contributor that has decoded (never decoded in this process: ACE, BDFM)"
+            in line.detail
+        )
+    clocked = _g08(
+        {"ACE": 995.0, "BDFM": 300.0},
+        BDFM={"ok": False, "fetched_at": None, "feed_timestamp": 300.0},
+    )
+    assert (_clock_line(clocked).status, _clock_line(clocked).detail) == (
+        cm.WARN,
+        "content older than 600s: BDFM 700s",
+    )
+
+
+def test_a_null_clock_on_a_reporting_contributor_is_still_a_missing_clock():
+    """THE ROUND'S F11. NQRW reads ok true with both clocks null, the shape a page's
+    substitute block has: not the never-decoded state, so both lines still FAIL it."""
+    board = _g08({"ACE": 995.0, "BDFM": 990.0, "NQRW": None}, NQRW={"fetched_at": None})
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert "lacks the envelope feed_timestamp, a feed_timestamp on NQRW." in line.detail
+
+
+def test_an_empty_board_whose_contributors_all_failed_after_decoding_is_the_named_warn():
+    """THE ROUND'S F10. No never-decoded group at all: every contributor failed after
+    decoding is the same named WARN."""
+    board = _g08(
+        {"ACE": 290.0, "BDFM": 340.0, "NQRW": 345.0},
+        rows=0,
+        ACE={"ok": False, "fetched_at": 300.0},
+        BDFM={"ok": False, "fetched_at": 350.0},
+        NQRW={"ok": False, "fetched_at": 355.0},
+    )
+    says = (
+        "board G08 serves no arrival rows and none of its contributors is reporting "
+        "(failed, last decoded: ACE 700s, BDFM 650s, NQRW 645s), so its empty board says "
+        "nothing about service"
+    )
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert (line.status, line.detail) == (cm.WARN, says)
+
+
+def test_the_route_table_names_say_where_each_route_was_seen_and_are_capped():
+    """The static routes index is a source of its own ("listed in the static routes
+    index"), at most ten routes are named and the rest counted (the round's F6), and a
+    route listing more sources than exist is counted as unprintable."""
+    assert cm._unmapped_route_names({"X9": ["static"], "Y1": ["NQRW", "static"]}) == (
+        "not in the route-to-group table: route X9 (listed in the static routes index), "
+        "route Y1 (served by NQRW, listed in the static routes index)"
+    )
+    many = {f"R{n:02d}": ["NQRW"] for n in range(12)}
+    many["Z1"] = [f"G{n}" for n in range(10)]
+    named = cm._unmapped_route_names(many)
+    assert named.count("route R") == 10
+    assert named.endswith("2 more not named (over the 10 name cap), 1 with an unprintable name")
+
+
 def test_a_failed_contributor_on_a_populated_board_is_banded_by_its_kept_clock():
     """Failed after decoding: production:board-clock ages it by the clock it kept,
     against the 600 s band, as it always did (inside it a PASS, past it a WARN), and

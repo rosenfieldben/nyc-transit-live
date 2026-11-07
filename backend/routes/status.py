@@ -14,7 +14,7 @@ import njt_auth
 import static_data
 import static_shared
 from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, OPERATOR_STALE_AFTER_S, _feed_age
-from feeds import RAILROAD_FRESHNESS_SYSTEMS, iter_rows
+from feeds import RAILROAD_FRESHNESS_SYSTEMS, SUBWAY_ROUTE_GROUPS, iter_rows
 from models import (
     HEALTH_BUS_INDEX_FAILED,
     HEALTH_FEED_CONTENT_STALE,
@@ -217,7 +217,7 @@ async def get_status(request: Request, response: Response) -> dict:
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         # The route-to-group table's check (Amendment 1, Q1): the routes it lacks, by name,
         # for the code /healthz raises over them (models.HEALTH_SUBWAY_ROUTE_UNMAPPED).
-        "subway_unmapped_routes": getattr(app.state, "subway_unmapped_routes", None) or {},
+        "subway_unmapped_routes": _unmapped_subway_routes(app.state),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         # The position ladder's counts per railroad system (contract 6.3), beside
         # railroad_feeds rather than inside it: see models.StatusResponse.
@@ -419,6 +419,37 @@ def _health_codes(
     if subway_route_unmapped:
         codes.append(HEALTH_SUBWAY_ROUTE_UNMAPPED)
     return codes
+
+
+# The source a route outside the route-to-group table is named under when the static
+# routes-per-station index lists it, beside the feed groups that served it.
+UNMAPPED_IN_STATIC_INDEX = "static"
+
+
+def _unmapped_subway_routes(state: object) -> dict[str, list[str]]:
+    """Every subway route outside the route-to-group table (Amendment 1, Q1), with where it
+    was seen: the feed groups that served it in this process (the poller's latch,
+    pollers._refresh_subways) and UNMAPPED_IN_STATIC_INDEX when the static routes-per-station
+    index names it. ONE ANSWER FOR BOTH SURFACES, /api/status's subway_unmapped_routes and
+    /healthz's subway-route-unmapped, so the two cannot disagree.
+
+    BOTH SIDES, BECAUSE MEMBERSHIP READS THE STATIC ONE. A station's expected groups come
+    from the index (cache._expected_groups), so a route the index names and the table lacks
+    expects nothing at the stations it serves, and a group failing there drops out of their
+    boards unnamed: A03's shape, at those stations. The feed side alone missed that (this
+    branch's adversarial round, its F2): such a route may never reach a feed under that id.
+    The index is fixed for the process, so it is read here rather than latched. Sorted, for
+    a stable payload; typed defensively, because this reads app.state.
+    """
+    found: dict[str, set[str]] = {
+        route: set(groups)
+        for route, groups in (getattr(state, "subway_unmapped_routes", None) or {}).items()
+    }
+    for routes in (getattr(state, "subway_station_routes", None) or {}).values():
+        for route in routes or []:
+            if route not in SUBWAY_ROUTE_GROUPS:
+                found.setdefault(route, set()).add(UNMAPPED_IN_STATIC_INDEX)
+    return {route: sorted(found[route]) for route in sorted(found)}
 
 
 def _draws_a_line(routes: list) -> bool:
@@ -715,7 +746,7 @@ async def healthz(request: Request) -> JSONResponse:
             getattr(app.state, "subway_static_status", None) == "ready"
             and not _draws_a_line(getattr(app.state, "subway_routes", None) or [])
         ),
-        subway_route_unmapped=bool(getattr(app.state, "subway_unmapped_routes", None)),
+        subway_route_unmapped=bool(_unmapped_subway_routes(app.state)),
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

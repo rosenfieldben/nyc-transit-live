@@ -47,6 +47,7 @@ from feeds import (
     carry_forward_prev,
     combine_group_arrivals,
     combine_group_trains,
+    drop_departed_rows,
     drop_expired_arrivals,
     match_path_identities,
     merge_alert_generations,
@@ -204,6 +205,9 @@ def _feed_degrader(app: FastAPI, name: str, entry: dict):
         # The per-system freshness block, where this envelope has one. Same helper the
         # total-failure paths use, so a rider sees the same dimming either way.
         _mark_all_systems_failed(entry)
+        # And the kept rows whose time has passed (Q9), which a refresher's own failure
+        # arms prune and a deadline or an unclassified failure never reaches.
+        _drop_departed_kept_rows(app, name)
 
     return mark
 
@@ -372,6 +376,47 @@ def _mark_all_systems_failed(entry: dict) -> None:
     """
     for block in (entry.get("systems") or {}).values():
         block["ok"] = False
+
+
+# THE ARRIVALS INDEX EACH FAMILY KEEPS WHOLE ON A TOTAL FAILURE, which Amendment 1's Q9
+# prunes. PATH, the ferry and NJ Transit keep their last decode on every failed poll, and
+# the railroads on a TOTAL failure return before any merge; none of them ran
+# drop_expired_arrivals, so a departed train was served as `reported`, counting down to
+# "now", for as long as the outage lasted (A1.2 measured an NJ Transit row reading
+# "as of 4h ago departs now"). The subway's total failure is not here: Q9 named these
+# four.
+_KEPT_ARRIVALS = {
+    "railroads": "railroad_arrivals",
+    "path": "path_arrivals",
+    "ferry": "ferry_arrivals",
+    "njt": "njt_arrivals",
+}
+
+
+def _drop_departed_kept_rows(app: FastAPI, name: str) -> None:
+    """Prune the rows a failed poll kept for `name` whose time has passed (Q9), by
+    feeds.row_departed's rule with its zero grace: the same rule drop_expired_arrivals
+    applies to a retaining family's failed system. RETENTION IS UNCHANGED: nothing that has
+    not departed is dropped, and every kept row keeps its provenance and its clock. So an
+    outage empties these boards into the four states Amendment 1 defines, the way a
+    retaining family's partial failure always has.
+
+    Called on every TOTAL failure: by each of the four refreshers' own failure arms, and
+    by _feed_degrader for the deadline and an unclassified failure, which never reach
+    them. A no-op for any other source. The railroad index keeps its per-system keys
+    (drop_expired_arrivals over every system), because an ABSENT system key means "the
+    merge removed it" to /healthz's dropped rung (routes/status.py's _was_dropped); the
+    three single-system indexes are one flat map each.
+    """
+    index = _KEPT_ARRIVALS.get(name)
+    if index is None:
+        return
+    kept = getattr(app.state, index, None) or {}
+    now = time.time()
+    if name == "railroads":
+        setattr(app.state, index, drop_expired_arrivals(kept, now, kept))
+    else:
+        setattr(app.state, index, drop_departed_rows(kept, now))
 
 
 def _routes_by_system(data_by_system: dict[str, list[dict]]) -> dict[str, list[str]]:
@@ -624,6 +669,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "failed": sorted(RAILROAD_FEED_URLS),
         }
         _mark_all_systems_failed(entry)
+        _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
@@ -633,6 +679,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "failed": sorted(RAILROAD_FEED_URLS),
         }
         _mark_all_systems_failed(entry)
+        _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     # Partial failures still return data; record which systems dropped so
@@ -749,9 +796,10 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
 
     Same cache contract as the other systems: a failed poll keeps the
     last-known trains AND arrivals (the error only surfaces to clients while
-    the cache has never filled), and both are replaced only on a poll that
-    decoded. Deliberately NO carry_forward_prev here: that anchor memory keys
-    on trip ids, and PATH bridge trip ids do not survive an upstream refresh
+    the cache has never filled), the arrivals less any whose time has passed
+    (Amendment 1's Q9), and both are replaced only on a poll that decoded.
+    Deliberately NO carry_forward_prev here: that anchor memory keys on trip
+    ids, and PATH bridge trip ids do not survive an upstream refresh
     (see path_static's module docstring). Identity and anchors come from
     match_path_identities instead (13d), which each successful poll threads
     its state through; a failed poll leaves that state untouched too, since a
@@ -776,11 +824,13 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
         trains, arrivals, feed_timestamp, unresolved = await main.fetch_path_trains(client, stops)
     except httpx.HTTPError as exc:
         app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, f"Upstream PATH bridge feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (bridge error page, proxy HTML).
         app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, "Upstream PATH bridge feed returned undecodable data")
         return
     # A nonzero unresolved count means the bridge referenced station ids the
@@ -817,7 +867,8 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     entry.update(data=served, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.path_arrivals = arrivals
 
 
@@ -858,11 +909,13 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
     except httpx.HTTPError as exc:
         app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, f"Upstream NYC Ferry feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
         app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, "Upstream NYC Ferry feed returned undecodable data")
         return
     app.state.ferry_feed_health = {"total": 1, "ok": 1, "failed": []}
@@ -871,7 +924,8 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
     # empty boats list REPLACES the cache here on purpose (see the docstring).
     entry.update(data=boats, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.ferry_arrivals = arrivals
 
 
@@ -925,6 +979,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         """
         app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
         _mark_all_systems_failed(entry)
+        _drop_departed_kept_rows(app, "njt")
         _note_failure(entry, status, detail, log=log)
 
     if getattr(app.state, "njt_static_status", None) != "ready":
@@ -1050,7 +1105,8 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         ),
     )
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.njt_arrivals = arrivals
 
 

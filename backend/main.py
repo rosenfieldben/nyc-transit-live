@@ -275,9 +275,10 @@ async def lifespan(app: FastAPI):
     # network at all, and that is a configuration choice rather than an outage, so
     # it never wears "failed" (see warmups._warm_njt_static).
     app.state.njt_static_status = "loading"
-    # 15b realtime: the per-stop arrivals index each successful NJT poll rebuilds,
-    # and the single-feed health block /api/status reads. Its own fields, never
-    # merged: NJT ids collide with MTA, PATH and ferry ids.
+    # 15b realtime: the per-stop arrivals index each successful NJT poll rebuilds
+    # (a failed poll keeps it, less any row whose time has passed), and the
+    # single-feed health block /api/status reads. Its own fields, never merged: NJT
+    # ids collide with MTA, PATH and ferry ids.
     app.state.njt_arrivals = {}
     app.state.njt_feed_health = None
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
@@ -303,12 +304,14 @@ async def lifespan(app: FastAPI):
     # last-known arrivals). Empty until the first successful railroad poll.
     app.state.railroad_arrivals = {}
     # Per-station PATH arrivals, rebuilt by each successful PATH poll (empty
-    # until the first one; a failed poll keeps the last-known index). Its own
-    # field, never merged with the MTA indexes: PATH ids collide numerically.
+    # until the first one; a failed poll keeps the last-known index, less any row
+    # whose time has passed). Its own field, never merged with the MTA indexes:
+    # PATH ids collide numerically.
     app.state.path_arrivals = {}
     # Per-dock NYC Ferry arrivals, rebuilt by each successful ferry poll (empty
-    # until the first one; a failed poll keeps the last-known index). Its own
-    # field, never merged: ferry ids collide numerically with MTA and PATH ids.
+    # until the first one; a failed poll keeps the last-known index, less any row
+    # whose time has passed). Its own field, never merged: ferry ids collide
+    # numerically with MTA and PATH ids.
     app.state.ferry_arrivals = {}
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).

@@ -2023,6 +2023,10 @@ async def test_ferry_refresh_empty_success_replaces_boats(client, cache, monkeyp
 async def test_ferry_refresh_failure_retains_last_known(client, cache, monkeypatch):
     cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
     app_module.app.state.ferry_arrivals = FERRY_ARRIVALS_INDEX
+    # The world's own clock, before the kept row is due (1500): a failed poll prunes a
+    # kept row whose time has passed (Amendment 1, Q9), and on the wall clock this one
+    # departed in 1970.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1001.0)
 
     async def boom(client_arg, static_arg):
         raise httpx.ConnectError("ferry host down")
@@ -2309,6 +2313,10 @@ async def test_path_refresh_failure_keeps_last_known(client, path_rt_state, cach
     # arrivals (consistent with the other systems) while recording the error.
     cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
     app_module.app.state.path_arrivals = PATH_ARRIVALS
+    # The world's own clock, one poll on and before the kept row is due (1500): a failed
+    # poll prunes a kept row whose time has passed (Amendment 1, Q9), and on the wall clock
+    # this one departed in 1970.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1021.0)
 
     async def boom(client_arg, stops_arg):
         raise httpx.ConnectError("bridge down at https://path.transitdata.nyc/gtfsrt")

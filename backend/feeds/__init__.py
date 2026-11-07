@@ -105,11 +105,13 @@ from feeds.shared import (
     _trim_arrivals,
     _trip_start_ts,
     carry_forward_prev,
+    drop_departed_rows,
     drop_expired_arrivals,
     iter_rows,
     logger,
     merge_system_generations,
     parse_feed,
+    row_departed,
 )
 from feeds.subway import (
     _SUBWAY_BASE,
@@ -158,6 +160,8 @@ __all__ = [
     "iter_rows",
     "merge_system_generations",
     "drop_expired_arrivals",
+    "drop_departed_rows",
+    "row_departed",
     # The strict parse boundary every decoder goes through (C3).
     "parse_feed",
     "FeedDecodeError",

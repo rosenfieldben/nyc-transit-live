@@ -1203,11 +1203,14 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # the same, and test_a_system_that_never_decoded_has_dropped_nothing pins the rule.
 # Second, the dropped half names only systems that RETAIN, the subway groups and the
 # railroads. NJ Transit, the ferry and PATH keep their last rows on a failed poll
-# instead, and those rows age past the band like any other; but one of them that fails
-# while serving nothing (an empty feed is an ordinary overnight state for NJ Transit and
-# the ferry) has no row to age and none to drop, so this code says nothing for as long
-# as the outage lasts, while /api/status still shows the feed's error. Closing that
-# needs a decision about the overnight empty state first, so it is not closed here.
+# instead, each until its time has passed (Amendment 1's Q9 prunes a departed one), and
+# those rows age past the band like any other; but one of them that fails while serving
+# nothing (an empty feed is an ordinary overnight state for NJ Transit and the ferry), or
+# whose last kept row has departed, has no row to age and none to drop, so this code says
+# nothing from then for as long as the outage lasts, while /api/status still shows the
+# feed's error. A total railroad outage whose last kept row has departed is the same case.
+# Amendment 1 decided the overnight empty state (Q5): failed and never decoded are named
+# from the block's `ok`, which its Step 3 builds, closing both blind spots.
 HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and

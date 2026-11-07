@@ -379,11 +379,21 @@ def iter_rows(value):
         for item in value:
             yield from iter_rows(item)
     elif isinstance(value, dict):
-        if any(isinstance(item, (list, dict)) for item in value.values()):
+        if _is_row(value):
+            yield value
+        else:
             for item in value.values():
                 yield from iter_rows(item)
-        elif value:
-            yield value
+
+
+def _is_row(value) -> bool:
+    """iter_rows' rule, stated once: a non-empty dict none of whose values is a list or a
+    dict is a ROW; any other dict is a container (an empty one holding nothing)."""
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and not any(isinstance(item, (list, dict)) for item in value.values())
+    )
 
 
 def merge_system_generations(
@@ -487,6 +497,47 @@ def _stamp_retained(carried):
     return carried
 
 
+def row_departed(row: Mapping, now: float) -> bool:
+    """Whether a served arrival row's time has passed, with ZERO grace: THE ONE RULE every
+    prune of kept rows applies (drop_expired_arrivals for a retaining family's failed
+    system, drop_departed_rows for a family's total failure, Amendment 1's Q9).
+
+    A ROW'S TIME IS THE LATER OF ITS ARRIVAL AND ITS DEPARTURE, the house rule
+    (_stop_time's): a train dwelling at a platform has arrived and not left, and it has
+    not departed. The subway, railroad and PATH rows carry that later time in `arrival`
+    already, the decoders having taken it; NJ Transit and ferry rows carry both, so the
+    rule reads both, and a train standing at Penn with its departure ahead is kept. A row
+    with no time at all is kept: nothing says it has gone.
+
+    ZERO GRACE, UNLIKE THE DECODERS' MINUTE. A decoder keeps a stop up to a minute past
+    its time because a train just departed is still the right answer on a FRESH poll. A
+    kept row is not fresh, and one whose time has passed is a countdown to something that
+    no longer exists.
+    """
+    times = [row.get(field) for field in ("arrival", "departure")]
+    known = [t for t in times if t is not None]
+    return bool(known) and max(known) < now
+
+
+def drop_departed_rows(value, now: float):
+    """`value`, any nesting of dicts and lists the arrivals indexes use, with every row
+    row_departed says has gone removed, and every container that removal emptied removed
+    with it (the shape drop_expired_arrivals has always left: no empty bucket, no empty
+    station). Rows are told from containers by iter_rows' structural rule, and the rows
+    kept are the same objects, unchanged: this removes, it never relabels.
+    """
+    if isinstance(value, list):
+        items = (drop_departed_rows(item, now) for item in value)
+        return [item for item in items if item]
+    if isinstance(value, dict):
+        if _is_row(value):
+            # A departed row comes back empty, so the container holding it drops it.
+            return {} if row_departed(value, now) else value
+        pruned = {key: drop_departed_rows(item, now) for key, item in value.items()}
+        return {key: item for key, item in pruned.items() if item}
+    return value
+
+
 def drop_expired_arrivals(
     arrivals_by_system: dict[str, dict[str, dict[str, list[dict]]]],
     now: float,
@@ -509,21 +560,13 @@ def drop_expired_arrivals(
     fresh data: the decoders deliberately keep a stop up to a minute past its time
     (a train dwelling or just-departed is still the right answer for that station),
     and a blanket prune here would silently override that grace for every system.
+
+    THE SYSTEM'S KEY STAYS, emptied or not, because an absent key and an empty one mean
+    different things to the code that reads these indexes (routes/status.py's
+    _was_dropped: absent is what the merge took away). The row rule is row_departed's.
     """
     retained = set(only)
-    pruned: dict[str, dict[str, dict[str, list[dict]]]] = {}
-    for system, stations in arrivals_by_system.items():
-        if system not in retained:
-            pruned[system] = stations
-            continue
-        kept_stations: dict[str, dict[str, list[dict]]] = {}
-        for station_id, buckets in (stations or {}).items():
-            kept_buckets = {
-                direction: [a for a in arrs if a.get("arrival") is None or a["arrival"] >= now]
-                for direction, arrs in buckets.items()
-            }
-            kept_buckets = {d: arrs for d, arrs in kept_buckets.items() if arrs}
-            if kept_buckets:
-                kept_stations[station_id] = kept_buckets
-        pruned[system] = kept_stations
-    return pruned
+    return {
+        system: drop_departed_rows(stations or {}, now) if system in retained else stations
+        for system, stations in arrivals_by_system.items()
+    }

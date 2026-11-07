@@ -464,8 +464,9 @@ def _row_is_past_the_operator_band(row: Mapping, age_gated: bool, now: float) ->
         age (design 3.2, clause c). One whose provider never dates (Metro-North) does
         not: its age is unknowable by design. A Metro-North failure reaches the operator
         through _was_dropped once the cap takes its carried rows; in a total railroad
-        outage no merge runs, so its rows are neither carried nor dropped, and the code
-        names LIRR instead, once LIRR's rows have aged past the band.
+        outage no merge runs, so its rows are not carried, only pruned as each departs
+        (Amendment 1's Q9), and the code names LIRR instead, once LIRR's remaining rows
+        have aged past the band, until the last of them departs.
       - A row whose provenance is neither "reported" nor "retained" (unknown, absent, or
         a position value no prediction can carry) counts at once, read the pessimistic
         way the client's fail-safe reads it (design 3.1).
@@ -517,8 +518,11 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
     group or railroad, the systems that retain, therefore reaches the operator at about
     ten minutes by either road: its carried rows aging past the band, or the cap taking
     them. A system that does not retain (NJ Transit, the ferry, PATH) and fails while
-    serving nothing has no row to age and none to drop, so it reaches no operator here:
-    models.HEALTH_OBSERVATIONS_QUALIFIED names that blind spot. This road reads the cap because
+    serving nothing, or whose last kept row has departed (Amendment 1's Q9 prunes it), has
+    no row to age and none to drop, so it reaches no operator here:
+    models.HEALTH_OBSERVATIONS_QUALIFIED names that blind spot. So does a total railroad
+    outage once its last kept row has departed: the prune keeps each system's key, emptied,
+    so an emptied entry is never read as one the merge removed. This road reads the cap because
     once the rows are gone riders are served nothing at all, whatever any band says.
     The contract tier compresses the cap and never the band, which is why its outage
     scenario reaches the code by this road alone.
@@ -558,10 +562,12 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
     A system serving no rows that was NOT dropped is quiet: a group with nothing running
     right now, one that has never decoded, one failing inside its retention window with
     nothing to carry, and one a total outage caught holding an empty entry all serve
-    nothing without anything having been taken away. The window case becomes the
-    dropped rung once the system has been failing for FEED_RETENTION_MAX_S, and it
-    stays there on every poll until the system decodes again (_was_dropped says why that
-    needed saying).
+    nothing without anything having been taken away. So, since Amendment 1's Q9, is a
+    family in a total outage whose last kept row has departed: the second of
+    models.HEALTH_OBSERVATIONS_QUALIFIED's KNOWN BLIND SPOTS, which Step 3's Q5 closes.
+    The window case becomes the dropped rung once the system has been failing for
+    FEED_RETENTION_MAX_S, and it stays there on every poll until the system decodes again
+    (_was_dropped says why that needed saying).
 
     Pure and clock-injected, like _health_codes; the healthz handler builds `systems`
     off app.state with _served_arrival_systems.
@@ -599,7 +605,8 @@ def _served_arrival_systems(state: object) -> dict[str, _ServedSystem]:
     ONLY THE SUBWAY GROUPS AND THE RAILROADS PASS A BLOCK, because only they retain,
     and only their indexes are keyed by system, which is what lets an ABSENT entry mean
     the merge removed it (_was_dropped). NJ Transit's envelope carries a block too, but
-    a failed NJ Transit poll keeps its last-known rows and never retains, so ok False
+    a failed NJ Transit poll keeps its last-known rows, each until its time has passed
+    (Amendment 1's Q9), and never retains, so ok False
     with retained_since None there is one failed poll rather than a cap that fired, and
     its index is one flat map with no per-system entry that could go missing.
 

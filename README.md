@@ -913,6 +913,17 @@ publication rather than in the build, and the monitor's `subway-static` check `W
 on that publication from upstream's side, through the app's own geometry gate, so
 whoever reads the run knows whether a redeploy would bring the lines back yet.
 
+And one is read off the subway's route-to-group table. A station board names the feed
+groups the station expects, read from its static routes through that table
+(`SUBWAY_ROUTE_GROUPS` in `backend/feeds/subway.py`, one row per route, written from a
+committed capture of which feed carries which route), so a route the table lacks is a
+station that may not name a dark group on its board. `subway-route-unmapped` says a live
+subway group has served such a route since the process started. `/api/status`'s
+`subway_unmapped_routes` names each route and the groups that served it, and the contract
+monitor prints them in a `WARN`, the one recognized code that warns rather than fails,
+because what it asks for is a table row in the next deploy. It holds for the life of the
+process, since only a deploy can add the row, and it never gates.
+
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
 (`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s

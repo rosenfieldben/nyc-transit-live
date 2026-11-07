@@ -1261,8 +1261,8 @@ HEALTH_SUBWAY_LINES_DEGRADED = "subway-lines-degraded"
 # serves and the table lacks is a station whose expected groups miss one: a group that has
 # never decoded, or whose rows have expired, would drop out of that board unnamed, which is
 # the defect A03 measured. Raised once any group that decoded has served such a route in
-# this process, and held until a restart, because the table is code and only a deploy can
-# add the row (pollers._refresh_subways). ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP: a D
+# this process, and held for the life of the process, because the table is code and only a
+# deploy can add the row (pollers._refresh_subways). ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP: a D
 # trip on the NQRW feed does not raise it, D having a row. /api/status's
 # subway_unmapped_routes names each route and the groups that served it, and the contract
 # monitor prints them in a WARN. Degraded rather than gating: the table's drift is not a

@@ -14,12 +14,14 @@ answered stops being evidence of what was actually asked. **Amendment 1** (A03 a
 the 2026-10-12 audit, the last section of this document) is DECIDED, 2026-11-01, on
 `claude/design-freshness-amendment-1` (PR #132, merged as `93f09fe`). **Amended 2026-11-07:**
 Step 0 of its A1.6, the subway probe, ran on three branches (PRs #133, #134 and #136), and
-Step 1, A10, is built on `claude/a10-headerless-generation`, the branch this sentence is
-written on, alone rather than on the one build branch A1.6 names (A1.6 says why); Steps 2 and
-3 are next. Amendment 1's decisions amended the body in place on 2026-11-01, each amended
+Step 1, A10, was built on `claude/a10-headerless-generation` (PR #138, merged as `11e0dc5`),
+alone rather than on the one build branch A1.6 names (A1.6 says why). **Amended 2026-11-07:**
+Step 2, A03's backend half, is built on `claude/a03-expected-contributors`, the branch this
+sentence is written on, on a branch of its own as Step 1 was; Step 3, A03's frontend half
+and the operator's code, is next, after it. Amendment 1's decisions amended the body in place on 2026-11-01, each amended
 sentence marked `Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states
 the rule the build is to meet, not what the code does until that build lands; for A10's rules
-(Q6 and Q7) it has landed, on Step 1's branch. Its
+(Q6 and Q7) it has landed, on Step 1's branch, and for Q1, Q2, Q9 and Q10 on Step 2's. Its
 citations are at `1d17aa0`, and the application code is `1d17aa0`'s: the branch's fork
 commit is `74bd2ee` (PR #131's merge), and the two merges between change no application
 code.
@@ -2698,6 +2700,29 @@ contributors after expiry or retention limits."* Concretely, in A03's world: aft
 expiry and at the T0+620 s cap, 219's `systems` names 1-7+S with `ok: false`; in world B it
 names 1-7+S with `fetched_at: null`; and no served board is identical to fresh empty
 service's while a contributor fails.
+
+**Amended 2026-11-07: Step 2 is built on `claude/a03-expected-contributors`**, on a branch of
+its own as Step 1 was, so Steps 2 and 3 land in that order on two branches rather than on the
+one build branch the paragraph at the top of A1.6 names; Step 3 follows it, never alone. The
+acceptance above holds as written, measured by the rewritten A03 witness and pinned by tests:
+after the T0+200 s expiry 219 names 1-7+S, `ok: false`, its `fetched_at` T0 and its content
+T0-5; at the T0+620 s cap it names 1-7+S, `ok: false`, 620 s old; in world B it names 1-7+S
+with `fetched_at: null` and `ok: false`; in world A 1-7+S `ok` with its content 620 s old; and
+none of the four is identical to fresh empty service's board. The witness moved the nine
+checks A1.4 measured and reads PARTLY, the backend half fixed. The route-to-group table has
+30 rows, the 29 the live archive lists and SS, with D in BDFM and its one NQRW sample recorded
+as an exception; Q1's check is a non-gating `/healthz` code, `subway-route-unmapped`, which
+`/api/status` names and the contract monitor prints as a `WARN`. The f03 world now carries
+219's real static routes (the committed census of production's stations), and the golden
+stayed equal under the union, as A1.4 measured. The monitor's two board lines read the four
+states. Three things the build measured and did not change, because Q9 and Q10 named their
+families and these are outside them, each on the 2026-10-12 record's live list: Q9's prune
+makes `observations-qualified` go quiet once a total outage's last kept row has departed
+(the second of 6.2's blind spots widened until Step 3's Q5 closes it); the subway's own total
+failure keeps a departed row as `reported`, as the railroads' did; and the subway board still
+answers a total first-poll failure with the recorded 502, its reason phrase included. And one
+it measured and needed no change for: Step 0's zero-byte HTTP 200 from 1-7+S is a failed poll
+(the strict parser refuses it), not a decoded empty generation.
 
 **Step 3, A03's frontend half, and the operator's code.** **Amended 2026-11-01 (Q3, Q4, Q5, Q8, Q11):**
 `boardFreshness` and `boardSystemLine` over the expected contributors' `ok`, `fetchedAt` and

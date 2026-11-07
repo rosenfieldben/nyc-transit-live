@@ -380,7 +380,7 @@ _HEALTH_CODE_NOTES = {
         "(feeds.SUBWAY_ROUTE_GROUPS) has no row for, so a station that route serves may not "
         "name the group on its board when the group goes dark; add the row from a capture of "
         "the feeds and redeploy, which is also what clears the code, since a running process "
-        "keeps it until a restart"
+        "holds it for its life"
     ),
 }
 

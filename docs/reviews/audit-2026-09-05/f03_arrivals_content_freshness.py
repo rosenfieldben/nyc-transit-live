@@ -164,7 +164,7 @@ def prime_app() -> None:
     state.subway_static_status = "ready"
     state.subway_stops = stops
     state.subway_stations = stations
-    state.subway_station_routes = {}
+    state.subway_station_routes = dict(world.STATION_ROUTES)
     state.subway_arrivals = {}
     state.subway_arrivals_by_system = {}
     state.subway_positions = {}

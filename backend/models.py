@@ -213,10 +213,16 @@ class SystemFreshness(BaseModel):
     # different audiences: those are operator counts on /api/status, this is the
     # rider-facing per-system flag on the live envelopes.
     ok: bool
-    # Set while this system's data is being carried forward from its last good
-    # poll. Null when the system is fresh AND null once the retention cap has
-    # dropped the data, so it is not the complement of `ok`: a long-failed system
-    # reports ok=False with retained_since=None and no data at all.
+    # The instant this system began failing, while it is inside the retention window:
+    # feeds.merge_system_generations records it WHETHER OR NOT anything was carried. Null
+    # when the system is fresh. IT DOES NOT MEAN "SOMETHING IS HELD", and nothing may read
+    # it so (Amendment 1, A1.4 and Q2): it is set for a system that has never decoded and
+    # so holds nothing, and once the retention cap has dropped a system's data it reads
+    # null for the one poll the cap fires on and is set again on the next, because the
+    # capped branch records no clock and the next poll starts one (H4 on the 2026-10-12
+    # record's live list), so a long outage cycles every FEED_RETENTION_MAX_S while
+    # carrying nothing. Whether a system has ever decoded is fetched_at (null: never);
+    # what is held is the rows, each marked `retained`. Retention itself is unchanged.
     retained_since: float | None
     # WHICH ROUTES THIS SYSTEM'S CURRENT DATA COVERS. Populated by the SUBWAY only,
     # and it is not a freshness field: it is the join key the client needs to point
@@ -231,7 +237,9 @@ class SystemFreshness(BaseModel):
     # true for retained data: a carried-forward group still lists its routes, and a
     # group the retention cap has emptied lists none, which is correct because it has
     # no markers left to describe. Null on the railroad and alerts blocks, whose
-    # entities already carry their own system name.
+    # entities already carry their own system name. The route-to-group table Amendment 1
+    # added (feeds.SUBWAY_ROUTE_GROUPS) answers another question, which groups a station
+    # expects, and this field does not read it: it stays what the feed actually served.
     routes: list[str] | None = None
     # WHAT THE POSITION LADDER DID WITH THIS SYSTEM'S VEHICLES (contract 6.3), populated
     # on the railroad blocks only. It rides here, on the envelope the rider's client
@@ -368,9 +376,9 @@ class StationArrivals(BaseModel):
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, and this is the ONE envelope the
     # contributor rule is written for: a subway station is served by several feed
-    # groups at once. The worst contributor answers, a group contributing nothing at
-    # this station does not participate, and one contributor that cannot be dated
-    # makes the answer None rather than letting the others speak for it.
+    # groups at once. The worst contributor answers, a group not expected at this
+    # station, with no rows here, does not participate, and one contributor that
+    # cannot be dated makes the answer None rather than letting the others speak for it.
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
     # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
@@ -378,6 +386,16 @@ class StationArrivals(BaseModel):
     # are optional-with-a-default for the wire reason, and the handlers always set
     # served_at: test_every_arrivals_endpoint_stamps_served_at pins that a served
     # response never carries None for it, on every one of the five.
+    #
+    # THE systems MAP KEEPS ITS TYPE AND CHANGED ITS MEANING (Amendment 1, Q1 and Q2). It
+    # names the groups this station EXPECTS, read from its static routes through the
+    # route-to-group table (feeds.SUBWAY_ROUTE_GROUPS), united with any group that has
+    # rows indexed here, and a group that has never decoded in this process is among them
+    # as a block reading fetched_at null and ok false. It used to name only the groups
+    # with rows indexed here, so a failed group whose last row had expired or been capped
+    # left it, and the board read exactly as fresh empty service's while /api/status
+    # listed the group failed (A03). Null only where nothing takes part, which on the live
+    # index is no station (cache._contributing_systems).
     feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None

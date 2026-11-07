@@ -97,6 +97,13 @@ _CAPTURE = _FIXTURES / "subway_1_7_s.pb"
 _STOPS = _FIXTURES / "subway_1_7_s_stops.json"
 _API_JS = _REPO / "tests" / "e2e" / "fixtures" / "api.js"
 GOLDEN = _REPO / "tests" / "e2e" / "fixtures" / "f03_board_219.json"
+# THE STATIC ROUTES-PER-STATION INDEX, AS THE LIVE ARCHIVE'S REAL LOADER DERIVED IT: the
+# committed census of production's /api/subway-stops (496 stations, each with its routes),
+# which test_static_data holds to the subway_gtfs fixture. A station board names the groups
+# it EXPECTS through it (Amendment 1, Q1), so this world gives 219 its real routes, 2 and 5,
+# where it used to prime the index empty.
+_CENSUS = _REPO / "tests" / "e2e" / "fixtures" / "subway_stops_real.json"
+STATION_ROUTES = {station["id"]: station["routes"] for station in json.loads(_CENSUS.read_text())}
 REGENERATE_VAR = "F03_BOARD_REGENERATE"
 
 NOW = 1782993600.0  # FROZEN_S of tests/e2e/fixtures/api.js: 2026-07-02T12:00:00Z
@@ -197,6 +204,12 @@ def f03_world(monkeypatch):
     rows even with the handler blinded to the subway, so its assertion here did not
     depend on this world at all.
 
+    THE STATIC ROUTES-PER-STATION INDEX IS THE REAL ONE (STATION_ROUTES above), so 219
+    expects 1-7+S through its routes 2 and 5 (Amendment 1, Q1). This world's healthy group,
+    ACE, serves a renamed copy of the capture's rows at 219 and is not expected there; the
+    board names it because it has rows, which is the union A1.3 decided, and the golden
+    records that board unchanged.
+
     Returns the clock as a one-element list, so the test can advance it between polls.
     """
     stops = json.loads(_STOPS.read_text())
@@ -213,7 +226,7 @@ def f03_world(monkeypatch):
         "subway_static_status": "ready",
         "subway_stops": stops,
         "subway_stations": stations,
-        "subway_station_routes": {},
+        "subway_station_routes": dict(STATION_ROUTES),
         "subway_arrivals": {},
         "subway_arrivals_by_system": {},
         "subway_positions": {},

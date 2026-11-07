@@ -45,9 +45,9 @@ SUBWAY_FEED_URLS = {
 
 # WHICH GROUP'S FEED CARRIES EACH ROUTE (Amendment 1 to the freshness contract, Q1), one
 # row per route id, each in exactly one group. It is for one question, which groups a
-# station EXPECTS to hear from, read through the static routes-per-station index, so a
-# group that has never decoded, or whose last row at a station has expired, can still be
-# named on that station's board. Nothing in the decode
+# station EXPECTS to hear from, read through the static routes-per-station index
+# (cache._expected_groups), so a group that has never decoded, or whose last row at a
+# station has expired, can still be named on that station's board. Nothing in the decode
 # reads it: the routes a group serves are still learned from the trains its feed carries
 # (pollers._routes_by_system), as they were before the table existed.
 #

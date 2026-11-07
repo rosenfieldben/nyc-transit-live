@@ -384,7 +384,9 @@ def _routes_by_system(data_by_system: dict[str, list[dict]]) -> dict[str, list[s
     already holds rather than from a hand-maintained table, so it cannot drift from
     SUBWAY_FEED_URLS, and it stays true for retained data (a carried-forward group
     still lists its routes; one the cap has emptied lists none, which is right
-    because it has no markers left).
+    because it has no markers left). The route-to-group table Amendment 1 added
+    (feeds.SUBWAY_ROUTE_GROUPS) answers another question, which groups a station
+    expects, and this does not read it.
 
     Sorted for a stable payload. A train with no route_id contributes nothing.
     """

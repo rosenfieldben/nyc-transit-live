@@ -406,8 +406,8 @@ def test_non_boardable_rows_never_become_markers():
     a train does not call at, and placing them puts a station pin and a street-
     entrance pin a few metres from the platform that actually carries the routes,
     each with no routes of its own. Nothing downstream could catch that: the
-    monitor's stop count is a lower bound and the identity check passes because a
-    parent keeps the station's name.
+    monitor's stop count is a lower bound and the identity check, which keys on
+    stop_code and place, passes while each code stays on one row at its station.
     """
     table = (
         "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n"

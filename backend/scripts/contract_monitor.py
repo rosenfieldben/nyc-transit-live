@@ -47,6 +47,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -401,7 +402,35 @@ PATH_STATIC_MIN_PARENTS = 10  # 13 PATH parent stations
 FERRY_STATIC_MIN_ROUTES = 7  # 9 NYC Ferry routes
 FERRY_STATIC_MIN_STOPS = 40  # 50 NYC Ferry stops
 NJT_STATIC_MIN_ROUTES = 10  # 12 NJ Transit rail routes (probed 2026-08-05)
-NJT_STATIC_MIN_STOPS = 140  # 172 NJ Transit rail stops
+# 172 NJ Transit stops on 2026-08-05 and still at run #425 (2026-11-02); 229 on
+# 2026-11-06, 65 of them light-rail rows no trip calls at, so the 164 rail stations
+# alone still clear the floor.
+NJT_STATIC_MIN_STOPS = 140
+
+# THE IDENTITY STATIONS, as (stop_code, station, lat, lon), and the radius that ties
+# each code to its place. Keyed on the code and measured against the point, never on
+# the id or the name: the reasons, with the run numbers, are over the check in
+# check_njt_static. The points are the stations' published coordinates to four
+# decimals; the 2026-11-06 rows sit 6 m (NY) and 5 m (NP) from them.
+NJT_IDENTITY_STOPS = (
+    ("NY", "Penn Station New York", 40.7500, -73.9924),
+    ("NP", "Newark Penn Station", 40.7342, -74.1646),
+)
+# 200 M IS NOWHERE NEAR THE NEXT STATION (measured on the 2026-11-06 publication): the
+# nearest other rail station is Hoboken, 3.4 km from the NY point, and Newark Broad
+# Street, 1.6 km from the NP point. So a code reassigned to any other rail station
+# fails it.
+# NJ TRANSIT DOES MOVE PUBLISHED POINTS, though, and 200 m does not cover every move
+# (measured 2026-11-06, joined by stop_code): from the 2026-09-01 capture to the
+# 2026-11-06 publication 159 of 164 stations held within 1 m (Penn 0.2 m, Newark Penn
+# 0.3 m) and 5 moved 33 to 285 m (Lyndhurst 285, South Orange 179, Radburn 118, Route
+# 23 68, Lindenwold 33). A re-survey the size of Lyndhurst's at either identity station
+# FAILs this check with the feed still sound; the FAIL gives the distance, and it is a
+# come-and-look.
+NJT_IDENTITY_RADIUS_M = 200.0
+# The mean earth radius (IUGG), for _distance_m. A sphere is within about 0.5% of the
+# ellipsoid, which is under a metre at the 200 m limit.
+EARTH_MEAN_RADIUS_M = 6371008.8
 
 # NJ Transit's staleness band, and it exists because this feed answers the
 # staleness question differently from every other one here. There is NO
@@ -515,13 +544,18 @@ DECORATIVE_GATES: dict[str, Callable[[zipfile.ZipFile], None]] = {
 # claude/static-rule-siblings found both ending the run.
 _UNREADABLE = (*static_shared.UNREADABLE_MEMBER, ValueError, OverflowError)
 
-# stops.txt columns njt_static._parse_stops READS to build a marker: the id, the
-# name the identity spot check compares, and the two coordinates a row without
-# which is dropped. Watched BY NAME because that is the only way to notice the
-# loss early: a publication that drops stop_lat still parses cleanly and simply
-# yields zero stops, which arrives here as the min-stops FAIL with no hint that a
-# column went missing rather than the feed emptying.
-NJT_STOPS_REQUIRED_COLUMNS = ("stop_id", "stop_name", "stop_lat", "stop_lon")
+# stops.txt columns the monitor needs on every row: the four njt_static._parse_stops
+# READS to build a marker (the id, the name the marker shows, and the two coordinates a
+# row without which is dropped), plus stop_code, which the parser does not keep and the
+# identity check keys on (since NJ Transit renumbered its stops between #425 on
+# 2026-11-02 and #426 on 2026-11-03).
+# Watched BY NAME because that is the only way to notice the loss early: a
+# publication that drops stop_lat still parses cleanly and simply yields zero stops,
+# which arrives here as the min-stops FAIL with no hint that a column went missing
+# rather than the feed emptying, and one that drops stop_code arrives as the identity
+# check's FAIL on both codes, with the same lack of a hint.
+NJT_STOPS_PARSER_COLUMNS = ("stop_id", "stop_name", "stop_lat", "stop_lon")
+NJT_STOPS_REQUIRED_COLUMNS = (*NJT_STOPS_PARSER_COLUMNS, "stop_code")
 
 # The two OPTIONAL GTFS columns that DESCRIBE a parent/child station model, listed
 # by name rather than accepted as "any new column": a third column appearing is
@@ -2023,17 +2057,26 @@ def check_njt_static(
     # (correct, and it keeps entrances off the map), but "should the marker set
     # become the PARENT stations, the way subway and PATH do it" is a design
     # decision a human owes an answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS
-    # is a lower bound, so 172 becoming 400 sails past, and the 109/112 identity
-    # check still passes because a parent keeps the station's name. Both arms below
+    # is a lower bound, so 172 becoming 400 sails past, and the identity check, which
+    # reads a station's stop_code and place rather than its name, still passes while
+    # each code stays on one row at its station, as a parent's would. Both arms below
     # are WARN, not FAIL: the app keeps serving correctly throughout, and each is a
     # "come and look" rather than a "something is broken".
     if "stops.txt" in members:
         missing_columns, hierarchy_in_use = _njt_stops_shape(res.content)
         if missing_columns:
+            # NAMED BY WHO READS IT: stop_code is not the parser's column, so a message
+            # blaming _parse_stops for it would send the reader to the wrong code.
+            readers: list[str] = []
+            if any(c in NJT_STOPS_PARSER_COLUMNS for c in missing_columns):
+                readers.append("njt_static._parse_stops")
+            if "stop_code" in missing_columns:
+                readers.append("the identity check")
             statuses.append(WARN)
             details.append(
                 f"stops.txt header no longer carries {', '.join(missing_columns)}, which "
-                "njt_static._parse_stops reads on every row"
+                f"{' and '.join(readers)} {'reads' if len(readers) == 1 else 'read'} "
+                "on every row"
             )
         if hierarchy_in_use:
             statuses.append(WARN)
@@ -2049,20 +2092,44 @@ def check_njt_static(
     if len(stops) < NJT_STATIC_MIN_STOPS:
         statuses.append(FAIL)
         details.append(f"only {len(stops)} stops (< {NJT_STATIC_MIN_STOPS})")
-    # IDENTITY SPOT CHECK: stop 109 is Penn Station New York and stop 112 is Newark
-    # Penn Station (probed 2026-08-05). Both are checked BY NAME rather than by
-    # presence, because presence alone proves nothing in a feed whose ids are small
-    # integers: 112 already names four different places across our feeds, so an id
-    # that survived a renumbering pointing at the wrong station is the exact drift
-    # this check exists to catch.
-    for stop_id, expected in (("109", "New York"), ("112", "Newark")):
-        stop = stops.get(stop_id)
-        if stop is None:
-            statuses.append(FAIL)
-            details.append(f"identity stop {stop_id} missing")
-        elif expected not in (stop.get("name") or ""):
-            statuses.append(FAIL)
-            details.append(f"stop {stop_id} name is {stop.get('name')!r}, expected {expected}")
+    # IDENTITY SPOT CHECK, KEYED ON stop_code AND PLACE: the row whose code is NY must
+    # lie within NJT_IDENTITY_RADIUS_M of Penn Station New York, and the row whose code
+    # is NP within it of Newark Penn Station. Each row is found by its code FIRST and
+    # then measured (_njt_identity), and the PASS prints the id and name each carries
+    # today, because neither is the key.
+    #
+    # NOT THE ID (renumbered between #425, 2026-11-02 21:45 UTC, and #426, 2026-11-03
+    # 06:55 UTC). This check was keyed on stop 109 and stop 112 (probed 2026-08-05).
+    # NJ Transit then moved the ids of 115 of the 164 stations in the 2026-09-01
+    # capture: Penn Station New York 109 -> 105, Newark Penn Station 112 -> 107. From
+    # #426 on the id-keyed check read NORTH ELIZABETH at 109 and ORANGE at 112, and
+    # every run through #433 FAILED on it.
+    #
+    # NOT THE NAME (the 2026-11-06 publication). The names went upper case, 133 of
+    # the 164 differing only by case, and 31 were reworded (MSU, SECAUCUS UPPER LEVEL,
+    # PRINCETON JCT.). The old test was a case-sensitive substring ("New York" in the
+    # name), so it would have failed even at the right id: "NEW YORK PENN STATION"
+    # does not contain "New York".
+    #
+    # THE CODE AND A RADIUS, BOTH. stop_code held on 164 of 164 stations across the two
+    # publications seen (the 2026-09-01 capture and 2026-11-06), so it is the key; but
+    # a code alone could be reassigned to another station, and the radius ties it to
+    # the place. The 2026-11-06 rows sit 6 m and 5 m from the points.
+    #
+    # CODE FIRST, NEVER "THE NEAREST STOP" (2026-11-06): two light-rail rows, 26326 and
+    # 42545, sit 108 m from the Newark Penn point, inside the radius, and no trip calls
+    # at either. A search by place finds three rows there; the code picks the station
+    # and the radius checks it.
+    #
+    # AND THE ROW MUST BE THE APP'S MARKER AT ITS ID. The rows are read raw, while the
+    # app reads the same file through njt_static._parse_stops, which skips a row with
+    # no stop_id and keeps the FIRST of two rows that share one. The id-keyed check
+    # read the parsed stops, so it could not PASS without a marker; this one is handed
+    # them for the same reason.
+    identity_failures, identity_found = _njt_identity(res.content, stops)
+    for failure in identity_failures:
+        statuses.append(FAIL)
+        details.append(failure)
     service_status, service_detail = (
         _njt_service_status(latest, now, tz) if span_read else (PASS, "service span unread")
     )
@@ -2074,7 +2141,8 @@ def check_njt_static(
             Result(
                 "njt-static",
                 PASS,
-                f"{len(routes)} routes, {len(stops)} stops, 109/112, {service_detail}",
+                f"{len(routes)} routes, {len(stops)} stops, "
+                f"{', '.join(identity_found)}, {service_detail}",
             ),
             parsed,
         )
@@ -2095,7 +2163,7 @@ def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
     columns optional and a publisher may declare either with an empty value on
     every row, which is precisely how a flat feed spells "flat", so the header
     cannot distinguish a feed that went hierarchical from a publisher that widened
-    its header. NJ Transit did the second: the archive captured on 2026-09-04
+    its header. NJ Transit did the second: the archive captured on 2026-09-01
     (backend/tests/fixtures/njt_gtfs/stops.txt) carries both columns and an EMPTY
     value in both on all 164 of its rows, that capture being the trim of a 172-stop
     publication, and njt_static._parse_stops keeps every one of them, because its
@@ -2128,6 +2196,119 @@ def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
                 if len(in_use) == len(NJT_STOPS_HIERARCHY_COLUMNS):
                     break
     return missing, [c for c in NJT_STOPS_HIERARCHY_COLUMNS if c in in_use]
+
+
+def _njt_identity(body: bytes, stops: dict[str, dict]) -> tuple[list[str], list[str]]:
+    """Find each NJT_IDENTITY_STOPS station BY ITS CODE, then measure it.
+
+    Returns (FAIL details, PASS parts). A code fails when no row carries it, when more
+    than one row does (naming every id, since which one is meant is the question), when
+    its row's coordinates do not read as a latitude and a longitude, when its row lies
+    outside NJT_IDENTITY_RADIUS_M of the station's point, or when its row is one the app
+    places but `stops` (the app's own parse of the same archive) holds no marker for it
+    at its id. A code that passes contributes "NY=105 'NEW YORK PENN STATION'": the id
+    and name the publication uses today.
+
+    READ RAW from the archive, as _njt_stops_shape is, because njt_static._parse_stops
+    keeps no stop_code (a marker does not need one) and the app's parser is not the
+    monitor's to widen. Every row counts, whatever its location_type: a code on two
+    rows is ambiguous whichever of them the parser keeps.
+
+    THE CODE IS FOUND BEFORE ANYTHING IS MEASURED, and that order is the point: two
+    light-rail rows lie 108 m from the Newark Penn point in the 2026-11-06 publication,
+    so "the stop nearest the point", or "a stop inside the radius", is a question with
+    three answers there.
+    """
+    by_code: dict[str, list[dict[str, str]]] = {code: [] for code, *_ in NJT_IDENTITY_STOPS}
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        with zf.open("stops.txt") as raw:
+            for row in csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig")):
+                # Stripped, so " NY" is NY; a blank code is no identity code's key, so
+                # it matches nothing.
+                code = (row.get("stop_code") or "").strip()
+                if code in by_code:
+                    by_code[code].append(row)
+    failures: list[str] = []
+    found: list[str] = []
+    for code, station, lat, lon in NJT_IDENTITY_STOPS:
+        rows = by_code[code]
+        ids = [(r.get("stop_id") or "").strip() for r in rows]
+        if not rows:
+            failures.append(f"identity code {code} ({station}) missing from stops.txt")
+            continue
+        if len(rows) > 1:
+            failures.append(
+                f"identity code {code} ({station}) is on {len(rows)} rows, ids {', '.join(ids)}"
+            )
+            continue
+        row = rows[0]
+        name = (row.get("stop_name") or "").strip()
+        try:
+            row_lat = float(row.get("stop_lat") or "")
+            row_lon = float(row.get("stop_lon") or "")
+        except ValueError:
+            row_lat = row_lon = math.nan
+        # A PLACE ON THE GLOBE, OR UNREADABLE. The range test is the finite test too:
+        # "nan" parses as a float and fails every comparison, and "inf" fails the range.
+        # Either would otherwise reach the distance, and a NaN distance compares False
+        # against the limit, which would PASS a row with no place at all. A comparison
+        # and not math.isfinite, because audit F09 (docs/reviews/audit-2026-09-05) pins
+        # every finite-check call site under backend/ by file and would go red.
+        if not (-90.0 <= row_lat <= 90.0 and -180.0 <= row_lon <= 180.0):
+            failures.append(
+                f"identity code {code} ({station}) is stop {ids[0]} with unreadable "
+                f"coordinates {row.get('stop_lat')!r}, {row.get('stop_lon')!r}"
+            )
+            continue
+        distance = _distance_m(lat, lon, row_lat, row_lon)
+        if distance > NJT_IDENTITY_RADIUS_M:
+            failures.append(
+                f"identity code {code} is stop {ids[0]} {name!r}, {round(distance)} m from "
+                f"{station} (limit {NJT_IDENTITY_RADIUS_M:.0f} m)"
+            )
+            continue
+        # THE APP'S MARKER AT THAT ID MUST BE THIS ROW (review of this check,
+        # 2026-11-06, measured on the 2026-09-01 capture). Without this arm a NY row
+        # given a blank id, or id 1 after Aberdeen-Matawan's row 1, PASSES ("NY= ..."
+        # and "NY=1 ...") while the app has no Penn marker at all: the parser skips a
+        # blank id and keeps the first row of a repeated one. Asked only of a row the
+        # parser places (a blank or "0" location_type): any other row is no marker by
+        # design, and the shape watch in check_njt_static reports that world.
+        # COMPARED BY PLACE, NOT BY NAME: the parser is free to present a name for
+        # display (njt_static.display_name mixes the 2026-11-06 publication's upper
+        # case), so a raw row's name and its own marker's can differ, while both sides
+        # parse the coordinates the same way and another row's are another place.
+        if (row.get("location_type") or "").strip() in ("", "0"):
+            marker = stops.get(ids[0])
+            if marker is None:
+                failures.append(
+                    f"identity code {code} ({station}) is on a row the app keeps no "
+                    f"marker for (stop_id {ids[0]!r})"
+                )
+                continue
+            if (marker.get("lat"), marker.get("lon")) != (row_lat, row_lon):
+                failures.append(
+                    f"identity code {code} is stop {ids[0]} {name!r}, but the app's marker "
+                    f"at stop {ids[0]} is another row, {marker.get('name')!r}"
+                )
+                continue
+        found.append(f"{code}={ids[0]} {name!r}")
+    return failures, found
+
+
+def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in metres, by the haversine on a sphere of
+    EARTH_MEAN_RADIUS_M. A sphere and not the ellipsoid because the question is "is
+    this row within 200 m of the station", where the sphere's error is under a metre
+    and the margin is about 194 m (the 2026-11-06 rows sit 6 m and 5 m from the
+    points)."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    half_dphi = (phi2 - phi1) / 2
+    half_dlambda = math.radians(lon2 - lon1) / 2
+    h = math.sin(half_dphi) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(half_dlambda) ** 2
+    # Clamped: rounding can carry h a hair past 1 for near-antipodal points, and asin
+    # of anything above 1 raises.
+    return 2 * EARTH_MEAN_RADIUS_M * math.asin(min(1.0, math.sqrt(h)))
 
 
 def _check_members(

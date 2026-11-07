@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""A10 (Low): "Headerless successful LIRR generation inherits an old content clock."
+"""A10 (Low): "Headerless successful LIRR generation inherits an old content clock":
+the repair, pinned.
 
-Reproduction and regression check for finding A10 of the 2026-10-12 audit (the report's
-"Additional confirmed narrow defects" table), over main at 1e3e73d.
+Reproduction of finding A10 of the 2026-10-12 audit (the report's "Additional confirmed
+narrow defects" table), over main at 1e3e73d, and since claude/a10-headerless-generation
+the regression check on its repair.
 
 THE AUDIT'S CLAIM, the row's evidence cell verbatim:
 
@@ -21,50 +23,80 @@ THE AUDIT'S CLAIM, the row's evidence cell verbatim:
 THE CONVENTION THE ROW IS ABOUT. The per-system block builder in pollers.py reads its
 content-clock map by MEMBERSHIP: a system ABSENT from the map did not decode this poll
 and keeps its last content time; a system PRESENT with None decoded a generation whose
-header carried no timestamp, and publishes None. Contract 6.1's adversarial pass
-installed that reader (c3e3091). The subway producer records a key for every group that
-decoded, so it obeys. The railroad producer records LIRR's key only when the header
-carries a timestamp, so a decoded but undated LIRR generation is indistinguishable, at
+header carried no usable time, and publishes None. Contract 6.1's adversarial pass
+installed that reader (c3e3091). The subway producer recorded a key for every group that
+decoded, so it obeyed. The railroad producer recorded LIRR's key only when the header
+carried a timestamp, so a decoded but undated LIRR generation was indistinguishable, at
 the reader, from a failed one.
 
-WHAT EVERY FIX MUST CHANGE, AND HOW THIS SCRIPT MAKES IT VISIBLE. The defect is that the
-block serves the PREVIOUS generation's clock, as healthy, for a generation that decoded.
-A repair may publish null (the audit's correction), date the generation from something
-it carries itself (its entities' own clocks, the HTTP response, the poll), or refuse it
-as a failure. So every headerless generation here carries such clocks, all newer than
-the previous header: its trip_update (and, in D, every vehicle) is dated, and the fake
-upstream answers with Date and Last-Modified at the poll clock. The checks pin the served
-block to ok true with the previous header, so any repair, wherever it lives and
-whichever of those it chooses, moves at least one of them. Where the key is dropped (the
-fetcher, the call site, the reader) is the ledger's mechanism and is printed, never
-checked: a refactor that moves the filter without changing what is served stays green.
+FIXED ON claude/a10-headerless-generation, Step 1 of the freshness contract's Amendment 1,
+by its two decisions (A1.3, Q6 and Q7). The railroad producer records a key for every
+system that decoded: LIRR's header time when the header carries one, None when it
+carries none, and Metro-North None by policy, so its exclusion is a value and no longer
+rests on absence. And the railroad envelope's keep-last-known branch keeps its previous
+clock exactly when LIRR is in the poll's failed list, where it used to keep it whenever
+the fold came back None, a headerless success included.
+
+BEFORE (this script's record from 32a34f5 to b27dc6d, the numbers the ledger's A10 row
+carried as VERIFIED): after a timestamped LIRR generation at poll 900, the successful
+headerless one at 1000, its own trip_update dated 990, was served ok true, fetched_at
+1000, feed_timestamp 900 (audit: 900), an implied age of 100 s and 90 s older than the
+generation's own trip_update; the LIRR board served the same 900; the failure at 1100
+reported 900, older than the generation it last decoded; the railroad envelope read 900
+at 900, 1000 and 1100, and /api/status's feed_age_s 100.0 at 1000. On the committed
+capture, five headerless next generations were each served the captured header, the
+implied age and feed_age_s reading 20, 40, 60, 80 and 100 s, past FEED_STALE_AFTER_S on a
+feed that decoded every poll.
+
+AFTER, asserted below: the headerless success at 1000 is served ok true, fetched_at 1000,
+feed_timestamp null, with no implied age and nothing to compare with its own trip_update;
+the LIRR board serves null; the failure at 1100 keeps the null it last published; the
+envelope reads 900, null, null and feed_age_s null at 1000; and the capture's five
+headerless generations each publish null, imply no age, never pass FEED_STALE_AFTER_S,
+and read feed_age_s null. Unchanged, as they must be: the subway control (section C), and
+both failure-only controls, (false, 900, 900) on LIRR and on ACE, because a real failure
+retains its clock on both sides of the repair. ADDED with the repair, the one clause of
+the acceptance (Amendment 1's A1.6, Step 1) the record never checked: in the railroad's
+failure-only control, the envelope keeps 900 and feed_age_s reads 100.0, because LIRR is
+in that poll's failed list.
+
+WHAT EVERY FIX HAD TO CHANGE, AND WHY THE WORLD STAYS AS IT WAS BUILT. The defect was
+that the block served the PREVIOUS generation's clock, as healthy, for a generation that
+decoded. A repair could publish null (the audit's correction, and the one Q6 decided),
+date the generation from something it carries itself (its entities' own clocks, the HTTP
+response, the poll), or refuse it as a failure. So every headerless generation here
+carries such clocks, all newer than the previous header: its trip_update (and, in D,
+every vehicle) is dated, and the fake upstream answers with Date and Last-Modified at the
+poll clock. Each of the other repairs would serve one of those clocks where null is now
+asserted, so the checks still tell the decided repair from the rest. Where the key is
+recorded (the fetcher, the call site, the reader) is the mechanism and is printed, never
+checked: a refactor that moves it without changing what is served stays green.
 
 WHAT THIS SCRIPT MEASURES
 
   A. What each public fetcher returns for one successful headerless generation. Checked:
-     that it decoded (no failed system). Printed, for the ledger: the content-clock map
-     each hands on, which is where the two producers differ today.
+     that it decoded (no failed system). Printed: the content-clock map each hands on,
+     which is where the two producers differed until the repair.
   B. The audit's own sequence on the railroad, through the real poll and the real app:
      a timestamped LIRR generation at poll time 900, a successful headerless one at 1000
      whose own trip_update is dated 990, a FAILED one at 1100; and, separately,
      timestamped at 900 then failed at 1000. Read off the served JSON: GET /api/railroads
-     systems.LIRR, the LIRR station board's content clock, and GET /api/status.
-  C. THE CONTROL, which is the row's point: the same two sequences, the same bytes,
-     through the SUBWAY producer and the same reader. Its block publishes null at 1000,
-     and a real failure retains correctly on both families. C is also the reader's only
-     witness here: reverted to a value read (the defect c3e3091 fixed), C goes red while
-     the backend suite at 1e3e73d stays green, 1763 passed (measured 2026-10-12).
-  D. The same defect on the committed LIRR capture: one poll as captured, then five
+     systems.LIRR and its envelope, the LIRR station board's content clock, and GET
+     /api/status.
+  C. THE CONTROL: the same two sequences, the same bytes, through the SUBWAY producer
+     and the same reader. Its block publishes null at 1000, and a real failure retains
+     correctly on both families. C was also the reader's only witness: reverted to the
+     value read c3e3091 replaced, C went red while the backend suite stayed green (1763
+     passed at 1e3e73d, measured 2026-10-12; 2178 at b27dc6d). Since the repair it has a
+     second, test_feeds_railroad.py's timestamped, headerless, failed transition test,
+     which fails under that revert (1 of 2185, measured at this branch's second commit).
+  D. The same sequence on the committed LIRR capture: one poll as captured, then five
      successful polls of the NEXT generation, each a copy whose header carries no
      timestamp and whose every trip_update and vehicle clock is advanced by the poll's
-     offset (as a live feed's next generation would be). The block's content clock holds
-     the captured header while fetched_at and the generation's own clocks advance, so the
-     age the block implies (fetched_at minus feed_timestamp, design 3.5's per-system
-     _feed_age) grows by one interval every interval and passes FEED_STALE_AFTER_S on a
-     feed that decoded successfully every time.
-  Also measured, BEYOND THE AUDIT'S CITATION, in B, C and D: the railroad ENVELOPE's
-  feed_timestamp (and so /api/status feeds.railroads.feed_age_s) keeps the old clock on
-  the same headerless success, while the subway envelope publishes null.
+     offset (as a live feed's next generation would be). The block's content clock
+     follows the generations: null for each, so the age the block implies (fetched_at
+     minus feed_timestamp, design 3.5's per-system _feed_age) is unknown rather than one
+     interval more every interval, and /api/status's feed_age_s with it.
 
 WHAT IS PRODUCTION CODE HERE (nothing is re-implemented): feeds.fetch_railroad_trains
 (parse_feed, _decode_railroad_vehicles, _position_steps, _decode_railroad_feed),
@@ -82,8 +114,8 @@ WHAT IS INJECTED, all in memory:
      production. Section D uses the committed captures, LIRR's with header.timestamp
      cleared and its entities' own clocks advanced as described above.
   2. HTTP response headers: Date on every answer and Last-Modified on every 200, both at
-     the poll clock. Nothing at 1e3e73d reads them; they are there so a repair that
-     dated an undated generation by its response could not hide.
+     the poll clock. Nothing reads them; they are there so a repair that dated an
+     undated generation by its response could not hide.
   3. time.time pinned to each poll's clock (900, 1000, 1100 in B and C; the capture's
      own header plus multiples of CADENCE_S in D).
   4. app.state primed as a lifespan would leave it (static status ready, the committed
@@ -99,10 +131,13 @@ RUN (from the repository root):
 
     backend/.venv/bin/python docs/reviews/audit-2026-10-12/a10_headerless_lirr_clock.py
 
-RECORDED DISPOSITION: VERIFIED. Exits 0 while a headerless successful LIRR generation is
-served the previous generation's content clock (not null, and not any clock it carries
-itself) and the subway control is not; non-zero, naming every check that moved, the
-moment either stops being true.
+Exits 0 while the repair holds, 1 with every check that moved named, its BEFORE beside
+it, if it does not.
+
+RECORDED DISPOSITION: FIXED (claude/a10-headerless-generation). The BEFORE paragraph above
+is the record this script used to pin; the checks below pin the AFTER, and each one that
+moved prints its BEFORE value beside the one it measures, so a regression reads as the
+finding coming back.
 """
 
 from __future__ import annotations
@@ -186,12 +221,24 @@ UNEXPECTED_URLS: list[str] = []
 FAILURES: list[str] = []
 
 
-def check(label: str, got, want, audit: str | None = None) -> None:
-    """One named expectation. Every check runs; the script fails once at the end."""
+_NO_BEFORE = object()
+
+
+def check(label: str, got, want, audit: str | None = None, before=_NO_BEFORE) -> None:
+    """One named expectation. Every check runs; the script fails once at the end. A check
+    the repair moved carries `before`, this script's record of the same quantity while the
+    finding held, and prints it beside the measurement; one that measures its BEFORE value
+    again is reported as the finding come back."""
     ok = got == want
+    moved = before is not _NO_BEFORE
     if not ok:
-        FAILURES.append(f"{label}: measured {got!r}, recorded {want!r}")
-    beside = f"   (audit: {audit})" if audit else ""
+        back = "; the finding is back" if moved and got == before else ""
+        was = f" (BEFORE: {before!r}{back})" if moved else ""
+        FAILURES.append(f"{label}: measured {got!r}, recorded {want!r}{was}")
+    notes = [f"BEFORE: {before!r}"] if moved else []
+    if audit:
+        notes.append(f"audit: {audit}")
+    beside = f"   ({'; '.join(notes)})" if notes else ""
     print(f"  [{'PASS' if ok else 'FAIL'}] {label}: {got!r}{beside}")
 
 
@@ -402,10 +449,10 @@ async def section_a() -> dict:
     print(f"    failed groups             : {sw_failed}")
     print(f"    content-clock map         : {sw_map}")
     print(f"    envelope feed_timestamp   : {sw_ts}")
-    print("  The maps are the ledger's mechanism (audit: \"omits the system key when the")
-    print("  timestamp is null\") and are PRINTED, NOT CHECKED: where an undated generation's")
-    print("  key is dropped is location, and a refactor that moves the filter to the call site")
-    print("  serves the same blocks. B to D check what is served.")
+    print("  The maps are the mechanism (audit: \"omits the system key when the timestamp is")
+    print("  null\"; BEFORE the repair the headerless map was {}) and are PRINTED, NOT CHECKED:")
+    print("  where an undated generation's key is recorded is location, and a refactor that")
+    print("  moves it to the call site serves the same blocks. B to D check what is served.")
 
     check("railroad: the headerless LIRR generation decoded (no failed system)", rr_failed, [])
     check("subway: every headerless group decoded", sw_failed, [])
@@ -443,39 +490,51 @@ async def section_b() -> dict:
     print(f"           envelope feed_timestamp      {at_1000['envelope_feed_timestamp']}"
           "   (beyond the audit's citation)")
     print(f"           /api/status feed_age_s       {at_1000['status_feed_age_s']}")
+    print(f"  failure-only control at 1000: envelope feed_timestamp"
+          f" {fail_1000['envelope_feed_timestamp']}, feed_age_s {fail_1000['status_feed_age_s']}")
 
     check("900: the timestamped generation, (ok, fetched_at, feed_timestamp)",
           clocks(at_900["lirr"]), (True, T_STAMPED, T_STAMPED))
-    check("1000: the headerless SUCCESS is ok and freshly fetched, yet its content clock is 900",
-          clocks(at_1000["lirr"]), (True, T_HEADERLESS, T_STAMPED),
-          "successful generation at poll time 1000 retaining content time 900")
-    check("1000: the age that block implies (fetched_at - feed_timestamp), for a generation"
-          " whose header carried no clock",
-          implied_age(at_1000["lirr"]), 100.0)
-    check(f"1000: that content clock is older than the generation's own trip_update"
-          f" ({T_OWN:.0f}) by",
+    check("1000: the headerless SUCCESS is ok and freshly fetched, and publishes NO content"
+          " clock",
+          clocks(at_1000["lirr"]), (True, T_HEADERLESS, None),
+          "successful generation at poll time 1000 retaining content time 900",
+          before=(True, T_HEADERLESS, T_STAMPED))
+    check("1000: the age that block implies (fetched_at - feed_timestamp): none, for a"
+          " generation whose header carried no clock",
+          implied_age(at_1000["lirr"]), None, before=100.0)
+    check(f"1000: no content clock to set beside the generation's own trip_update"
+          f" ({T_OWN:.0f})",
           None if clocks(at_1000["lirr"])[2] is None else T_OWN - clocks(at_1000["lirr"])[2],
-          T_OWN - T_STAMPED)
+          None, before=T_OWN - T_STAMPED)
     check("1000: and nothing in the block marks it as carried over (retained_since)",
           (at_1000["lirr"] or {}).get("retained_since", "absent"), None)
     check("1000: and nothing operational looks wrong", at_1000["status_health"],
           {"total": 2, "ok": 2, "failed": []})
-    check("1000: the LIRR station board serves the same inherited clock",
-          at_1000["board_feed_timestamp"], T_STAMPED)
+    check("1000: the LIRR station board serves null too, no inherited clock",
+          at_1000["board_feed_timestamp"], None, before=T_STAMPED)
     check("1000: Metro-North's block is null throughout, its exclusion unchanged",
           [(b["mnr"] or {}).get("feed_timestamp") for b in (at_900, at_1000, at_1100)],
           [None, None, None])
-    check("1100: a failure after the headerless success still reports content time 900,"
-          " older than the generation it last decoded at 1000",
-          clocks(at_1100["lirr"]), (False, T_HEADERLESS, T_STAMPED))
+    check("1100: a failure after the headerless success keeps the null it last published,"
+          " the clock of the generation it last decoded at 1000",
+          clocks(at_1100["lirr"]), (False, T_HEADERLESS, None),
+          before=(False, T_HEADERLESS, T_STAMPED))
     check("failure-only control: timestamped 900, failed 1000, retains 900 with ok false"
           " (correct: what absence is for)",
           clocks(fail_1000["lirr"]), (False, T_STAMPED, T_STAMPED))
-    check("envelope feed_timestamp at 900, 1000, 1100 (beyond the audit's citation)",
+    check("envelope feed_timestamp at 900, 1000, 1100 (beyond the audit's citation): null"
+          " from the headerless success on, and the failure at 1100 keeps that null, its last"
+          " clock",
           [b["envelope_feed_timestamp"] for b in (at_900, at_1000, at_1100)],
-          [T_STAMPED, T_STAMPED, T_STAMPED])
-    check("/api/status feeds.railroads.feed_age_s at 1000 (beyond the audit's citation)",
-          at_1000["status_feed_age_s"], 100.0)
+          [T_STAMPED, None, None], before=[T_STAMPED, T_STAMPED, T_STAMPED])
+    check("/api/status feeds.railroads.feed_age_s at 1000 (beyond the audit's citation):"
+          " unknown",
+          at_1000["status_feed_age_s"], None, before=100.0)
+    check("ADDED: failure-only control at 1000, (envelope feed_timestamp, feed_age_s): LIRR is"
+          " in the failed list, so the envelope keeps 900 and ages",
+          (fail_1000["envelope_feed_timestamp"], fail_1000["status_feed_age_s"]),
+          (T_STAMPED, 100.0))
     return {"at_1000": at_1000, "at_1100": at_1100, "fail_1000": fail_1000}
 
 
@@ -580,19 +639,21 @@ async def section_d() -> dict:
           [clocks(p["lirr"])[0] for p in polls], [True] * HEADERLESS_POLLS)
     check("every headerless poll served that generation's LIRR rows (more than zero)",
           all(p["lirr_rows"] > 0 for p in polls), True)
-    check("the content clock every headerless poll publishes: the captured header, each time",
-          served, [header] * HEADERLESS_POLLS)
-    check("older than the newest clock that generation's own entities carry, by",
+    steps = [float(CADENCE_S * k) for k in range(1, HEADERLESS_POLLS + 1)]
+    check("the content clock every headerless poll publishes: null, each time",
+          served, [None] * HEADERLESS_POLLS, before=[header] * HEADERLESS_POLLS)
+    check("so none is older than the newest clock that generation's own entities carry",
           [None if t is None else own - t for own, t in zip(own_clocks, served)],
-          [float(CADENCE_S * k) for k in range(1, HEADERLESS_POLLS + 1)])
-    check("the age the block implies grows one interval per interval",
-          implied, [float(CADENCE_S * k) for k in range(1, HEADERLESS_POLLS + 1)])
-    check(f"and passes FEED_STALE_AFTER_S ({cache.FEED_STALE_AFTER_S} s) on a feed that"
+          [None] * HEADERLESS_POLLS, before=steps)
+    check("the block implies no age, where it grew one interval per interval",
+          implied, [None] * HEADERLESS_POLLS, before=steps)
+    check(f"and never passes FEED_STALE_AFTER_S ({cache.FEED_STALE_AFTER_S} s) on a feed that"
           " decoded successfully every poll",
-          implied[-1] is not None and implied[-1] > cache.FEED_STALE_AFTER_S, True)
-    check("/api/status feeds.railroads.feed_age_s follows it (beyond the audit's citation)",
-          [p["status_feed_age_s"] for p in polls],
-          [float(CADENCE_S * k) for k in range(1, HEADERLESS_POLLS + 1)])
+          implied[-1] is not None and implied[-1] > cache.FEED_STALE_AFTER_S, False,
+          before=True)
+    check("/api/status feeds.railroads.feed_age_s reads unknown on each (beyond the audit's"
+          " citation)",
+          [p["status_feed_age_s"] for p in polls], [None] * HEADERLESS_POLLS, before=steps)
     return {"implied": implied, "header": header}
 
 
@@ -605,7 +666,8 @@ async def run() -> tuple:
 
 
 def main_script() -> int:
-    print("A10: headerless successful LIRR generation inherits an old content clock")
+    print("A10: headerless successful LIRR generation inherits an old content clock:"
+          " the repair, pinned")
     print(f"repository : {REPO}")
     print(f"DATA_DIR   : {os.environ['DATA_DIR']} (temporary)")
     print("upstreams  : in-memory fakes only; the MTA realtime seams point at loopback")
@@ -638,13 +700,15 @@ def main_script() -> int:
     print("  every check matches the record.")
     print()
     print(
-        "DISPOSITION: VERIFIED  A successfully decoded headerless LIRR generation at poll "
-        "1000 whose own trip_update is dated 990 is served ok true, fetched_at 1000, "
-        "feed_timestamp 900 (audit: 900), while the subway, given the same bytes through the "
-        "same reader, publishes null and a real failure retains 900 correctly on both. On the "
-        f"committed capture, five headerless next generations whose own clocks advance "
-        f"{CADENCE_S} s each are all served the captured header, and the implied age reaches "
-        f"{d['implied'][-1]:.0f} s."
+        "DISPOSITION: FIXED (claude/a10-headerless-generation)  BEFORE: a successfully decoded "
+        "headerless LIRR generation at poll 1000 whose own trip_update is dated 990 was served "
+        "ok true, fetched_at 1000, feed_timestamp 900 (audit: 900), the envelope and "
+        "feed_age_s kept 900 (100.0 s), and on the committed capture five headerless next "
+        f"generations implied an age reaching 100 s. AFTER: the same generation is served "
+        f"feed_timestamp null, as the subway serves the same bytes, the envelope and "
+        f"feed_age_s read null, a real failure keeps 900 on both families and on the "
+        f"railroad envelope, and the capture's five headerless generations imply "
+        f"{'no age' if all(a is None for a in d['implied']) else d['implied']}."
     )
     return 0
 

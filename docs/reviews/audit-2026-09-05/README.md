@@ -144,6 +144,12 @@ A repair to how a script runs or to the proxy a check reads, never to the fact a
 states, recorded here so a script's history tells the two apart (the form of the
 2026-10-12 directory's section of the same name).
 
+- **F02, on `claude/a03-renderers-operator`, 2026-11-08.** The fact F02 records is
+  unchanged. Its check that the deployed binding is the pinned one reads the lock's
+  `gtfs-realtime-bindings` line, and the lock was renamed from `backend/requirements.lock`
+  to `backend/requirements-lock.txt`, a name Dependabot's pip updater fetches (the lock's
+  header says why). The script reads the new path; **no check changed**, and the
+  disposition and every number it prints are what they were.
 - **F10, on `claude/a03-expected-contributors`, 2026-11-07.** The fact F10 records is
   unchanged: a tripped subway refresh deadline records 504, flips all eight envelope blocks
   to `ok: false` and reaches `/healthz` as `subway-groups-down`. Its world gave each group's

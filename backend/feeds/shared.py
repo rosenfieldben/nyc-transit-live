@@ -252,7 +252,7 @@ def _trim_arrivals(arrivals: dict) -> dict[str, dict[str, list[dict]]]:
 # placement and arrivals.
 #
 # DELETED is filtered as of gtfs-realtime-bindings 2.1.0 (the pin in
-# requirements.lock), whose trip enum carries DELETED=7. Under the old 2.0.0
+# requirements-lock.txt), whose trip enum carries DELETED=7. Under the old 2.0.0
 # binding it was not: proto2's closed-enum decoding coerced an unknown wire
 # value to the field default, so a real DELETED=7 read as SCHEDULED=0 and
 # slipped past this set. The getattr below was written for exactly this

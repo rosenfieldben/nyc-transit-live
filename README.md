@@ -210,7 +210,7 @@ nyc-transit-live/
 │   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py, gen_ferry_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
-│   ├── requirements.lock    # pinned deps installed by Railway and CI
+│   ├── requirements-lock.txt # pinned deps installed by Railway and CI
 │   └── requirements-dev.txt # the lock + test-only extras
 ├── frontend/
 │   ├── index.html
@@ -240,7 +240,7 @@ nyc-transit-live/
 ├── package.json             # dev-only: @playwright/test + @axe-core/playwright (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
 ├── nixpacks.toml            # pins Python 3.12 for the Railway build
-├── requirements.txt         # root pointer -> backend/requirements.lock
+├── requirements.txt         # root pointer -> backend/requirements-lock.txt
 └── .env                     # BUS_TIME_API_KEY (gitignored)
 ```
 
@@ -317,7 +317,7 @@ the complete list of what is unchecked, is in
    pip install -r requirements.txt
    ```
    Deploys (Railway, via the root `requirements.txt`) install the pinned
-   `backend/requirements.lock` instead; regeneration instructions are in the
+   `backend/requirements-lock.txt` instead; regeneration instructions are in the
    lock file's header.
 4. **Run it.**
    ```bash
@@ -499,6 +499,7 @@ and each is a way a conventional poller gets this wrong:
    | **Committed** | **6** | leaving four |
    | Production, at most | 4 | `njt_auth.DAILY_MINT_ALLOWANCE`, a ceiling per process per Eastern day: with the monitor's 4 it leaves 2 for an operator |
    | Contract monitor, a delayed run | +1 | GitHub starts a scheduled run late, sometimes by hours (runs 356 and 357 started at 05:00 and 12:01 UTC against the `17 */6 * * *` slots), so the 20:17 Eastern run can land after midnight and give the next Eastern day five monitor mints: with production's 4, nine of ten, leaving 1 |
+| Cron drift, measured | 0 | The delay is the rule, not the exception: on 2026-11-01 and 2026-11-02 the scheduled monitor runs started 231 to 362 minutes after their slots, some slots were skipped, and the Step 0 route-group probe's first scheduled run started 4h54m after its merge. A slot is not a run time, so a run is read by its run number, and a missing one is never filled by a dispatch, which would spend a mint |
 
    A deploy (cold token cache), a manual `workflow_dispatch` of the monitor, a
    fixture pull (`gen_njt_fixture.py` and `gen_njt_rt_fixture.py`, one each), or a

@@ -851,6 +851,16 @@ class FerryFeedHealth(BaseModel):
     failed: list[str]  # ["ferry"] when the last poll failed, else []
 
 
+class NjtFeedHealth(BaseModel):
+    total: int  # 1: NJ Transit's trip updates are one feed
+    ok: int
+    failed: list[str]  # ["njt"] when the last poll failed, else []
+    # The last successful poll's entity.id / trip_short_name cross-check disagreements
+    # (feeds/njt.py log_cross_check). Defaulted, as PathFeedHealth's `unresolved` is,
+    # because the failure-branch health dicts carry no count (no decode ran).
+    cross_check_failures: int = 0
+
+
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
 # ships as one committed fixture, so a single /api/airtrain endpoint returns
 # AirTrainData. Headways are SCHEDULED reference bands, never live countdowns.
@@ -1103,6 +1113,11 @@ class StatusResponse(BaseModel):
     # Defaulted so pre-14b /api/status fixtures validate unchanged; the live
     # handler always populates it once the first ferry poll runs.
     ferry_feeds: FerryFeedHealth | None = None
+    # NJ Transit's single-feed health (Amendment 1's Q5, closing the 2026-10-12 record's
+    # H5). Defaulted, as ferry_feeds is, so earlier /api/status fixtures validate
+    # unchanged; null before the first NJ Transit poll, and on a deployment where NJ
+    # Transit is not configured, which never polls.
+    njt_feeds: NjtFeedHealth | None = None
     # Per-ARCHIVE download honesty (C5), keyed "subway" / "railroad_LIRR" /
     # "railroad_MNR" / "path" / "ferry". Deliberately a SIBLING of the
     # *_static warmup strings above rather than an expansion of them: those are
@@ -1139,16 +1154,16 @@ HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
 HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # WHAT RIDERS ARE SERVED, NOT WHAT A FEED SENT (contract 6.2; section 4.5 of
 # docs/design/freshness-contract.md). Fires when some system has served riders nothing
-# current for as long as an operator tolerates, in the ways this rule can see (two it
-# cannot are at THE KNOWN BLIND SPOTS below): every arrival row it serves is more than
+# current for as long as an operator tolerates: every arrival row it serves is more than
 # cache.OPERATOR_STALE_AFTER_S (600 s) old, or carries no clock where its provider dates
 # rows, or carries no provenance a prediction can have; or it has been failing for
 # longer than the retention cap, which has DROPPED its rows, so it serves nothing at
-# all. That second half is judged by the age of the system's last decode, so it holds
-# on every poll of the outage rather than only on the one the cap fires on
-# (routes/status.py's _was_dropped says why the system's retention clock cannot answer
-# it). The rule is routes/status.py's _systems_serving_nothing_current; this is why it
-# has its shape.
+# all; or it serves no row and has been failing, or has never decoded, for longer than
+# the same 600 s band (Amendment 1's Q5, THE FOUR STATES below). The dropped half is
+# judged by the age of the system's last decode, so it holds on every poll of the outage
+# rather than only on the one the cap fires on (routes/status.py's _was_dropped says why
+# the system's retention clock cannot answer it). The rule is routes/status.py's
+# _systems_serving_nothing_current; this is why it has its shape.
 #
 # TWO THRESHOLDS, BECAUSE TWO AUDIENCES. A rider's board qualifies a row at
 # cache.FEED_STALE_AFTER_S (90 s, the design's OBS_FRESH_S), and every carried-forward
@@ -1204,23 +1219,24 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # trips were independent, which they are not quite. Whether LIRR's predictions need a
 # threshold of their own is open question 1 in docs/reviews/audit-2026-09-05.md.
 #
-# THE KNOWN BLIND SPOTS, stated for the same reason. First, the dropped half names only
-# a system that has decoded in THIS process, because one that never has took nothing
-# from riders here. A group already failing when a new deploy comes up is therefore
-# invisible to this code for as long as it keeps failing, and a quiet probe right after
-# a deploy is not proof of recovery; /api/status's subway_feeds.failed and
-# railroad_feeds.failed still name it. The contract monitor's note for this code says
-# the same, and test_a_system_that_never_decoded_has_dropped_nothing pins the rule.
-# Second, the dropped half names only systems that RETAIN, the subway groups and the
-# railroads. NJ Transit, the ferry and PATH keep their last rows on a failed poll
-# instead, each until its time has passed (Amendment 1's Q9 prunes a departed one), and
-# those rows age past the band like any other; but one of them that fails while serving
-# nothing (an empty feed is an ordinary overnight state for NJ Transit and the ferry), or
-# whose last kept row has departed, has no row to age and none to drop, so this code says
-# nothing from then for as long as the outage lasts, while /api/status still shows the
-# feed's error. A total railroad outage whose last kept row has departed is the same case.
-# Amendment 1 decided the overnight empty state (Q5): failed and never decoded are named
-# from the block's `ok`, which its Step 3 builds, closing both blind spots.
+# THE FOUR STATES (Amendment 1's Q5), which closed the two KNOWN BLIND SPOTS this
+# comment used to state. A system serving no row is FRESH AND EMPTY when its block is ok,
+# and says nothing: an empty feed is an ordinary overnight state for NJ Transit and the
+# ferry. STALE is the row rule above, which needs a row. FAILED and NEVER DECODED are read
+# off the block's `ok` and named once the system has been dark for more than the 600 s
+# band: from its last decode, or, never decoded, from this process's first attempt at
+# its family's poll (pollers._note_first_attempt), a clock set once and never reset, since
+# a block's retained_since starts over after the cap (the 2026-10-12 record's H4). So a
+# group already failing when a new deploy comes up is named ten minutes after the
+# process first tried it, where it used to be invisible for as long as it kept failing
+# (the first blind spot); and NJ Transit, the ferry and PATH failing with nothing to
+# show, or once their last kept row has departed (Q9), are named ten minutes after their
+# last decode, as is a total railroad outage in the same case (the second). THE COST,
+# accepted by Q5: the contract monitor fails a run on a group dark since a deploy from
+# its tenth minute. A family that is not configured (NJ Transit with no credentials)
+# never polls and is never named. test_health_observations.py pins each state, and
+# /api/status names the failing feeds beside it: subway_feeds, railroad_feeds,
+# path_feeds, ferry_feeds and, since Q5, njt_feeds.
 HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and

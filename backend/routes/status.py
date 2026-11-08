@@ -14,7 +14,14 @@ import njt_auth
 import static_data
 import static_shared
 from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, OPERATOR_STALE_AFTER_S, _feed_age
-from feeds import RAILROAD_FRESHNESS_SYSTEMS, SUBWAY_ROUTE_GROUPS, iter_rows
+from feeds import (
+    FERRY_SYSTEM,
+    PATH_SYSTEM,
+    RAILROAD_FRESHNESS_SYSTEMS,
+    SUBWAY_ROUTE_GROUPS,
+    iter_rows,
+)
+from feeds import njt as njt_feed
 from models import (
     HEALTH_BUS_INDEX_FAILED,
     HEALTH_FEED_CONTENT_STALE,
@@ -224,6 +231,10 @@ async def get_status(request: Request, response: Response) -> dict:
         "railroad_positions": _railroad_positions(app),
         "path_feeds": getattr(app.state, "path_feed_health", None),
         "ferry_feeds": getattr(app.state, "ferry_feed_health", None),
+        # NJ Transit's, the operator copy of its failure that was written on every poll and
+        # served nowhere (the 2026-10-12 record's H5) until Amendment 1's Q5 named a failing
+        # NJ Transit on /healthz, which an operator then needs to read the failure beside.
+        "njt_feeds": getattr(app.state, "njt_feed_health", None),
         "alerts": alerts,
     }
 
@@ -466,13 +477,16 @@ class _ServedSystem(NamedTuple):
     rule and the retention stamp cannot disagree about what a row is. None, as opposed
     to an empty container, means the system has NO ENTRY in its index at all, which is
     one of the facts _was_dropped turns on. `block` is the system's per-system
-    freshness block, and only the systems whose data is RETAINED pass one: the subway
-    groups and the railroads (see _served_arrival_systems).
+    freshness block, which every family passes since Amendment 1's Q5 (see
+    _served_arrival_systems), and `first_attempt` is when this process first tried its
+    family's poll (pollers._note_first_attempt), the clock a never-decoded system is aged
+    by in _dark_past_the_operator_band.
     """
 
     rows: object
     age_gated: bool
     block: Mapping | None = None
+    first_attempt: float | None = None
 
 
 def _row_is_past_the_operator_band(row: Mapping, age_gated: bool, now: float) -> bool:
@@ -529,8 +543,9 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
     FOUR FACTS, ALL REQUIRED:
       - ok is False: failing now. A healthy system serving nothing has nothing running.
       - fetched_at is set: it has decoded in this process. One that never has took
-        nothing from anyone. That includes a group already failing when this process
-        started, which the contract monitor's note for this code says out loud.
+        nothing from anyone here. That includes a group already failing when this process
+        started, which the other road names since Amendment 1's Q5, from this process's
+        first attempt (_dark_past_the_operator_band).
       - NO ENTRY in its index (rows None, not an empty container). A TOTAL outage
         returns before any merge runs: _mark_all_systems_failed flips every ok and the
         index keeps every entry, an empty one included, so an empty entry means nothing
@@ -550,13 +565,13 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
     ten minutes by either road: its carried rows aging past the band, or the cap taking
     them. A system that does not retain (NJ Transit, the ferry, PATH) and fails while
     serving nothing, or whose last kept row has departed (Amendment 1's Q9 prunes it), has
-    no row to age and none to drop, so it reaches no operator here:
-    models.HEALTH_OBSERVATIONS_QUALIFIED names that blind spot. So does a total railroad
-    outage once its last kept row has departed: the prune keeps each system's key, emptied,
-    so an emptied entry is never read as one the merge removed. This road reads the cap because
-    once the rows are gone riders are served nothing at all, whatever any band says.
-    The contract tier compresses the cap and never the band, which is why its outage
-    scenario reaches the code by this road alone.
+    no row to age and none to drop, and neither has a total railroad outage once its last
+    kept row has departed (the prune keeps each system's key, emptied, so an emptied entry
+    is never read as one the merge removed): since Amendment 1's Q5 those reach the
+    operator by the other road, _dark_past_the_operator_band. This road reads the cap
+    because once the rows are gone riders are served nothing at all, whatever any band
+    says. The contract tier compresses the cap and never the band, which is why its outage
+    scenario reaches the code by this road first.
 
     MEASURED FROM THE LAST DECODE, while the merge's window counts from the first failed
     poll, so the two edges sit one poll interval apart: a system that went down holding
@@ -577,12 +592,45 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
     )
 
 
+def _dark_past_the_operator_band(system: _ServedSystem, now: float) -> bool:
+    """Amendment 1's Q5: a system failing, or never decoded, with no row served, dark for
+    longer than the operator band.
+
+    THE FOUR STATES, AS AN OPERATOR HEARS THEM. Fresh and empty (ok, no row) says nothing:
+    an empty feed is an ordinary overnight state. Stale is the row rule
+    (_row_is_past_the_operator_band), which only a system serving rows reaches. Failed and
+    never decoded are read off the block's `ok` and named once the system has been dark
+    for more than OPERATOR_STALE_AFTER_S, the band the row rule uses, with its strict `>`:
+    counted from its last decode (`fetched_at`) or, never decoded in this process, from
+    the first attempt this process made at its family's poll (`first_attempt`). NEVER FROM
+    `retained_since`, which starts over after the retention cap (the 2026-10-12 record's H4):
+    a rule reading it would go quiet on the poll after the cap and stay quiet until the
+    next window capped.
+
+    WHAT THE DROPPED RUNG (_was_dropped) COULD NOT SEE, and this does: a system that never
+    decoded here; PATH, the ferry and NJ Transit failing with nothing to show, or once
+    their last kept row has departed (Q9); a total outage whose entries are empty rather
+    than absent; and an LIRR outage after a headerless success (PR #138's F1), which has
+    no content clock for feed-content-stale to age. A family that is not configured never
+    polls and is not handed to this rule (_served_arrival_systems).
+    """
+    block = system.block
+    if block is None or block.get("ok") is not False:
+        return False
+    dark_since = block.get("fetched_at")
+    if dark_since is None:
+        dark_since = system.first_attempt
+    return dark_since is not None and now - dark_since > OPERATOR_STALE_AFTER_S
+
+
 def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: float) -> list[str]:
     """The systems serving riders nothing current, sorted: the observations-qualified rule.
 
     CURRENT IN THE OPERATOR'S SENSE. A system counts when it serves at least one row and
     EVERY one of them is past the operator band (_row_is_past_the_operator_band), or when
-    it serves none because the retention cap dropped them (_was_dropped). A rider is told
+    it serves none because the retention cap dropped them (_was_dropped), or when it serves
+    none and has been failing, or has never decoded, for longer than the band
+    (_dark_past_the_operator_band, Amendment 1's Q5). A rider is told
     far sooner and one row at a time, at FEED_STALE_AFTER_S; this code tells the
     operator, at OPERATOR_STALE_AFTER_S, and never at the rider's threshold
     (models.HEALTH_OBSERVATIONS_QUALIFIED says why). One row inside the band keeps a
@@ -590,14 +638,13 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
     models.HEALTH_OBSERVATIONS_QUALIFIED has the LIRR numbers that rule out a version
     where any one row would do.
 
-    A system serving no rows that was NOT dropped is quiet: a group with nothing running
-    right now, one that has never decoded, one failing inside its retention window with
-    nothing to carry, and one a total outage caught holding an empty entry all serve
-    nothing without anything having been taken away. So, since Amendment 1's Q9, is a
-    family in a total outage whose last kept row has departed: the second of
-    models.HEALTH_OBSERVATIONS_QUALIFIED's KNOWN BLIND SPOTS, which Step 3's Q5 closes.
-    The window case becomes the dropped rung once the system has been failing for
-    FEED_RETENTION_MAX_S, and it stays there on every poll until the system decodes again
+    A system serving no rows is quiet while it is healthy (a group with nothing running
+    right now) and while it has been dark for no longer than the band: one failing inside
+    its retention window with nothing to carry, one a total outage caught holding an empty
+    entry, one that has never decoded, and a family in a total outage whose last kept row
+    has departed. Past the band each of those is named, from its block (Amendment 1's Q5),
+    which closed models.HEALTH_OBSERVATIONS_QUALIFIED's two KNOWN BLIND SPOTS; and a system
+    the cap has dropped is named by that rung on every poll until it decodes again
     (_was_dropped says why that needed saying).
 
     Pure and clock-injected, like _health_codes; the healthz handler builds `systems`
@@ -610,7 +657,7 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
         if rows:
             if all(_row_is_past_the_operator_band(row, system.age_gated, now) for row in rows):
                 serving_nothing.append(name)
-        elif _was_dropped(system, now):
+        elif _was_dropped(system, now) or _dark_past_the_operator_band(system, now):
             serving_nothing.append(name)
     return serving_nothing
 
@@ -633,39 +680,58 @@ def _served_arrival_systems(state: object) -> dict[str, _ServedSystem]:
     header is not a usable clock is named (design 4.2), and that railroad's rows carry
     no observed_at at all, so gating them would qualify a whole railroad forever.
 
-    ONLY THE SUBWAY GROUPS AND THE RAILROADS PASS A BLOCK, because only they retain,
-    and only their indexes are keyed by system, which is what lets an ABSENT entry mean
-    the merge removed it (_was_dropped). NJ Transit's envelope carries a block too, but
-    a failed NJ Transit poll keeps its last-known rows, each until its time has passed
-    (Amendment 1's Q9), and never retains, so ok False
-    with retained_since None there is one failed poll rather than a cap that fired, and
-    its index is one flat map with no per-system entry that could go missing.
+    EVERY FAMILY PASSES ITS BLOCKS SINCE AMENDMENT 1's Q5, which reads a failing or
+    never-decoded system off its block's `ok` (_dark_past_the_operator_band), and each
+    system carries its family's first-attempt clock from the same cache entry
+    (pollers._note_first_attempt). Only the subway groups and the railroads retain, and
+    only their indexes are keyed by system, which is what lets an ABSENT entry mean the
+    merge removed it (_was_dropped). PATH, the ferry and NJ Transit keep their last rows
+    on a failed poll, each until its time has passed (Amendment 1's Q9), and never
+    retain, so ok False with retained_since None there is a failed poll rather than a cap
+    that fired, and each index is one flat map with no per-system entry that could go
+    missing: it is handed over as a map, empty before the first poll, never as None.
+
+    A FAMILY THAT IS NOT CONFIGURED IS LEFT OUT: NJ Transit with no credentials
+    (njt_static_status "not-configured") never polls, which is a deployment's choice and
+    not an outage, the distinction the page keeps too (isNotConfigured in
+    frontend/helpers.js).
 
     Typed defensively, because this reads app.state, whose indexes are None or absent
     before the first poll.
     """
     cache = getattr(state, "feed_cache", None) or {}
+
+    def family(name: str) -> tuple[dict, float | None]:
+        entry = cache.get(name) or {}
+        return entry.get("systems") or {}, entry.get("first_attempt_at")
+
     systems: dict[str, _ServedSystem] = {}
     subway_rows = getattr(state, "subway_arrivals_by_system", None) or {}
-    subway_blocks = (cache.get("subways") or {}).get("systems") or {}
+    subway_blocks, subway_attempt = family("subways")
     for group in set(subway_rows) | set(subway_blocks):
         systems[f"subway:{group}"] = _ServedSystem(
-            subway_rows.get(group), True, subway_blocks.get(group)
+            subway_rows.get(group), True, subway_blocks.get(group), subway_attempt
         )
     railroad_rows = getattr(state, "railroad_arrivals", None) or {}
-    railroad_blocks = (cache.get("railroads") or {}).get("systems") or {}
+    railroad_blocks, railroad_attempt = family("railroads")
     for system in set(railroad_rows) | set(railroad_blocks):
         systems[f"railroad:{system}"] = _ServedSystem(
             railroad_rows.get(system),
             system in RAILROAD_FRESHNESS_SYSTEMS,
             railroad_blocks.get(system),
+            railroad_attempt,
         )
-    for name, index in (
-        ("path", "path_arrivals"),
-        ("ferry", "ferry_arrivals"),
-        ("njt", "njt_arrivals"),
+    for name, index, system in (
+        ("path", "path_arrivals", PATH_SYSTEM),
+        ("ferry", "ferry_arrivals", FERRY_SYSTEM),
+        ("njt", "njt_arrivals", njt_feed.SYSTEM),
     ):
-        systems[name] = _ServedSystem(getattr(state, index, None), True)
+        if name == "njt" and getattr(state, "njt_static_status", None) == "not-configured":
+            continue
+        blocks, attempt = family(name)
+        systems[name] = _ServedSystem(
+            getattr(state, index, None) or {}, True, blocks.get(system), attempt
+        )
     return systems
 
 

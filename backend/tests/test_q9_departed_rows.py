@@ -290,18 +290,14 @@ async def test_the_subways_total_failure_prunes_both_its_indexes(world, monkeypa
     }
 
 
-async def test_a_total_outage_goes_quiet_on_healthz_once_its_last_kept_row_departs(
+async def test_a_total_outage_stays_named_on_healthz_after_its_last_kept_row_departs(
     world, monkeypatch
 ):
-    """WHAT Q9 COSTS THE OPERATOR UNTIL STEP 3, pinned as decided. observations-qualified
-    ages a non-retaining family's kept rows, and a system serving no row reads as quiet
-    unless the retention cap dropped it (routes/status.py's _was_dropped), so the second
-    KNOWN BLIND SPOT at models.HEALTH_OBSERVATIONS_QUALIFIED now covers a family whose last
-    kept row has departed, as well as one that failed holding none. PATH fails from T+20
-    holding one row due at T+700, dated T-5: the code is on at T+620 (the row 625 s old, past
-    the 600 s band) and off at T+720, the row gone, where before Q9 it stayed on for the
-    whole outage. Amendment 1's Q5, built in Step 3, names a failed system from its block
-    and moves this test."""
+    """WHAT Q9 COST THE OPERATOR UNTIL STEP 3, and Amendment 1's Q5 paid back. PATH fails
+    from T+20 holding one row due at T+700, dated T-5: the code is on at T+620 (the row 625 s
+    old, past the 600 s band), and at T+720, the row gone, it stays on, named from PATH's
+    block: failed, nothing to show, its last decode (T) 720 s old. Pinned by Step 2 as
+    decided with the code OFF at T+720, which was Q9's quiet-early item; Step 3 moved it."""
     row = {"route_id": "862", "arrival": T + 700, "observed_at": T - 5, "provenance": "reported"}
 
     async def healthy(client, stops):
@@ -321,7 +317,7 @@ async def test_a_total_outage_goes_quiet_on_healthz_once_its_last_kept_row_depar
         async with httpx.AsyncClient(transport=transport, base_url="http://q9") as http:
             codes[at - T] = (await http.get("/healthz")).json()["degraded"]
     assert "observations-qualified" in codes[620]
-    assert "observations-qualified" not in codes[720]
+    assert "observations-qualified" in codes[720]
     assert app_module.app.state.path_arrivals == {}
 
 

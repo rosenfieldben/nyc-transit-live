@@ -893,14 +893,19 @@ rider's board has said "as of" since 90 seconds), undated where its provider dat
 rows, or of no known provenance; or it has been failing for longer than the retention
 cap, which has dropped its rows. That second half is aged from the system's last
 successful decode, so it holds on every poll of the outage, not only the one the cap
-fires on. It is not
+fires on. And a system serving no row at all is named from its block: quiet while it
+is healthy (an empty feed overnight is ordinary), named once it has been failing for
+more than the same 600 seconds since its last decode, or, never decoded, since the
+process first tried it (Amendment 1's Q5). A deployment where NJ Transit is not
+configured never polls it and is never named for it. It is not
 `feed-content-stale`, which is about one endpoint's feed header lagging, and the two
 occur independently. It never gates either: old upstream data is a property of the
-world, not of the build. Two limits are known. A new process cannot see a group that
-has not decoded since it came up, so a quiet probe after a redeploy is not proof of
-recovery (`/api/status`'s `subway_feeds.failed` and `railroad_feeds.failed` still name
-the group), and a sparsely served LIRR late at night can trip the code with nothing
-wrong.
+world, not of the build. Two limits are known. A feed already failing when a new
+process comes up reaches the code only from that process's tenth minute, so a quiet
+probe inside those ten minutes is not proof of recovery (`/api/status`'s
+`subway_feeds`, `railroad_feeds`, `path_feeds`, `ferry_feeds` and `njt_feeds` name a
+failing feed at once), and a sparsely served LIRR late at night can trip the code with
+nothing wrong.
 
 One more is read off the subway lines being served. `subway-lines-degraded` says the
 subway group is `ready` and no route line it serves draws (none has two points). The

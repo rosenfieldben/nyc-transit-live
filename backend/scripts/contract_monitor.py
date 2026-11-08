@@ -332,9 +332,11 @@ _WARN_HEALTH_CODES = ("subway-route-unmapped",)
 # "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
-# that nothing on the deployment's side can clear it, that a fresh process cannot see a
-# group that has not decoded in it (models.HEALTH_OBSERVATIONS_QUALIFIED records that
-# blind spot), or that one railroad can trip it on a quiet night. Every
+# that nothing on the deployment's side can clear it, that a feed failing since a deploy
+# reaches it only from the new process's tenth minute (Amendment 1's Q5; before Q5 a
+# fresh process could not see such a feed at all), so a clean run inside those ten
+# minutes is not proof of recovery, or that one railroad can trip it on a quiet night.
+# Every
 # other code names something broken, and its name is the whole instruction. OURS, not the
 # deployment's: these are literals in this file keyed by codes from this file's own
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
@@ -368,12 +370,15 @@ _HEALTH_CODE_NOTES = {
         "a system has served riders nothing current for the operator band (every row "
         f"more than {int(REALTIME_STALE_S)}s old, undated where its provider dates rows, "
         "or of no known provenance), or has been failing past the retention cap with its "
-        "rows dropped; the cause is upstream or the failing feed, so a redeploy fixes "
-        "nothing about it, and a new process cannot see a group that has not decoded "
-        "since it came up, so a clean run after a redeploy is not proof of recovery (read "
-        "/api/status: subway_feeds.failed and railroad_feeds.failed name every group "
-        "failing now); known false positive: a sparsely served LIRR (a late night with few "
-        f"trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
+        "rows dropped, or serves no row and has been failing, or has never decoded, for "
+        f"more than {int(REALTIME_STALE_S)}s since its last decode or since the process "
+        "first tried it; the cause is upstream or the failing feed, so a redeploy fixes "
+        "nothing about it, and a feed failing since a deploy reaches this only from the "
+        "new process's tenth minute, so a clean run inside those ten minutes is not proof "
+        "of recovery (read /api/status: subway_feeds.failed, railroad_feeds.failed, "
+        "path_feeds.failed, ferry_feeds.failed and njt_feeds.failed name every feed "
+        "failing now); known false positive: a sparsely served LIRR (a late night with "
+        f"few trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
         "nothing wrong"
     ),
     "subway-route-unmapped": (

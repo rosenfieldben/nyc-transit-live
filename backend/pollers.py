@@ -415,6 +415,22 @@ def _mark_all_systems_failed(
         }
 
 
+def _note_first_attempt(entry: dict) -> None:
+    """Record, once, when this process first tried this family's realtime poll.
+
+    THE CLOCK A NEVER-DECODED SYSTEM IS AGED BY on /healthz's observations-qualified
+    (Amendment 1's Q5; routes/status.py _dark_past_the_operator_band). Such a system's
+    block has no fetched_at, and its retained_since starts over after the retention cap (the
+    2026-10-12 record's H4), so neither says how long it has been dark. This is written on
+    the first attempt and never again: nothing resets it, the cap included, so it counts
+    from that attempt for the life of the process. Kept in the cache entry beside the
+    blocks rather than in them, so no envelope serves it, and set where each refresher is
+    about to fetch: a poll held back by a static group still loading, or by NJ Transit not
+    being configured, tried nothing.
+    """
+    entry.setdefault("first_attempt_at", time.time())
+
+
 # THE ARRIVALS INDEXES EACH FAMILY KEEPS WHOLE ON A TOTAL FAILURE, which Amendment 1's Q9
 # prunes. PATH, the ferry and NJ Transit keep their last decode on every failed poll, and
 # the railroads and the subway on a TOTAL failure return before any merge; none of them
@@ -581,6 +597,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
         return
     total_feeds = len(SUBWAY_FEED_URLS)
+    _note_first_attempt(entry)
     try:
         (
             trains,
@@ -698,6 +715,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
 async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
+    _note_first_attempt(entry)
     try:
         (
             trains,
@@ -817,13 +835,13 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     # down, Metro-North up" would read green; kept, a dated clock ages with each poll and
     # /healthz reads feed-content-stale once it is FEED_STALE_AFTER_S old. WHAT IS KEPT IS
     # WHAT THE ENVELOPE LAST PUBLISHED, and after a headerless LIRR success that is None:
-    # an outage that follows one has no clock to age, so /healthz names it only through
-    # observations-qualified, once the outage's rows pass that code's 600 s band (measured
-    # on the committed capture; the 2026-10-12 record's live list carries it, for a
-    # ruling). On every poll where LIRR decoded, the fold is written as it came back,
-    # None included: a None there is a generation whose header carried no time, a fact
-    # about this poll as it is on LIRR's own block. Before Q7 this branch keyed on the
-    # None itself and fired
+    # an outage that follows one has no clock to age, so /healthz names it through
+    # observations-qualified alone, at that code's 600 s band from LIRR's last decode,
+    # read off LIRR's block (Amendment 1's Q5, which closed PR #138's F1; routes/status.py
+    # _dark_past_the_operator_band). On every poll where LIRR decoded, the fold is written
+    # as it came back, None included: a None there is a generation whose header carried
+    # no time, a fact about this poll as it is on LIRR's own block. Before Q7 this branch
+    # keyed on the None itself and fired
     # on that success too, so a feed that decoded every poll was served its last dated
     # clock, aging one interval per interval into feed-content-stale (A10's arm D, 20 s
     # to 100 s over five polls). The signal for a headerless LIRR is the contract
@@ -866,6 +884,7 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
             log=False,
         )
         return
+    _note_first_attempt(entry)
     try:
         trains, arrivals, feed_timestamp, unresolved = await main.fetch_path_trains(client, stops)
     except httpx.HTTPError as exc:
@@ -968,6 +987,7 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
             log=False,
         )
         return
+    _note_first_attempt(entry)
     try:
         boats, arrivals, feed_timestamp = await main.fetch_ferry_data(
             client, getattr(app.state, "ferry_static", {})
@@ -1057,7 +1077,14 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         already true, and the frozen fetched_at beside the envelope's advancing one
         IS the staleness signal the client measures.
         """
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": [njt_feed.SYSTEM]}
+        # THE OPERATOR COPY (/api/status njt_feeds, Amendment 1's Q5, closing the
+        # 2026-10-12 record's H5) reports a POLL. One that never ran (static loading, not
+        # configured) has no health to report, as PATH's and the ferry's static-loading
+        # arms write none, and njt_static says why: a deployment that is not configured
+        # never wears "failed" (main.py's static states).
+        app.state.njt_feed_health = (
+            {"total": 1, "ok": 0, "failed": [njt_feed.SYSTEM]} if polled else None
+        )
         # A poll that ran and failed writes NJ Transit's never-decoded block if it has none
         # (Amendment 1, Q10); one that never ran (static loading, not configured) does not,
         # so its board keeps answering 503 with the app's own reason.
@@ -1089,6 +1116,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
                 polled=False,
             )
         return
+    _note_first_attempt(entry)
     try:
         trains, arrivals, feed_timestamp, warnings = await main.fetch_njt_trains(
             getattr(app.state, "njt_stops", None) or {},

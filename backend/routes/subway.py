@@ -90,6 +90,11 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown station {station_id}.")
     station_arrivals = (getattr(app.state, "subway_arrivals", None) or {}).get(station_id, {})
     by_system = getattr(app.state, "subway_arrivals_by_system", None) or {}
+    # THE STATION'S STATIC ROUTES, which name the groups it EXPECTS (Amendment 1, Q1): the
+    # three selectors below read the expected groups united with the ones that have rows
+    # here, so a group whose last row at this station has expired, or that has never
+    # decoded, is still named (cache._contributing_systems).
+    routes_here = (getattr(app.state, "subway_station_routes", None) or {}).get(station_id, [])
     return {
         # THE OLDEST CONTRIBUTING GROUP'S poll time, not the aggregate's (C2). A
         # railroad station belongs to exactly one system, but a subway station is
@@ -105,10 +110,12 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
         # successfully keeps this number one second old forever. The contributor rule
         # is right; what was missing was a second selector applying it to CONTENT
         # time, which is the line below.
-        "fetched_at": _oldest_contributing_fetched_at(entry, by_system, station_id),
+        "fetched_at": _oldest_contributing_fetched_at(entry, by_system, station_id, routes_here),
         # The same three rules over the same contributors, asked of what the
         # providers SENT rather than of when we fetched it.
-        "feed_timestamp": _oldest_contributing_content_at(entry, by_system, station_id),
+        "feed_timestamp": _oldest_contributing_content_at(
+            entry, by_system, station_id, routes_here
+        ),
         "station_id": station_id,
         "station_name": stations[station_id]["name"],
         "directions": {
@@ -121,5 +128,5 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
         # WHICH CONTRIBUTORS, not every system: the acceptance clause is that other
         # healthy contributors stay distinguishable, and that is a fact about a field
         # only if the board can name them.
-        "systems": _contributing_freshness(entry, by_system, station_id),
+        "systems": _contributing_freshness(entry, by_system, station_id, routes_here),
     }

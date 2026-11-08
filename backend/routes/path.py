@@ -12,7 +12,9 @@ from cache import (
     _require_filled_cache,
     _serve_cached,
     _static_endpoint_ready,
+    _system_freshness_block,
 )
+from feeds import PATH_SYSTEM
 from models import PathFeed, PathRoute, PathStationArrivals, PathStop
 
 router = APIRouter()
@@ -125,6 +127,10 @@ async def get_path_arrivals(request: Request, stop_id: str) -> dict:
         "stop_name": stops[stop_id]["name"],
         "directions": rows,
         "served_at": time.time(),
-        # No systems block exists for PATH: it is one feed, and no poller writes one.
-        "systems": None,
+        # PATH's ONE BLOCK (Amendment 1, Q10), so this board says `ok` in a field, which
+        # nothing at its top level does: fetched_at null and ok false when the feed has
+        # never decoded in this process, where the board used to answer 502 with the
+        # upstream's own error text. It used to serve null here always, and the page's
+        # substitute block then read the board as healthy.
+        "systems": _system_freshness_block(entry, PATH_SYSTEM),
     }

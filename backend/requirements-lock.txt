@@ -7,6 +7,11 @@
 #   uv pip freeze --python /tmp/lock312/bin/python | sort
 # Regenerate the same way (and re-add this header) after changing
 # requirements.txt.
+# NAMED requirements-lock.txt, not requirements.lock, so Dependabot's pip updater
+# fetches it: it reads .txt and .in requirement files and the -r files they name
+# with those suffixes, and every update job of its /backend entry, weekly from
+# 2026-06-20 to 2026-09-05, failed on requirements-dev.txt's `-r requirements.lock`
+# ("No such file or directory: 'dependabot_tmp_dir/requirements.lock'").
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.1

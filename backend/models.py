@@ -213,10 +213,16 @@ class SystemFreshness(BaseModel):
     # different audiences: those are operator counts on /api/status, this is the
     # rider-facing per-system flag on the live envelopes.
     ok: bool
-    # Set while this system's data is being carried forward from its last good
-    # poll. Null when the system is fresh AND null once the retention cap has
-    # dropped the data, so it is not the complement of `ok`: a long-failed system
-    # reports ok=False with retained_since=None and no data at all.
+    # The instant this system began failing, while it is inside the retention window:
+    # feeds.merge_system_generations records it WHETHER OR NOT anything was carried. Null
+    # when the system is fresh. IT DOES NOT MEAN "SOMETHING IS HELD", and nothing may read
+    # it so (Amendment 1, A1.4 and Q2): it is set for a system that has never decoded and
+    # so holds nothing, and once the retention cap has dropped a system's data it reads
+    # null for the one poll the cap fires on and is set again on the next, because the
+    # capped branch records no clock and the next poll starts one (H4 on the 2026-10-12
+    # record's live list), so a long outage cycles every FEED_RETENTION_MAX_S while
+    # carrying nothing. Whether a system has ever decoded is fetched_at (null: never);
+    # what is held is the rows, each marked `retained`. Retention itself is unchanged.
     retained_since: float | None
     # WHICH ROUTES THIS SYSTEM'S CURRENT DATA COVERS. Populated by the SUBWAY only,
     # and it is not a freshness field: it is the join key the client needs to point
@@ -231,7 +237,9 @@ class SystemFreshness(BaseModel):
     # true for retained data: a carried-forward group still lists its routes, and a
     # group the retention cap has emptied lists none, which is correct because it has
     # no markers left to describe. Null on the railroad and alerts blocks, whose
-    # entities already carry their own system name.
+    # entities already carry their own system name. The route-to-group table Amendment 1
+    # added (feeds.SUBWAY_ROUTE_GROUPS) answers another question, which groups a station
+    # expects, and this field does not read it: it stays what the feed actually served.
     routes: list[str] | None = None
     # WHAT THE POSITION LADDER DID WITH THIS SYSTEM'S VEHICLES (contract 6.3), populated
     # on the railroad blocks only. It rides here, on the envelope the rider's client
@@ -368,9 +376,9 @@ class StationArrivals(BaseModel):
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, and this is the ONE envelope the
     # contributor rule is written for: a subway station is served by several feed
-    # groups at once. The worst contributor answers, a group contributing nothing at
-    # this station does not participate, and one contributor that cannot be dated
-    # makes the answer None rather than letting the others speak for it.
+    # groups at once. The worst contributor answers, a group not expected at this
+    # station, with no rows here, does not participate, and one contributor that
+    # cannot be dated makes the answer None rather than letting the others speak for it.
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
     # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
@@ -378,6 +386,16 @@ class StationArrivals(BaseModel):
     # are optional-with-a-default for the wire reason, and the handlers always set
     # served_at: test_every_arrivals_endpoint_stamps_served_at pins that a served
     # response never carries None for it, on every one of the five.
+    #
+    # THE systems MAP KEEPS ITS TYPE AND CHANGED ITS MEANING (Amendment 1, Q1 and Q2). It
+    # names the groups this station EXPECTS, read from its static routes through the
+    # route-to-group table (feeds.SUBWAY_ROUTE_GROUPS), united with any group that has
+    # rows indexed here, and a group that has never decoded in this process is among them
+    # as a block reading fetched_at null and ok false. It used to name only the groups
+    # with rows indexed here, so a failed group whose last row had expired or been capped
+    # left it, and the board read exactly as fresh empty service's while /api/status
+    # listed the group failed (A03). Null only where nothing takes part, which on the live
+    # index is no station (cache._contributing_systems).
     feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
@@ -483,9 +501,9 @@ class PathStationArrivals(BaseModel):
     # bug.
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, taken from the ROWS rather than
-    # from this envelope's siblings: PATH is one feed with no per-system block, and
-    # the cache entry's own clock is the bridge's WRITE time, which advances every
-    # regeneration whether or not anything upstream moved (see
+    # from this envelope's siblings: PATH is one feed, its one block carries no content
+    # clock, and the cache entry's own clock is the bridge's WRITE time, which advances
+    # every regeneration whether or not anything upstream moved (see
     # _oldest_row_observed_at).
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
@@ -496,6 +514,10 @@ class PathStationArrivals(BaseModel):
     # response never carries None for it, on every one of the five.
     feed_timestamp: float | None = None
     served_at: float | None = None
+    # THE systems MAP NAMES PATH'S ONE SYSTEM ON EVERY ANSWER since Amendment 1's Q10,
+    # where it was always null: `ok` is then a field of the board, fetched_at null and ok
+    # false meaning the feed has never decoded in this process, the 200 a failed first
+    # poll now answers in place of a 502 carrying the upstream's error text.
     systems: dict[str, SystemFreshness] | None = None
 
 
@@ -804,9 +826,9 @@ class FerryStationArrivals(BaseModel):
     # bug.
     #
     # feed_timestamp is THE CONTENT CLOCK F03 NAMED, taken from the ROWS: the ferry is
-    # one all-or-nothing feed pair with no per-system block, and this envelope's own
-    # clock is the VehiclePositions header, which dates the BOATS rather than the dock
-    # predictions these rows came from (see _oldest_row_observed_at).
+    # one all-or-nothing feed pair whose one block carries no content clock, and this
+    # envelope's own clock is the VehiclePositions header, which dates the BOATS rather
+    # than the dock predictions these rows came from (see _oldest_row_observed_at).
     #
     # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
     # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
@@ -816,6 +838,10 @@ class FerryStationArrivals(BaseModel):
     # response never carries None for it, on every one of the five.
     feed_timestamp: float | None = None
     served_at: float | None = None
+    # THE systems MAP NAMES THE FERRY'S ONE SYSTEM ON EVERY ANSWER since Amendment 1's Q10,
+    # where it was always null: `ok` is then a field of the board, fetched_at null and ok
+    # false meaning the pair has never decoded in this process, the 200 a failed first
+    # poll now answers in place of a 502 carrying the upstream's error text.
     systems: dict[str, SystemFreshness] | None = None
 
 
@@ -823,6 +849,18 @@ class FerryFeedHealth(BaseModel):
     total: int  # 1: the two ferry endpoints are polled as one all-or-nothing feed
     ok: int
     failed: list[str]  # ["ferry"] when the last poll failed, else []
+
+
+class NjtFeedHealth(BaseModel):
+    total: int  # 1: NJ Transit's trip updates are one feed
+    ok: int
+    failed: list[str]  # ["njt"] when the last poll failed, else []
+    # The last successful poll's entity.id / trip_short_name cross-check disagreements
+    # (feeds/njt.py log_cross_check), NULL on a failed poll: no decode ran, so there is no
+    # count, and a 0 there would read as "no disagreements" to an operator sampling it for
+    # drift (the adversarial round of Amendment 1's Step 3, its F14). Unlike PathFeedHealth's
+    # `unresolved`, which defaults to 0 for the same failure dicts and predates this.
+    cross_check_failures: int | None = None
 
 
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
@@ -1057,6 +1095,13 @@ class StatusResponse(BaseModel):
     # so every earlier /api/status fixture validates unchanged.
     njt_mint_allowance: NjtMintAllowance | None = None
     subway_feeds: SubwayFeedHealth | None
+    # Every subway route outside the route-to-group table (Amendment 1, Q1;
+    # feeds.SUBWAY_ROUTE_GROUPS), route id to where it was seen, sorted: the feed groups
+    # that served it in this process and "static" when the static routes-per-station index
+    # names it; {} when every one is placed. Beside subway_feeds rather than inside it,
+    # because that dict is replaced every poll and this is held for the process
+    # (HEALTH_SUBWAY_ROUTE_UNMAPPED says why).
+    subway_unmapped_routes: dict[str, list[str]] = {}
     railroad_feeds: RailroadFeedHealth | None
     # THE POSITION LADDER'S COUNTS PER RAILROAD SYSTEM (contract 6.3), a SIBLING of
     # railroad_feeds rather than keys inside it: that dict is {total, ok, failed}, pinned
@@ -1070,6 +1115,11 @@ class StatusResponse(BaseModel):
     # Defaulted so pre-14b /api/status fixtures validate unchanged; the live
     # handler always populates it once the first ferry poll runs.
     ferry_feeds: FerryFeedHealth | None = None
+    # NJ Transit's single-feed health (Amendment 1's Q5, closing the 2026-10-12 record's
+    # H5). Defaulted, as ferry_feeds is, so earlier /api/status fixtures validate
+    # unchanged; null before the first NJ Transit poll, and on a deployment where NJ
+    # Transit is not configured, which never polls.
+    njt_feeds: NjtFeedHealth | None = None
     # Per-ARCHIVE download honesty (C5), keyed "subway" / "railroad_LIRR" /
     # "railroad_MNR" / "path" / "ferry". Deliberately a SIBLING of the
     # *_static warmup strings above rather than an expansion of them: those are
@@ -1106,16 +1156,16 @@ HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
 HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # WHAT RIDERS ARE SERVED, NOT WHAT A FEED SENT (contract 6.2; section 4.5 of
 # docs/design/freshness-contract.md). Fires when some system has served riders nothing
-# current for as long as an operator tolerates, in the ways this rule can see (two it
-# cannot are at THE KNOWN BLIND SPOTS below): every arrival row it serves is more than
+# current for as long as an operator tolerates: every arrival row it serves is more than
 # cache.OPERATOR_STALE_AFTER_S (600 s) old, or carries no clock where its provider dates
 # rows, or carries no provenance a prediction can have; or it has been failing for
 # longer than the retention cap, which has DROPPED its rows, so it serves nothing at
-# all. That second half is judged by the age of the system's last decode, so it holds
-# on every poll of the outage rather than only on the one the cap fires on
-# (routes/status.py's _was_dropped says why the system's retention clock cannot answer
-# it). The rule is routes/status.py's _systems_serving_nothing_current; this is why it
-# has its shape.
+# all; or it serves no row and has been failing, or has never decoded, for longer than
+# the same 600 s band (Amendment 1's Q5, THE FOUR STATES below). The dropped half is
+# judged by the age of the system's last decode, so it holds on every poll of the outage
+# rather than only on the one the cap fires on (routes/status.py's _was_dropped says why
+# the system's retention clock cannot answer it). The rule is routes/status.py's
+# _systems_serving_nothing_current; this is why it has its shape.
 #
 # TWO THRESHOLDS, BECAUSE TWO AUDIENCES. A rider's board qualifies a row at
 # cache.FEED_STALE_AFTER_S (90 s, the design's OBS_FRESH_S), and every carried-forward
@@ -1151,10 +1201,11 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # served arrival rows are more than 600 seconds old (526 are past a rider's 90), because
 # LIRR dates each prediction by its trip_update.timestamp and most of those are old on
 # an ordinary evening. An any-row rule would therefore be on permanently, and the
-# contract monitor fails its run on ANY recognized code, so a code that is always on is
-# a monitor nobody reads. The whole-system rule is quiet on that capture (45 of its 97
-# trips carry a prediction inside the band) and fires in every case the code exists
-# for: a subway group serving content older than the band while polled fresh (the F03
+# contract monitor fails its run on any recognized code but one (subway-route-unmapped,
+# its only WARN), so a code that is always on is a monitor nobody reads. The whole-system
+# rule is quiet on that capture (45 of its 97 trips carry a prediction inside the band)
+# and fires in every case the code exists for: a subway group serving content older
+# than the band while polled fresh (the F03
 # world, once past its ten minutes), a carried-forward system whose rows have aged past
 # the band, a total outage whose rows age past it, PATH's bridge serving fresh write
 # times over trip clocks older than it, and a dropped system. The last is the fallback
@@ -1170,20 +1221,26 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # trips were independent, which they are not quite. Whether LIRR's predictions need a
 # threshold of their own is open question 1 in docs/reviews/audit-2026-09-05.md.
 #
-# THE KNOWN BLIND SPOTS, stated for the same reason. First, the dropped half names only
-# a system that has decoded in THIS process, because one that never has took nothing
-# from riders here. A group already failing when a new deploy comes up is therefore
-# invisible to this code for as long as it keeps failing, and a quiet probe right after
-# a deploy is not proof of recovery; /api/status's subway_feeds.failed and
-# railroad_feeds.failed still name it. The contract monitor's note for this code says
-# the same, and test_a_system_that_never_decoded_has_dropped_nothing pins the rule.
-# Second, the dropped half names only systems that RETAIN, the subway groups and the
-# railroads. NJ Transit, the ferry and PATH keep their last rows on a failed poll
-# instead, and those rows age past the band like any other; but one of them that fails
-# while serving nothing (an empty feed is an ordinary overnight state for NJ Transit and
-# the ferry) has no row to age and none to drop, so this code says nothing for as long
-# as the outage lasts, while /api/status still shows the feed's error. Closing that
-# needs a decision about the overnight empty state first, so it is not closed here.
+# THE FOUR STATES (Amendment 1's Q5), which closed the two KNOWN BLIND SPOTS this
+# comment used to state. A system serving no row is FRESH AND EMPTY when its block is ok,
+# and says nothing: an empty feed is an ordinary overnight state for NJ Transit and the
+# ferry. STALE is the row rule above, which needs a row. FAILED and NEVER DECODED are read
+# off the block's `ok` and named once the system has been dark for more than the 600 s
+# band: from its last decode, or, never decoded, from this process's first attempt at
+# its family's poll (pollers._note_first_attempt), a clock set once and never reset, since
+# a block's retained_since starts over after the cap (the 2026-10-12 record's H4). So a
+# group already failing when a new deploy comes up is named ten minutes after the
+# process first tried it, where it used to be invisible for as long as it kept failing
+# (the first blind spot); and NJ Transit, the ferry and PATH failing with nothing to
+# show, or once their last kept row has departed (Q9), are named ten minutes after their
+# last decode, as is a total railroad outage in the same case (the second). THE COST,
+# accepted by Q5: the contract monitor fails a run on a group dark since a deploy from
+# ten minutes after the process first polls it (a family's first poll waits for its static
+# data, so that is later than the deploy's tenth minute by however long the static load
+# took). A family that is not configured (NJ Transit with no credentials)
+# never polls and is never named. test_health_observations.py pins each state, and
+# /api/status names the failing feeds beside it: subway_feeds, railroad_feeds,
+# path_feeds, ferry_feeds and, since Q5, njt_feeds.
 HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and
@@ -1220,6 +1277,20 @@ HEALTH_NJT_MINT_ALLOWANCE = "njt-mint-allowance"
 # upstream's publication, not in the code being promoted, so gating would refuse every
 # deploy, a fix included, for as long as upstream's geometry stayed bad.
 HEALTH_SUBWAY_LINES_DEGRADED = "subway-lines-degraded"
+# A ROUTE THE ROUTE-TO-GROUP TABLE DOES NOT KNOW (Amendment 1 to the freshness contract,
+# Q1). A subway station's board names the groups it EXPECTS, read from the static
+# routes-per-station index through feeds.SUBWAY_ROUTE_GROUPS, so a route the index names
+# and the table lacks is a station whose expected groups miss one: a group that has never
+# decoded, or whose rows have expired, would drop out of that board unnamed, which is the
+# defect A03 measured. Raised while the index names such a route, or once any group that
+# decoded has served one in this process, and held for the life of the process, because
+# the table is code and only a deploy can add the row (routes/status.py,
+# _unmapped_subway_routes). ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP: a D trip on the
+# NQRW feed does not raise it, D having a row. /api/status's subway_unmapped_routes names
+# each route and where it was seen, and the contract monitor prints them in a WARN.
+# Degraded rather than gating: the table's drift is not a reason to refuse a build, the
+# build that fixes it included.
+HEALTH_SUBWAY_ROUTE_UNMAPPED = "subway-route-unmapped"
 
 HEALTH_DEGRADED_CODES = (
     HEALTH_NO_FEED_FRESH,
@@ -1231,6 +1302,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_NJT_MINT_ALLOWANCE,
     HEALTH_SUBWAY_LINES_DEGRADED,
+    HEALTH_SUBWAY_ROUTE_UNMAPPED,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO

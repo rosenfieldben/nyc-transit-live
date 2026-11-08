@@ -38,7 +38,9 @@ from cache import (
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
+    FERRY_SYSTEM,
     NJT_ALERTS_SERVED_EMPTY_DETAIL,
+    PATH_SYSTEM,
     RAILROAD_FEED_URLS,
     RAILROAD_FRESHNESS_SYSTEMS,
     SUBWAY_FEED_URLS,
@@ -47,10 +49,12 @@ from feeds import (
     carry_forward_prev,
     combine_group_arrivals,
     combine_group_trains,
+    drop_departed_rows,
     drop_expired_arrivals,
     match_path_identities,
     merge_alert_generations,
     merge_system_generations,
+    routes_outside_the_table,
 )
 from feeds import njt as njt_feed
 
@@ -175,7 +179,18 @@ async def _bounded_refresh(entry: dict, coro, mark_degraded=None) -> None:
 # unclassified failure has to mark. Buses are absent on purpose: that source
 # publishes no per-feed health dict, so there is nothing to mark beyond its error.
 _FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
-_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry", "njt": "njt"}
+_SINGLE_FEED_HEALTH = {"path": PATH_SYSTEM, "ferry": FERRY_SYSTEM, "njt": njt_feed.SYSTEM}
+# The systems each board family's poll tries, for the never-decoded block a failed first
+# poll writes (Amendment 1, Q10; _mark_all_systems_failed). The subway joined the four
+# families Q10 named by the ruling of 2026-11-08 ("and the subway"), so a subway board
+# answers a total first-poll failure with a block for every expected group, not a 502.
+_BOARD_SYSTEMS = {
+    "subways": tuple(SUBWAY_FEED_URLS),
+    "railroads": tuple(RAILROAD_FEED_URLS),
+    "path": (PATH_SYSTEM,),
+    "ferry": (FERRY_SYSTEM,),
+    "njt": (njt_feed.SYSTEM,),
+}
 
 
 def _feed_degrader(app: FastAPI, name: str, entry: dict):
@@ -201,8 +216,14 @@ def _feed_degrader(app: FastAPI, name: str, entry: dict):
             label = _SINGLE_FEED_HEALTH[name]
             setattr(app.state, f"{name}_feed_health", {"total": 1, "ok": 0, "failed": [label]})
         # The per-system freshness block, where this envelope has one. Same helper the
-        # total-failure paths use, so a rider sees the same dimming either way.
-        _mark_all_systems_failed(entry)
+        # total-failure paths use, so a rider sees the same dimming either way, and the
+        # same never-decoded block for a board family whose first poll this was (Q10).
+        _mark_all_systems_failed(
+            entry, _BOARD_SYSTEMS.get(name, ()), route_coverage=name == "subways"
+        )
+        # And the kept rows whose time has passed (Q9), which a refresher's own failure
+        # arms prune and a deadline or an unclassified failure never reaches.
+        _drop_departed_kept_rows(app, name)
 
     return mark
 
@@ -350,7 +371,9 @@ def _merge_feed_systems(
     return merged, retained_since
 
 
-def _mark_all_systems_failed(entry: dict) -> None:
+def _mark_all_systems_failed(
+    entry: dict, systems: Iterable[str] = (), *, route_coverage: bool = False
+) -> None:
     """Flip every per-system `ok` to False after a TOTAL poll failure.
 
     The total-failure paths return early, keeping the whole last-known envelope
@@ -366,11 +389,88 @@ def _mark_all_systems_failed(entry: dict) -> None:
     restarting that clock here would be the same defect the write-ordering comments
     in the refreshers guard against.
 
-    A no-op before the first successful poll: with no block there is nothing to
-    correct, and the warming cache serves 503 rather than an envelope.
+    `systems` NAMES THE SYSTEMS A FAILED POLL TRIED, and each one with no block yet gets
+    the block of a system that has NEVER DECODED (Amendment 1, Q10): fetched_at null,
+    feed_timestamp null, ok false, written by _system_freshness like every other block.
+    That block is what lets a single-system board, a railroad board with both railroads
+    failing, and (since the ruling of 2026-11-08) a subway board whose every group failed,
+    answer a failed first poll with a 200 board saying so rather than the recorded 502
+    (cache._require_filled_cache). A caller whose poll never ran (a static group still
+    loading, NJ Transit not configured) passes none: with no block there is nothing to
+    correct, and the warming cache serves 503 (or the recorded error) rather than an
+    envelope.
     """
     for block in (entry.get("systems") or {}).values():
         block["ok"] = False
+    missing = [system for system in systems if system not in (entry.get("systems") or {})]
+    if missing:
+        # `route_coverage` is the subway's: its blocks list the routes their drawn trains
+        # cover, [] for a group with nothing drawn, where null means an envelope that does no
+        # route coverage at all (_system_freshness's `routes`).
+        entry["systems"] = {
+            **(entry.get("systems") or {}),
+            **_system_freshness(
+                None, missing, missing, {}, time.time(), {} if route_coverage else None
+            ),
+        }
+
+
+def _note_first_attempt(entry: dict) -> None:
+    """Record, once, when this process first tried this family's realtime poll.
+
+    THE CLOCK A NEVER-DECODED SYSTEM IS AGED BY on /healthz's observations-qualified
+    (Amendment 1's Q5; routes/status.py _dark_past_the_operator_band). Such a system's
+    block has no fetched_at, and its retained_since starts over after the retention cap (the
+    2026-10-12 record's H4), so neither says how long it has been dark. This is written on
+    the first attempt and never again: nothing resets it, the cap included, so it counts
+    from that attempt for the life of the process. Kept in the cache entry beside the
+    blocks rather than in them, so no envelope serves it, and set where each refresher is
+    about to fetch: a poll held back by a static group still loading, or by NJ Transit not
+    being configured, tried nothing.
+    """
+    entry.setdefault("first_attempt_at", time.time())
+
+
+# THE ARRIVALS INDEXES EACH FAMILY KEEPS WHOLE ON A TOTAL FAILURE, which Amendment 1's Q9
+# prunes. PATH, the ferry and NJ Transit keep their last decode on every failed poll, and
+# the railroads and the subway on a TOTAL failure return before any merge; none of them
+# ran drop_expired_arrivals, so a departed train was served as `reported`, counting down
+# to "now", for as long as the outage lasted (A1.2 measured an NJ Transit row reading
+# "as of 4h ago departs now"). The subway joined Q9's four by the ruling of 2026-11-08
+# ("and the subway"), with both its indexes: the combined one its boards read and the
+# per-group one membership and /healthz read. Each index is named with whether it is keyed
+# by system, since a keyed index keeps every system's key, emptied, and a flat one does not.
+_KEPT_ARRIVALS = {
+    "subways": (("subway_arrivals", False), ("subway_arrivals_by_system", True)),
+    "railroads": (("railroad_arrivals", True),),
+    "path": (("path_arrivals", False),),
+    "ferry": (("ferry_arrivals", False),),
+    "njt": (("njt_arrivals", False),),
+}
+
+
+def _drop_departed_kept_rows(app: FastAPI, name: str) -> None:
+    """Prune the rows a failed poll kept for `name` whose time has passed (Q9), by
+    feeds.row_departed's rule with its zero grace: the same rule drop_expired_arrivals
+    applies to a retaining family's failed system. RETENTION IS UNCHANGED: nothing that has
+    not departed is dropped, and every kept row keeps its provenance and its clock. So an
+    outage empties these boards into the four states Amendment 1 defines, the way a
+    retaining family's partial failure always has.
+
+    Called on every TOTAL failure: by each of the five refreshers' own failure arms, and
+    by _feed_degrader for the deadline and an unclassified failure, which never reach
+    them. A no-op for any other source. A per-system index keeps its system keys
+    (drop_expired_arrivals over every system), because an ABSENT system key means "the
+    merge removed it" to /healthz's dropped rung (routes/status.py's _was_dropped); a flat
+    index is pruned whole.
+    """
+    now = time.time()
+    for index, by_system in _KEPT_ARRIVALS.get(name, ()):
+        kept = getattr(app.state, index, None) or {}
+        if by_system:
+            setattr(app.state, index, drop_expired_arrivals(kept, now, kept))
+        else:
+            setattr(app.state, index, drop_departed_rows(kept, now))
 
 
 def _routes_by_system(data_by_system: dict[str, list[dict]]) -> dict[str, list[str]]:
@@ -383,7 +483,9 @@ def _routes_by_system(data_by_system: dict[str, list[dict]]) -> dict[str, list[s
     already holds rather than from a hand-maintained table, so it cannot drift from
     SUBWAY_FEED_URLS, and it stays true for retained data (a carried-forward group
     still lists its routes; one the cap has emptied lists none, which is right
-    because it has no markers left).
+    because it has no markers left). The route-to-group table Amendment 1 added
+    (feeds.SUBWAY_ROUTE_GROUPS) answers another question, which groups a station
+    expects, and this does not read it.
 
     Sorted for a stable payload. A train with no route_id contributes nothing.
     """
@@ -495,6 +597,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
         return
     total_feeds = len(SUBWAY_FEED_URLS)
+    _note_first_attempt(entry)
     try:
         (
             trains,
@@ -506,13 +609,15 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             feed_ts_by_group,
         ) = await main.fetch_subway_trains(stops, client)
     except RuntimeError as exc:
-        # Every subway feed failed this poll.
+        # Every subway feed failed this poll. A block for each group, never decoded where it
+        # has none yet, and the departed kept rows pruned: the httpx arm below says why.
         app.state.subway_feed_health = {
             "total": total_feeds,
             "ok": 0,
             "failed": sorted(SUBWAY_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        _mark_all_systems_failed(entry, SUBWAY_FEED_URLS, route_coverage=True)
+        _drop_departed_kept_rows(app, "subways")
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
@@ -521,7 +626,12 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(SUBWAY_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        # Every group failed: a block for each, never decoded where it has none yet, so a
+        # board answers a total first-poll failure with its expected groups rather than the
+        # 502 (Q10), and the kept rows whose time has passed pruned (Q9); both by the ruling
+        # of 2026-11-08 that brought the subway into the two decisions.
+        _mark_all_systems_failed(entry, SUBWAY_FEED_URLS, route_coverage=True)
+        _drop_departed_kept_rows(app, "subways")
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     # Partial failures still return data, so without this a vanished line group
@@ -533,6 +643,18 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
+    # THE ROUTE-TO-GROUP TABLE'S CHECK, ITS FEED SIDE (Amendment 1, Q1): every route a
+    # group that decoded this poll served is in feeds.SUBWAY_ROUTE_GROUPS. A route outside
+    # it is named on /api/status and raises the non-gating subway-route-unmapped on
+    # /healthz, beside the static index's side, which those surfaces read themselves
+    # (routes/status.py, _unmapped_subway_routes). LATCHED FOR THE PROCESS, never cleared
+    # by a later poll: the table is code, so only a deploy can add the row, and a route
+    # that runs for an hour overnight would otherwise be gone before the six-hourly
+    # monitor could read it. Route id to the sorted groups that served it.
+    unmapped = dict(getattr(app.state, "subway_unmapped_routes", None) or {})
+    for route, group in routes_outside_the_table(trains_by_group, arrivals_by_group):
+        unmapped[route] = sorted({*unmapped.get(route, []), group})
+    app.state.subway_unmapped_routes = unmapped
     now = time.time()
     # C2: carry a FAILED group's trains and arrivals forward instead of publishing
     # survivors only, so its riders see stale-but-labelled data rather than an empty
@@ -593,6 +715,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
 async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
+    _note_first_attempt(entry)
     try:
         (
             trains,
@@ -609,7 +732,8 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        _mark_all_systems_failed(entry, RAILROAD_FEED_URLS)
+        _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
@@ -618,7 +742,8 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
-        _mark_all_systems_failed(entry)
+        _mark_all_systems_failed(entry, RAILROAD_FEED_URLS)
+        _drop_departed_kept_rows(app, "railroads")
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     # Partial failures still return data; record which systems dropped so
@@ -710,13 +835,13 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     # down, Metro-North up" would read green; kept, a dated clock ages with each poll and
     # /healthz reads feed-content-stale once it is FEED_STALE_AFTER_S old. WHAT IS KEPT IS
     # WHAT THE ENVELOPE LAST PUBLISHED, and after a headerless LIRR success that is None:
-    # an outage that follows one has no clock to age, so /healthz names it only through
-    # observations-qualified, once the outage's rows pass that code's 600 s band (measured
-    # on the committed capture; the 2026-10-12 record's live list carries it, for a
-    # ruling). On every poll where LIRR decoded, the fold is written as it came back,
-    # None included: a None there is a generation whose header carried no time, a fact
-    # about this poll as it is on LIRR's own block. Before Q7 this branch keyed on the
-    # None itself and fired
+    # an outage that follows one has no clock to age, so /healthz names it through
+    # observations-qualified alone, at that code's 600 s band from LIRR's last decode,
+    # read off LIRR's block (Amendment 1's Q5, which closed PR #138's F1; routes/status.py
+    # _dark_past_the_operator_band). On every poll where LIRR decoded, the fold is written
+    # as it came back, None included: a None there is a generation whose header carried
+    # no time, a fact about this poll as it is on LIRR's own block. Before Q7 this branch
+    # keyed on the None itself and fired
     # on that success too, so a feed that decoded every poll was served its last dated
     # clock, aging one interval per interval into feed-content-stale (A10's arm D, 20 s
     # to 100 s over five polls). The signal for a headerless LIRR is the contract
@@ -735,9 +860,10 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
 
     Same cache contract as the other systems: a failed poll keeps the
     last-known trains AND arrivals (the error only surfaces to clients while
-    the cache has never filled), and both are replaced only on a poll that
-    decoded. Deliberately NO carry_forward_prev here: that anchor memory keys
-    on trip ids, and PATH bridge trip ids do not survive an upstream refresh
+    the cache has never filled), the arrivals less any whose time has passed
+    (Amendment 1's Q9), and both are replaced only on a poll that decoded.
+    Deliberately NO carry_forward_prev here: that anchor memory keys on trip
+    ids, and PATH bridge trip ids do not survive an upstream refresh
     (see path_static's module docstring). Identity and anchors come from
     match_path_identities instead (13d), which each successful poll threads
     its state through; a failed poll leaves that state untouched too, since a
@@ -758,15 +884,20 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
             log=False,
         )
         return
+    _note_first_attempt(entry)
     try:
         trains, arrivals, feed_timestamp, unresolved = await main.fetch_path_trains(client, stops)
     except httpx.HTTPError as exc:
-        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": [PATH_SYSTEM]}
+        _mark_all_systems_failed(entry, (PATH_SYSTEM,))
+        _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, f"Upstream PATH bridge feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (bridge error page, proxy HTML).
-        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": [PATH_SYSTEM]}
+        _mark_all_systems_failed(entry, (PATH_SYSTEM,))
+        _drop_departed_kept_rows(app, "path")
         _note_failure(entry, 502, "Upstream PATH bridge feed returned undecodable data")
         return
     # A nonzero unresolved count means the bridge referenced station ids the
@@ -801,9 +932,27 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
         trains,
         getattr(app.state, "path_station_order", None) or {},
     )
-    entry.update(data=served, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    now = time.time()
+    entry.update(
+        data=served,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE BOARD'S PER-SYSTEM BLOCK (Amendment 1, Q10), single-entry as NJ Transit's is,
+        # so a PATH station board can say `ok` in a field: nothing at a board's top level
+        # does. The vehicle envelope does not serve it (cache._serve_cached opts the
+        # aggregates in, and PATH's top-level fetched_at already says what a block would).
+        # Its content clock is None BY POLICY: feed_timestamp here is the bridge's WRITE
+        # time, which advances on every regeneration whether or not anything upstream
+        # moved, so it dates nothing a rider is shown; the board dates its rows by their
+        # own trip clocks (cache._oldest_row_observed_at).
+        systems=_system_freshness(
+            entry.get("systems"), [PATH_SYSTEM], [], {}, now, None, {PATH_SYSTEM: None}
+        ),
+    )
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.path_arrivals = arrivals
 
 
@@ -838,26 +987,45 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
             log=False,
         )
         return
+    _note_first_attempt(entry)
     try:
         boats, arrivals, feed_timestamp = await main.fetch_ferry_data(
             client, getattr(app.state, "ferry_static", {})
         )
     except httpx.HTTPError as exc:
-        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": [FERRY_SYSTEM]}
+        _mark_all_systems_failed(entry, (FERRY_SYSTEM,))
+        _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, f"Upstream NYC Ferry feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
-        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": [FERRY_SYSTEM]}
+        _mark_all_systems_failed(entry, (FERRY_SYSTEM,))
+        _drop_departed_kept_rows(app, "ferry")
         _note_failure(entry, 502, "Upstream NYC Ferry feed returned undecodable data")
         return
     app.state.ferry_feed_health = {"total": 1, "ok": 1, "failed": []}
     # feed_timestamp is the VehiclePositions header time (the boats' feed); a
     # failed poll keeps the last-known timestamp, same as the other caches. An
     # empty boats list REPLACES the cache here on purpose (see the docstring).
-    entry.update(data=boats, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    now = time.time()
+    entry.update(
+        data=boats,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE BOARD'S PER-SYSTEM BLOCK (Amendment 1, Q10), as PATH's above. Its content
+        # clock is None BY POLICY: feed_timestamp here is the VehiclePositions header, which
+        # dates the BOATS and not the dock predictions a board shows, and the board dates
+        # those by the TripUpdates header each row carries (cache._oldest_row_observed_at).
+        systems=_system_freshness(
+            entry.get("systems"), [FERRY_SYSTEM], [], {}, now, None, {FERRY_SYSTEM: None}
+        ),
+    )
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.ferry_arrivals = arrivals
 
 
@@ -890,7 +1058,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     """
     entry = app.state.feed_cache["njt"]
 
-    def fail(status: int, detail: str, *, log: bool = True) -> None:
+    def fail(status: int, detail: str, *, log: bool = True, polled: bool = True) -> None:
         """Record one failed NJT poll on all three surfaces it has to reach.
 
         THE THIRD SURFACE IS THE ONE THAT WAS MISSED, and the contract tier is what
@@ -909,8 +1077,19 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         already true, and the frozen fetched_at beside the envelope's advancing one
         IS the staleness signal the client measures.
         """
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _mark_all_systems_failed(entry)
+        # THE OPERATOR COPY (/api/status njt_feeds, Amendment 1's Q5, closing the
+        # 2026-10-12 record's H5) reports a POLL. One that never ran (static loading, not
+        # configured) has no health to report, as PATH's and the ferry's static-loading
+        # arms write none, and njt_static says why: a deployment that is not configured
+        # never wears "failed" (main.py's static states).
+        app.state.njt_feed_health = (
+            {"total": 1, "ok": 0, "failed": [njt_feed.SYSTEM]} if polled else None
+        )
+        # A poll that ran and failed writes NJ Transit's never-decoded block if it has none
+        # (Amendment 1, Q10); one that never ran (static loading, not configured) does not,
+        # so its board keeps answering 503 with the app's own reason.
+        _mark_all_systems_failed(entry, (njt_feed.SYSTEM,) if polled else ())
+        _drop_departed_kept_rows(app, "njt")
         _note_failure(entry, status, detail, log=log)
 
     if getattr(app.state, "njt_static_status", None) != "ready":
@@ -923,9 +1102,10 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         if getattr(app.state, "njt_static_status", None) == "not-configured":
             fail(
                 503,
-                "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
+                f"NJ Transit is not configured ({njt_auth.NOT_CONFIGURED_WHY}); "
                 "no realtime poll is attempted.",
                 log=False,
+                polled=False,
             )
         else:
             fail(
@@ -933,8 +1113,10 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
                 "Static NJ Transit GTFS is still loading; it will retry automatically. "
                 "Try again shortly.",
                 log=False,
+                polled=False,
             )
         return
+    _note_first_attempt(entry)
     try:
         trains, arrivals, feed_timestamp, warnings = await main.fetch_njt_trains(
             getattr(app.state, "njt_stops", None) or {},
@@ -944,7 +1126,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # Unreachable behind the status guard above, and handled anyway so the
         # distinct state cannot degrade into a generic 500 two frames from where
         # the distinction was made.
-        fail(503, str(exc), log=False)
+        fail(503, str(exc), log=False, polled=False)
         return
     except njt_auth.NjtAuthError as exc:
         # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
@@ -1036,7 +1218,8 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         ),
     )
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at, consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache, less
+    # any whose time has passed (_drop_departed_kept_rows, Amendment 1's Q9).
     app.state.njt_arrivals = arrivals
 
 

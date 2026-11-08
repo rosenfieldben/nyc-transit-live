@@ -210,7 +210,7 @@ def test_a_frozen_upstream_leaves_every_liveness_signal_green(contract_app):
     lagging upstream is a property of the world rather than of the build, so it has
     to reach a human without refusing the deploy. The contract monitor is the
     stricter reader, and the only one that sees a live deployment at all: it fails
-    its run on any degraded code.
+    its run on any degraded code but one, subway-route-unmapped, which it WARNs on.
 
     THIS SCENARIO IS STILL GREEN THROUGHOUT, and that is not an oversight.
     FEED_STALE_AFTER_S is deliberately not overridable (cache.py), so a freeze

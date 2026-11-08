@@ -1237,8 +1237,7 @@ async def load_njt_static(*, now: float | None = None) -> dict:
     """
     if not njt_auth.is_configured():
         raise njt_auth.NjtNotConfigured(
-            f"{njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} are not set; "
-            "NJ Transit is not configured"
+            f"{njt_auth.NOT_CONFIGURED_WHY}; NJ Transit is not configured"
         )
     zip_path = NJT_STATIC_ZIP
 

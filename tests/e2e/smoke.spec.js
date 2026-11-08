@@ -1512,7 +1512,9 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
     }));
   await page.clock.fastForward(600_000);
   await expect(railroadMarkers(page)).toHaveCount(1); // MNR's marker is gone
-  await expect(status).toContainText("railroad: MNR as of"); // still explained
+  // Still explained, and since Amendment 1's Q11 in the word a board gives the same state:
+  // nothing of MNR is drawn, so "as of {age} ago" would date nothing on the map.
+  await expect(status).toContainText("railroad: MNR not reporting");
 
   // A payload with NO systems block at all (an older backend, or a rollback under a
   // browser holding this frontend) must still dim. REVIEW FIX: ingestSystems
@@ -2336,7 +2338,7 @@ test("35. two NJT states with nothing to draw: an empty feed clears, an absent o
       route,
       {
         detail:
-          "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); " +
+          "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset, blank or still the .env.example placeholder); " +
           "no realtime poll is attempted.",
       },
       503,

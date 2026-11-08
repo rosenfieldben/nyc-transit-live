@@ -309,7 +309,19 @@ PRODUCTION_HEALTH_CODES = (
     "observations-qualified",
     "njt-mint-allowance",
     "subway-lines-degraded",
+    "subway-route-unmapped",
 )
+
+# THE ONE RECOGNIZED CODE THAT IS A WARN, NOT A FAIL. Every other code names a state
+# riders are paying for now; subway-route-unmapped (Amendment 1, Q1) names a route that a
+# live subway group served, or the static routes index lists, and the app's route-to-group
+# table has no row for. Nothing is
+# broken for riders at that moment: what it costs is that a station served by that route
+# may not name the route's group on its board when the group goes dark, so it asks for a
+# table row in the next deploy, not a page. The run reads the routes and their groups from
+# /api/status's subway_unmapped_routes and prints them (_unmapped_route_names). MIRRORED
+# as a literal for the reason PRODUCTION_HEALTH_CODES is.
+_WARN_HEALTH_CODES = ("subway-route-unmapped",)
 
 # Prose for the codes whose NAME does not say what the operator should do. Four need
 # it. "njt-mint-quota" reports a budget that is spent, which is a different
@@ -320,9 +332,12 @@ PRODUCTION_HEALTH_CODES = (
 # "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
-# that nothing on the deployment's side can clear it, that a fresh process cannot see a
-# group that has not decoded in it (models.HEALTH_OBSERVATIONS_QUALIFIED records that
-# blind spot), or that one railroad can trip it on a quiet night. Every
+# that nothing on the deployment's side can clear it, that a feed failing since a deploy
+# reaches it only ten minutes after the new process first polls it, which waits for the
+# feed's static data (Amendment 1's Q5; before Q5 a fresh process could not see such a
+# feed at all), so a clean run inside that time is not proof of recovery, or that one
+# railroad can trip it on a quiet night.
+# Every
 # other code names something broken, and its name is the whole instruction. OURS, not the
 # deployment's: these are literals in this file keyed by codes from this file's own
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
@@ -356,13 +371,25 @@ _HEALTH_CODE_NOTES = {
         "a system has served riders nothing current for the operator band (every row "
         f"more than {int(REALTIME_STALE_S)}s old, undated where its provider dates rows, "
         "or of no known provenance), or has been failing past the retention cap with its "
-        "rows dropped; the cause is upstream or the failing feed, so a redeploy fixes "
-        "nothing about it, and a new process cannot see a group that has not decoded "
-        "since it came up, so a clean run after a redeploy is not proof of recovery (read "
-        "/api/status: subway_feeds.failed and railroad_feeds.failed name every group "
-        "failing now); known false positive: a sparsely served LIRR (a late night with few "
-        f"trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
+        "rows dropped, or serves no row and has been failing, or has never decoded, for "
+        f"more than {int(REALTIME_STALE_S)}s since its last decode or since the process "
+        "first tried it; the cause is upstream or the failing feed, so a redeploy fixes "
+        "nothing about it, and a feed failing since a deploy reaches this only ten minutes "
+        "after the new process first polls it, which waits for the feed's static data, so "
+        "a clean run inside that time is not proof of recovery (read /api/status: "
+        "subway_feeds.failed, railroad_feeds.failed, "
+        "path_feeds.failed, ferry_feeds.failed and njt_feeds.failed name every feed "
+        "failing now); known false positive: a sparsely served LIRR (a late night with "
+        f"few trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
         "nothing wrong"
+    ),
+    "subway-route-unmapped": (
+        "a live subway group served, or the static routes index lists, a route the app's "
+        "route-to-group table (feeds.SUBWAY_ROUTE_GROUPS) has no row for, so a station that "
+        "route serves may not "
+        "name the group on its board when the group goes dark; add the row from a capture of "
+        "the feeds and redeploy, which is also what clears the code, since a running process "
+        "holds it for its life"
     ),
 }
 
@@ -2494,7 +2521,10 @@ def _fetch_health(
 
 
 def _check_production_health(
-    fetch: Fetcher, sleep: Callable[[float], None], health_url: str
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    health_url: str,
+    unmapped_routes: object = None,
 ) -> Result:
     """The /healthz classification, surfaced rather than re-derived.
 
@@ -2510,6 +2540,12 @@ def _check_production_health(
     Echoing an unrecognized string there would let anything that can answer that
     URL write into the job summary. Unrecognized codes are COUNTED instead, which
     still says "this deployment knows something I do not" without quoting it.
+
+    EVERY RECOGNIZED CODE FAILS THE RUN BUT ONE. subway-route-unmapped alone is a WARN
+    (_WARN_HEALTH_CODES says why), and it names the routes and the groups that served
+    them, read from /api/status's subway_unmapped_routes, which run_all hands over as
+    `unmapped_routes`; the names are printed only when they look like a route id and a
+    group key, under the rule above, and counted otherwise.
     """
     res, detail = _fetch_health(fetch, health_url, sleep)
     if res is None:
@@ -2548,11 +2584,55 @@ def _check_production_health(
             # sentence, so the job summary answers "what do I do about this"
             # without the reader having to know the vocabulary.
             parts += [_HEALTH_CODE_NOTES[code] for code in known if code in _HEALTH_CODE_NOTES]
+            if "subway-route-unmapped" in known:
+                parts.append(_unmapped_route_names(unmapped_routes))
         if unknown:
             # Counted, never quoted. See the docstring.
             parts.append(f"{unknown} unrecognized code(s), newer than this monitor")
-        return Result("production:healthz", FAIL, "; ".join(parts))
+        failing = bool(unknown) or any(code not in _WARN_HEALTH_CODES for code in known)
+        return Result("production:healthz", FAIL if failing else WARN, "; ".join(parts))
     return Result("production:healthz", PASS, "no degraded states reported")
+
+
+# A subway route id as the feeds and routes.txt spell them ("1", "6X", "GS", "SI"). The
+# names in subway_unmapped_routes come off the wire, so only what matches this is printed.
+_SAFE_ROUTE_RE = re.compile(r"^[A-Za-z0-9]{1,8}\Z")
+
+
+def _unmapped_route_names(unmapped_routes: object) -> str:
+    """The routes /api/status says the route-to-group table lacks, each with where it was
+    seen, for subway-route-unmapped's WARN: the feed groups that served it, and "static"
+    when the app's static routes-per-station index lists it. A route or a source that does
+    not look like one is counted, never quoted (_check_production_health's rule), and so is
+    a route listing more sources than there are (eight feed groups and the index). At most
+    _MAX_NAMED_SYSTEMS routes are named and the rest counted, for the reason that cap
+    exists: one oversized line can cost the job summary its whole table."""
+    if not isinstance(unmapped_routes, dict) or not unmapped_routes:
+        return "/api/status names no route (subway_unmapped_routes is empty or unreadable)"
+    shown, hidden = [], 0
+    for route in sorted(unmapped_routes, key=str):
+        sources = unmapped_routes[route]
+        if not (
+            isinstance(route, str)
+            and _SAFE_ROUTE_RE.match(route)
+            and isinstance(sources, list)
+            and 0 < len(sources) <= 9
+            and all(isinstance(g, str) and _SAFE_GROUP_RE.match(g) for g in sources)
+        ):
+            hidden += 1
+            continue
+        groups = sorted(g for g in sources if g != "static")
+        where = [f"served by {' and '.join(groups)}"] if groups else []
+        if "static" in sources:
+            where.append("listed in the static routes index")
+        shown.append(f"route {route} ({', '.join(where)})")
+    parts = shown[:_MAX_NAMED_SYSTEMS]
+    over = len(shown) - len(parts)
+    if over:
+        parts.append(f"{over} more not named (over the {_MAX_NAMED_SYSTEMS} name cap)")
+    if hidden:
+        parts.append(f"{hidden} with an unprintable name")
+    return "not in the route-to-group table: " + ", ".join(parts)
 
 
 def _served_at_of(payload: object) -> float | None:
@@ -2840,7 +2920,11 @@ def check_production(
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
     results.append(_check_production_served_at(fetch, sleep, data, url))
-    results.append(_check_production_health(fetch, sleep, _resolve_health_url(status_url)))
+    results.append(
+        _check_production_health(
+            fetch, sleep, _resolve_health_url(status_url), data.get("subway_unmapped_routes")
+        )
+    )
     # 15c, and LAST for the same reason the F1 pair comes after the payload lines:
     # it is another READ of the deployment, not another field of the one already
     # parsed. /api/status publishes nothing at all about route geometry, which is
@@ -3325,10 +3409,27 @@ def _board_row_count(board: dict) -> int:
 
 
 class _BoardClocks(NamedTuple):
-    """A populated board's clocks: the instant it was served, and each contributor's own."""
+    """A populated board's clocks: the instant it was served, each dated contributor's
+    own, and the contributors that have never decoded in the deployment's process."""
 
     served_at: float
     clocks: dict[str, float]
+    never_decoded: list[str]
+
+
+def _never_decoded(block: object) -> bool:
+    """Whether the board names this contributor as one that has NEVER DECODED in the
+    deployment's process (the freshness contract's Amendment 1, Q2): ok false, fetched_at
+    null AND feed_timestamp null, the block the backend writes for it. All three: a block
+    can carry a null poll clock with ok true (a page's substitute block has exactly that
+    shape), which is not this state, and one that carries a content clock is a clock to
+    judge, never one to excuse."""
+    return (
+        isinstance(block, dict)
+        and block.get("ok") is False
+        and block.get("fetched_at") is None
+        and block.get("feed_timestamp") is None
+    )
 
 
 def _board_contributor_clocks(board: dict) -> tuple[_BoardClocks | None, str]:
@@ -3341,43 +3442,126 @@ def _board_contributor_clocks(board: dict) -> tuple[_BoardClocks | None, str]:
     is serving a row it cannot date. The clocks come back AS SERVED, never rebuilt from
     an age, because production:board-contributors compares them for identity and a
     subtraction round trip is not exact.
+
+    BUT A NEVER-DECODED CONTRIBUTOR IS ITS OWN STATE, not a missing clock (Amendment 1,
+    Q2). Since that amendment a board names every group its station expects, and a group
+    that has not decoded since the deployment started is served as a block with
+    fetched_at null and ok false, no clock by design, which by the board's own rule 3
+    also leaves the envelope's feed_timestamp null. Both lines used to FAIL that board as
+    "lacks a feed_timestamp"; it now comes back named in never_decoded, its clock is
+    neither required nor counted, and the envelope's null is excused only when such a
+    contributor is there to explain it. A contributor that DID decode and still serves no
+    clock (ok true, a headerless generation) is still a missing clock.
     """
     missing: list[str] = []
     served_at = _number(board.get("served_at"))
-    if served_at is None:
-        missing.append("served_at")
-    if _number(board.get("feed_timestamp")) is None:
-        missing.append("the envelope feed_timestamp")
     systems = board.get("systems")
     if not isinstance(systems, dict) or not systems:
-        missing.append("the systems map")
         systems = {}
+    never = sorted(name for name, block in systems.items() if _never_decoded(block))
+    if served_at is None:
+        missing.append("served_at")
+    if _number(board.get("feed_timestamp")) is None and not never:
+        missing.append("the envelope feed_timestamp")
+    if not systems:
+        missing.append("the systems map")
     clocks = {
         name: _number(block.get("feed_timestamp")) if isinstance(block, dict) else None
         for name, block in systems.items()
+        if name not in never
     }
     undated = [name for name, clock in clocks.items() if clock is None]
     if undated:
         missing.append("a feed_timestamp on " + _group_list(undated))
+    if never and not clocks:
+        # Rows, and not one contributor that has decoded to date them: whatever served
+        # them, the board cannot say how old they are, which is this rule's whole case.
+        missing.append(
+            "a contributor that has decoded (never decoded in this process: "
+            + _group_list(never)
+            + ")"
+        )
     if missing or served_at is None:
         return None, "lacks " + ", ".join(missing)
     dated = {name: clock for name, clock in clocks.items() if clock is not None}
-    return _BoardClocks(served_at, dated), ""
+    return _BoardClocks(served_at, dated, never), ""
 
 
-def _board_contributor_ages(board: dict) -> tuple[dict[str, float] | None, str]:
-    """Each contributor's content age off a populated board, or None and what it lacks.
+def _never_decoded_clause(never: list[str]) -> str:
+    """The named state for a populated board's never-decoded contributors, or ""."""
+    if not never:
+        return ""
+    return f"; never decoded in this process: {_group_list(never)}, so no clock to judge"
 
-    AGED AS served_at MINUS THAT CONTRIBUTOR'S OWN feed_timestamp, both read off the
-    payload, so no skew between this runner and the deployment can enter; the alerts
-    line keeps the same discipline. What must be present, and why, is at
-    _board_contributor_clocks.
+
+def _empty_board(
+    name: str, board: dict, reason: str, stale_s: float | None = None
+) -> Result | None:
+    """An EMPTY board, judged by its blocks (Amendment 1, A1.3's four states), as the
+    (status, detail) both lines give it; `reason` is the line's own clause for an empty
+    board whose contributors are all reporting. Always a WARN, never a FAIL, for the
+    reason an unfetched board is one: production:status already fails a deployment that
+    is down, and an outage riders are served nothing from is /healthz's to report.
+
+    THE FOUR STATES, read off the blocks the board serves:
+      - fresh and empty, every contributor reporting: the WARN as it always read, because
+        a board with nothing on it has no row to judge;
+      - EVERY contributor failed or never decoded: a different, named WARN, because that
+        board's "No trains" says nothing about service and the reason above stops being
+        true;
+      - some failing among reporting ones: the first WARN, with the failing ones named;
+      - on production:board-clock (`stale_s` given), a reporting contributor whose content
+        is past the band is named as well.
+    A board with no systems map at all (a deployment older than contract 6.1) keeps the
+    first WARN. Returns None for a populated board, which is the caller's to judge.
     """
-    board_clocks, lacks = _board_contributor_clocks(board)
-    if board_clocks is None:
-        return None, lacks
-    served_at = board_clocks.served_at
-    return {name: served_at - clock for name, clock in board_clocks.clocks.items()}, ""
+    if _board_row_count(board):
+        return None
+    systems = board.get("systems")
+    served_at = _number(board.get("served_at"))
+    where = f"board {PRODUCTION_BOARD_STATION} serves no arrival rows"
+    if not isinstance(systems, dict) or not systems:
+        return Result(name, WARN, f"{where}, so it {reason}")
+    never = sorted(name for name, block in systems.items() if _never_decoded(block))
+    failed = sorted(
+        name
+        for name, block in systems.items()
+        if name not in never and isinstance(block, dict) and block.get("ok") is False
+    )
+    last_decode = {
+        name: served_at - fetched
+        for name in failed
+        if served_at is not None
+        and (fetched := _number((systems[name] or {}).get("fetched_at"))) is not None
+    }
+    clauses = []
+    if never:
+        clauses.append(f"never decoded in this process: {_group_list(never)}")
+    if failed:
+        aged = sorted(last_decode) == failed
+        clauses.append(
+            "failed, last decoded: " + _group_list(failed, last_decode if aged else None)
+        )
+    if len(never) + len(failed) == len(systems):
+        return Result(
+            name,
+            WARN,
+            f"{where} and none of its contributors is reporting ({'; '.join(clauses)}), "
+            "so its empty board says nothing about service",
+        )
+    if stale_s is not None and served_at is not None:
+        stale = {
+            name: served_at - clock
+            for name, block in systems.items()
+            if name not in never and name not in failed and isinstance(block, dict)
+            for clock in [_number(block.get("feed_timestamp"))]
+            if clock is not None and served_at - clock > stale_s
+        }
+        if stale:
+            clauses.append(
+                f"content older than {int(stale_s)}s: " + _group_list(list(stale), stale)
+            )
+    return Result(name, WARN, f"{where}, so it {reason}" + "".join(f"; {c}" for c in clauses))
 
 
 def _undated_board(rows: int, lacks: str) -> str:
@@ -3409,39 +3593,47 @@ def _check_production_board_clock(
 
     A POPULATED BOARD WITH NO CONTENT CLOCK IS A FAIL, by the rule the healthz line
     holds: SILENCE MUST BE CHOSEN, NEVER DEFAULTED. Passing it would make a deployment
-    whose rider qualifiers are all unwatched look like a healthy one. An EMPTY board is
-    only a WARN, because a board with nothing on it has nothing to date, and a fetch
+    whose rider qualifiers are all unwatched look like a healthy one. A contributor the
+    board names as NEVER DECODED is not a missing clock but its own state, named in a WARN
+    beside the band verdict of the rest (_board_contributor_clocks). An EMPTY board is only
+    a WARN, judged by its blocks in Amendment 1's four states (_empty_board), and a fetch
     that failed is a WARN for the reason _fetch_production_board gives.
     """
     name = "production:board-clock"
     if board is None:
         return Result(name, WARN, problem)
+    empty = _empty_board(name, board, "has no clock to judge", stale_s)
+    if empty is not None:
+        return empty
     rows = _board_row_count(board)
-    if not rows:
-        return Result(
-            name,
-            WARN,
-            f"board {PRODUCTION_BOARD_STATION} serves no arrival rows, so it has no clock to judge",
-        )
-    ages, lacks = _board_contributor_ages(board)
-    if ages is None:
+    board_clocks, lacks = _board_contributor_clocks(board)
+    if board_clocks is None:
         return Result(name, FAIL, _undated_board(rows, lacks))
+    # AGED AS served_at MINUS EACH CONTRIBUTOR'S OWN feed_timestamp, both read off the
+    # payload, so no skew between this runner and the deployment can enter; the alerts
+    # line keeps the same discipline. A contributor that failed after decoding is aged by
+    # the clock it kept, against the same band, as it always was.
+    served_at = board_clocks.served_at
+    ages = {group: served_at - clock for group, clock in board_clocks.clocks.items()}
+    never = _never_decoded_clause(board_clocks.never_decoded)
     stale = [group for group, age in ages.items() if age > stale_s]
-    if len(stale) == len(ages):
+    if ages and len(stale) == len(ages):
         return Result(
             name,
             FAIL,
             f"every contributor's content is older than {int(stale_s)}s: "
-            + _group_list(stale, ages),
+            + _group_list(stale, ages)
+            + never,
         )
     if stale:
         return Result(
-            name, WARN, f"content older than {int(stale_s)}s: " + _group_list(stale, ages)
+            name, WARN, f"content older than {int(stale_s)}s: " + _group_list(stale, ages) + never
         )
     return Result(
         name,
-        PASS,
-        f"{rows} rows from {len(ages)} contributors, every content clock inside {int(stale_s)}s",
+        WARN if never else PASS,
+        f"{rows} rows from {len(ages)} contributors, every content clock inside {int(stale_s)}s"
+        + never,
     )
 
 
@@ -3505,19 +3697,18 @@ def _check_production_board_contributors(
         feed_timestamp is the fold, a FAIL; distinct clocks are a PASS;
       - no upstream readings, or none for the judged contributors: WARN, nothing to
         judge by;
-      - a populated board with no per-system clocks: FAIL, as production:board-clock.
+      - a populated board with no per-system clocks: FAIL, as production:board-clock;
+      - a contributor the board names as never decoded: no clock, so not judged, and named
+        beside the verdict of the rest;
+      - an empty board: WARN, judged by its blocks (_empty_board).
     """
     name = "production:board-contributors"
     if board is None:
         return Result(name, WARN, problem)
+    empty = _empty_board(name, board, "has no contributors to tell apart")
+    if empty is not None:
+        return empty
     rows = _board_row_count(board)
-    if not rows:
-        return Result(
-            name,
-            WARN,
-            f"board {PRODUCTION_BOARD_STATION} serves no arrival rows, so it has no "
-            "contributors to tell apart",
-        )
     board_clocks, lacks = _board_contributor_clocks(board)
     if board_clocks is None:
         return Result(name, FAIL, _undated_board(rows, lacks))
@@ -3528,7 +3719,7 @@ def _check_production_board_contributors(
             "no upstream subway headers were read this run, so which contributor is really "
             "aged cannot be known",
         )
-    served_at, clocks = board_clocks
+    served_at, clocks, never = board_clocks
     systems = board["systems"]
     carried = [group for group in clocks if _carried_on_the_board(systems[group])]
     not_judged = (
@@ -3536,7 +3727,7 @@ def _check_production_board_contributors(
         "on a last-known clock by design"
         if carried
         else ""
-    )
+    ) + _never_decoded_clause(never)
     judged = [group for group in clocks if group not in carried]
     if not judged:
         return Result(

@@ -303,15 +303,19 @@ function boards(S) {
 }
 
 // Render one board on both surfaces, in a fresh context: the popup's markup, the
-// panel's detail area, and what the panel's live region said on selection.
-function render(name) {
+// panel's detail area, and what the panel's live region said on selection. `body`
+// replaces the fixture's board where given, and `error` stands in the panel's
+// failed-fetch path (what a non-200's `detail` became), with no body and no popup.
+function render(name, { body, error = null } = {}) {
   const h = loadFrontend();
   const board = boards(h.sandbox)[name];
-  const popup = board.popup(board.body);
+  const served = error === null ? (body ?? board.body) : null;
+  const popup = served === null ? "" : board.popup(served);
   h.sandbox.__entry = board.entry;
-  h.sandbox.__body = board.body;
+  h.sandbox.__body = served;
+  h.sandbox.__error = error;
   h.run(
-    "panelStation = __entry; panelBody = __body; panelError = null;" +
+    "panelStation = __entry; panelBody = __body; panelError = __error;" +
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
   return {
@@ -848,4 +852,309 @@ test("6.2 UNDATED_SYSTEMS is exactly the railroad systems the backend never date
   const dated = [...admitted[1].matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
   assert.deepEqual(systems, ["LIRR", "MNR"]);
   assert.deepEqual([...H.UNDATED_SYSTEMS].sort(), systems.filter((x) => !dated.includes(x)));
+});
+
+/* Q10 OF THE FRESHNESS CONTRACT'S AMENDMENT 1, AND H6's RIDER HALF, RENDERED. A single-system
+   board, and a railroad board with both railroads failing, used to answer a failed FIRST poll with
+   HTTP 502 and `{"detail": ...}`: the upstream exception's own text with only its URLs scrubbed,
+   which the panel printed and spoke (and the popup printed), so a reason phrase or a response body
+   the UPSTREAM chose reached a rider. The bodies here are what the backend serves now, from
+   backend/tests/test_q10_first_poll_boards.py, which drives each family's real first poll against
+   a stub carrying one marker in its reason phrase and one in its body and holds the served boards
+   and the operator's copy of each failure to tests/e2e/fixtures/q10_first_poll_boards.json.
+
+   THE CONTROL FIRST: the operator's detail, through the panel's failed-fetch path, IS read out, so
+   this harness sees a marker when one reaches a rider. Then the board: neither marker is anywhere
+   in it, and every surface says the system is not reporting (Amendment 1's Q3 and Q11, Step 3),
+   in the slot "No trains" held while no renderer read the never-decoded block (Step 2's interim,
+   its adversarial round's F1, which the two steps landing together closed). A subway board names
+   the routes its dark group serves at the station, through the route-to-group table. */
+test("Q10 a failed first poll reaches the rider as a board, never as the upstream's own text", () => {
+  const served = JSON.parse(
+    readFileSync(join(__dirname, "..", "tests", "e2e", "fixtures", "q10_first_poll_boards.json"), "utf8"),
+  );
+  const markers = ["Q10-REASON-PHRASE-MARKER", "Q10-RESPONSE-BODY-MARKER"];
+  const expected = {
+    subway: ["Times Sq-42 St (Subway)", "1, 2 and 3 trains not reporting"],
+    path: ["World Trade Center (PATH)", "PATH not reporting"],
+    ferry: ["Wall St/Pier 11 (Ferry)", "NYC Ferry not reporting"],
+    njt: ["New York Penn Station (NJ Transit)", "NJ Transit not reporting"],
+    lirr: ["Jamaica (LIRR)", "LIRR not reporting"],
+  };
+  assert.deepEqual(Object.keys(served).sort(), ["ferry", "lirr", "njt", "path", "subway"]);
+  for (const [family, [heading, words]] of Object.entries(expected)) {
+    const { board, detail } = served[family];
+    const station = heading.replace(/ \(.*\)$/, "");
+    const label = heading.match(/\((.*)\)$/)[1];
+
+    const before = render(family, { error: detail });
+    assert.deepEqual(before.panel.at(-1), `p.station-detail-note ${detail}`, family);
+    assert.equal(before.spoken, `${station}, ${label}. ${detail}`, family);
+    assert.ok(markers.some((m) => before.spoken.includes(m)), `${family}: the control sees a marker`);
+
+    const after = render(family, { body: board });
+    assert.equal(after.spoken, `${station}, ${label}. ${words}.`, family);
+    assert.equal(after.panel[0], `h3 ${heading}`, family);
+    assert.equal(after.panel.at(-1), `p ${words}.`, family);
+    // The subway's popup has a slot per direction; every other board, one.
+    const slot = `<div class="arr-none">${words}</div>\n`;
+    assert.ok(
+      family === "subway"
+        ? after.popup.endsWith(`${dir("Northbound")}${slot}${dir("Southbound")}${slot}`)
+        : after.popup.endsWith(`<div class="pt"><span>${station}</span></div>\n${slot}`),
+      after.popup,
+    );
+    for (const surface of [after.popup, after.panel.join("\n"), after.spoken]) {
+      for (const marker of markers) assert.ok(!surface.includes(marker), `${family}: ${marker}`);
+    }
+  }
+});
+
+/* A03's FOUR BOARDS, the auditor's acceptance for the frontend half (Amendment 1, A1.6 Step 3):
+   "Regression cases must distinguish genuinely fresh empty service from stale, failed and unknown
+   empty service in both surfaces." Times Sq, the harness's subway station, whose routes 1, 2 and 3
+   expect the 1-7+S group, served empty at the frozen instant T in four states of that one block,
+   section (d) of the A03 witness in this file's terms: FRESH, A (content 620 s old behind a poll
+   0 s old), B (never decoded) and C (failed, last decoded 200 s before). */
+const T = fx.FROZEN_S;
+const timesSq = (block) => ({
+  fetched_at: block.fetched_at,
+  feed_timestamp: block.feed_timestamp,
+  station_id: "127",
+  station_name: "Times Sq-42 St",
+  directions: { Northbound: [], Southbound: [] },
+  served_at: T,
+  systems: { "1-7+S": { retained_since: null, routes: [], ...block } },
+});
+const FRESH_BLOCK = { fetched_at: T, feed_timestamp: T - 5, ok: true };
+const STALE_BLOCK = { fetched_at: T, feed_timestamp: T - 620, ok: true };
+const NEVER_BLOCK = { fetched_at: null, feed_timestamp: null, ok: false, retained_since: T - 20 };
+const failedBlock = (ago) => ({ fetched_at: T - ago, feed_timestamp: T - ago - 5, ok: false, retained_since: T - ago + 20 });
+const emptyTimesSq = (slot, line = "") =>
+  kicker("Subway", TIMES_SQ_PLATES) +
+  title("Times Sq-42 St") +
+  (line ? `<div class="popup-stale">${line}</div>\n` : "") +
+  `${dir("Northbound")}<div class="arr-none">${slot}</div>\n${dir("Southbound")}<div class="arr-none">${slot}</div>\n`;
+
+test("A03 the fresh empty board reads exactly as it did before Amendment 1", () => {
+  const out = render("subway", { body: timesSq(FRESH_BLOCK) });
+  assert.equal(out.popup, emptyTimesSq("No trains"));
+  assert.deepEqual(out.panel, ["h3 Times Sq-42 St (Subway)", "p No trains."]);
+  assert.equal(out.spoken, "Times Sq-42 St, Subway. No trains.");
+  // And a board with no systems map at all (an older backend) reads the same: its substitute
+  // block is ok with a current clock, never "not reporting".
+  const old = render("subway", { body: { ...timesSq(FRESH_BLOCK), systems: null } });
+  assert.deepEqual([old.popup, old.panel, old.spoken], [out.popup, out.panel, out.spoken]);
+});
+
+test("A03 boards A, B and C each read differently from the fresh one, on every surface", () => {
+  const fresh = render("subway", { body: timesSq(FRESH_BLOCK) });
+  const a = render("subway", { body: timesSq(STALE_BLOCK) });
+  const b = render("subway", { body: timesSq(NEVER_BLOCK) });
+  const c = render("subway", { body: timesSq(failedBlock(200)) });
+  // A, stale: the line, by the worse of poll and content age (Q4), above "No trains".
+  assert.equal(a.popup, emptyTimesSq("No trains", "as of 10m ago"));
+  assert.deepEqual(a.panel, ["h3 Times Sq-42 St (Subway)", "p.station-detail-stale as of 10m ago", "p No trains."]);
+  assert.equal(a.spoken, "Times Sq-42 St, Subway. as of 10m ago. No trains.");
+  // B and C, never decoded and failed: the slot names the routes the dark group serves here (Q3),
+  // in one word for both (Q11), with no line.
+  for (const out of [b, c]) {
+    assert.equal(out.popup, emptyTimesSq("1, 2 and 3 trains not reporting"));
+    assert.deepEqual(out.panel, ["h3 Times Sq-42 St (Subway)", "p 1, 2 and 3 trains not reporting."]);
+    assert.equal(out.spoken, "Times Sq-42 St, Subway. 1, 2 and 3 trains not reporting.");
+  }
+  for (const out of [a, b, c]) {
+    assert.notEqual(out.popup, fresh.popup);
+    assert.notDeepEqual(out.panel, fresh.panel);
+    assert.notEqual(out.spoken, fresh.spoken);
+  }
+  // B and C share the rider's word and differ in the served field, as the board's own reading of
+  // each block tells them apart: never decoded, ageless, against failed, its last decode 200 s old.
+  const { sandbox } = loadFrontend();
+  const state = (block) => {
+    const [c] = sandbox.boardFreshness("subway", timesSq(block), T, ["1", "2", "3"]).contributors;
+    return [c.state, c.age];
+  };
+  assert.deepEqual([state(NEVER_BLOCK), state(failedBlock(200))], [["never", null], ["failed", 200]]);
+});
+
+test("A03 a failed contributor is news from 90 s after its last decode, and not before", () => {
+  // THE GRACE (Q11), one failed poll is not news on a board any more than on the status line. Its
+  // content is dated at its last decode here, so nothing but the failure could raise a line.
+  const failed = (ago) => ({ ...failedBlock(ago), feed_timestamp: T - ago });
+  assert.equal(render("subway", { body: timesSq(failed(89)) }).spoken, "Times Sq-42 St, Subway. No trains.");
+  assert.equal(
+    render("subway", { body: timesSq(failed(90)) }).spoken,
+    "Times Sq-42 St, Subway. 1, 2 and 3 trains not reporting.",
+  );
+});
+
+test("A03 a contributor failing inside the grace keeps its content's age on an empty board", () => {
+  // Board A (content 620 s old behind a current poll) reads "as of 10m ago"; its NEXT poll fails,
+  // 20 s later. Inside the grace it is not yet dark, and its content is now 640 s old: the board
+  // keeps dating it ("as of 11m ago", 640 s), rather than going back to reading as fresh empty
+  // service until 90 s after the failure (the adversarial round of Step 3, its F1).
+  const next = { fetched_at: T - 20, feed_timestamp: T - 640, ok: false, retained_since: T };
+  const out = render("subway", { body: timesSq(next) });
+  assert.equal(out.popup, emptyTimesSq("No trains", "as of 11m ago"));
+  assert.equal(out.spoken, "Times Sq-42 St, Subway. as of 11m ago. No trains.");
+  // Content 89 s old and its poll failed 50 s ago: under the band on both clocks, so nothing.
+  const quiet = { fetched_at: T - 50, feed_timestamp: T - 89, ok: false, retained_since: T - 30 };
+  assert.equal(render("subway", { body: timesSq(quiet) }).spoken, "Times Sq-42 St, Subway. No trains.");
+});
+
+test("A03 a dark group with no row is named on a board that has other rows, by the routes it serves here", () => {
+  // Forest Hills-71 Av's real routes (E, F, FX, M, R): ACE has a row, BDFM is current with none,
+  // NQRW has never decoded. The line names R, the one route of the dark group at this station.
+  const h = loadFrontend();
+  const station = { id: "G08", name: "Forest Hills-71 Av", routes: ["E", "F", "FX", "M", "R"] };
+  const block = (b) => ({ retained_since: null, routes: [], ...b });
+  const body = {
+    fetched_at: null,
+    feed_timestamp: null,
+    station_id: "G08",
+    station_name: "Forest Hills-71 Av",
+    directions: {
+      Northbound: [{ route_id: "E", trip_id: "e1", arrival: T + 120, observed_at: T - 5, provenance: "reported" }],
+      Southbound: [],
+    },
+    served_at: T,
+    systems: {
+      ACE: block({ fetched_at: T, feed_timestamp: T - 5, ok: true, routes: ["E"] }),
+      BDFM: block({ fetched_at: T, feed_timestamp: T - 5, ok: true }),
+      NQRW: block({ fetched_at: null, feed_timestamp: null, ok: false }),
+    },
+  };
+  const popup = withoutMarks(h.sandbox.subwayArrivalsHtml(station, body));
+  assert.ok(popup.includes('<div class="popup-stale">R trains not reporting</div>\n'), popup);
+  // The empty direction keeps "No trains": not every contributor is dark.
+  assert.ok(popup.includes(`${dir("Southbound")}<div class="arr-none">No trains</div>\n`), popup);
+
+  // A DARK GROUP WITH A ROW HERE SAYS NOTHING: its row speaks for it. ACE failed 200 s ago and its
+  // block lists no route (the cap emptied its drawn trains), yet the E row is ACE's by the
+  // route-to-group table, so no clause is added; with NQRW healthy too the board has no line.
+  const held = {
+    ...body,
+    systems: {
+      ACE: block({ fetched_at: T - 200, feed_timestamp: T - 205, ok: false }),
+      BDFM: block({ fetched_at: T, feed_timestamp: T - 5, ok: true }),
+      NQRW: block({ fetched_at: T, feed_timestamp: T - 5, ok: true }),
+    },
+  };
+  const rows = [...held.directions.Northbound];
+  const board = h.sandbox.boardFreshness("subway", held, T, station.routes);
+  assert.deepEqual({ ...h.sandbox.boardLine(board, rows) }, { words: null, kind: "", slot: null });
+  assert.ok(!withoutMarks(h.sandbox.subwayArrivalsHtml(station, held)).includes("not reporting"));
+});
+
+test("A03 an empty board with one dark group and one healthy keeps No trains and names the dark one", () => {
+  // W 4 St-Wash Sq (A, C, E, B, D, F, M): ACE never decoded, BDFM current and empty. Not every
+  // contributor is dark, so the slot stays "No trains" (Q3 takes it only when every one is) and
+  // the line names the dark group's routes, never the healthy B, D, F and M.
+  const h = loadFrontend();
+  const station = { id: "A32", name: "W 4 St-Wash Sq", routes: ["A", "C", "E", "B", "D", "F", "M"] };
+  const body = {
+    fetched_at: null,
+    feed_timestamp: null,
+    station_id: "A32",
+    station_name: "W 4 St-Wash Sq",
+    directions: { Northbound: [], Southbound: [] },
+    served_at: T,
+    systems: {
+      ACE: { fetched_at: null, feed_timestamp: null, ok: false, retained_since: T - 20, routes: [] },
+      BDFM: { fetched_at: T, feed_timestamp: T - 5, ok: true, retained_since: null, routes: [] },
+    },
+  };
+  const board = h.sandbox.boardFreshness("subway", body, T, station.routes);
+  assert.deepEqual(
+    { ...h.sandbox.boardLine(board, []) },
+    { words: "A, C and E trains not reporting", kind: "dark:A, C and E trains", slot: null },
+  );
+  const popup = withoutMarks(h.sandbox.subwayArrivalsHtml(station, body));
+  assert.ok(popup.includes('<div class="popup-stale">A, C and E trains not reporting</div>\n'), popup);
+  assert.ok(popup.includes(`${dir("Southbound")}<div class="arr-none">No trains</div>\n`), popup);
+});
+
+test("A03 a change in WHO is dark is announced, an age counting up is not", () => {
+  // Forest Hills-71 Av: NQRW dark ("R trains"), then BDFM dark as well ("F, FX, M and R trains"),
+  // then NQRW back with BDFM still dark ("F, FX and M trains"). Each is news to a rider on a screen
+  // reader; the kind carries who is dark, so announcementWorthy hears it (the adversarial round of
+  // Step 3, its F2). The aged line counting from 10m to 11m changes no kind and is not news.
+  const h = loadFrontend();
+  const routes = ["E", "F", "FX", "M", "R"];
+  const row = { route_id: "E", trip_id: "e1", arrival: T + 120, observed_at: T - 5, provenance: "reported" };
+  const ok = { fetched_at: T, feed_timestamp: T - 5, ok: true, retained_since: null, routes: [] };
+  const down = { fetched_at: T - 200, feed_timestamp: T - 205, ok: false, retained_since: null, routes: [] };
+  const line = (bdfm, nqrw) => {
+    const body = { served_at: T, systems: { ACE: { ...ok, routes: ["E"] }, BDFM: bdfm, NQRW: nqrw } };
+    return h.sandbox.boardLine(h.sandbox.boardFreshness("subway", body, T, routes), [row]);
+  };
+  const lines = [line(ok, down), line(down, down), line(down, ok)];
+  assert.deepEqual(
+    lines.map((l) => [l.words, l.kind]),
+    [
+      ["R trains not reporting", "dark:R trains"],
+      ["F, FX, M and R trains not reporting", "dark:F, FX, M and R trains"],
+      ["F, FX and M trains not reporting", "dark:F, FX and M trains"],
+    ],
+  );
+  const shaped = (l) => ({ systemLine: l.words, systemLineKind: l.kind, slot: "No trains", buckets: [] });
+  assert.equal(h.sandbox.announcementWorthy(shaped(lines[0]), shaped(lines[1])), true);
+  assert.equal(h.sandbox.announcementWorthy(shaped(lines[1]), shaped(lines[2])), true);
+  const aged = (content) =>
+    h.sandbox.boardLine(
+      h.sandbox.boardFreshness("subway", { served_at: T, systems: { ACE: { ...ok, feed_timestamp: T - content } } }, T, routes),
+      [],
+    );
+  const [ten, eleven] = [aged(600), aged(660)];
+  assert.deepEqual([ten.words, eleven.words, ten.kind, eleven.kind], ["as of 10m ago", "as of 11m ago", "aged", "aged"]);
+  assert.equal(h.sandbox.announcementWorthy(shaped(ten), shaped(eleven)), false);
+});
+
+test("A03 a fresh empty ferry dock reads No boats on the panel and the spoken board", () => {
+  // The panel's slot comes from shapeStationArrivals' `slot`, which takes the dock's noun from its
+  // registry entry: a ferry dock reads "No boats", never "No trains", on every surface.
+  const body = {
+    ...fx.ferryArrivals(),
+    routes: {},
+    served_at: T,
+    systems: { ferry: { fetched_at: T, feed_timestamp: T - 5, ok: true, retained_since: null, routes: null } },
+  };
+  const out = render("ferry", { body });
+  assert.equal(out.panel.at(-1), "p No boats.");
+  assert.equal(out.spoken, "Wall St/Pier 11, Ferry. No boats.");
+  assert.ok(out.popup.endsWith('<div class="arr-none">No boats</div>\n'), out.popup);
+});
+
+test("A03 every other family's failed board names its system after the grace", () => {
+  // PATH failed 200 s before, and NJ Transit's content 620 s old behind a current poll.
+  const path = fx.pathArrivals();
+  const pathBody = {
+    ...path,
+    directions: {},
+    feed_timestamp: null,
+    served_at: T,
+    systems: { PATH: { fetched_at: T - 200, feed_timestamp: null, ok: false, retained_since: null, routes: null } },
+  };
+  assert.equal(render("path", { body: pathBody }).spoken, "World Trade Center, PATH. PATH not reporting.");
+  // The same failed block holding a kept row: the row speaks for itself, and no clause is added
+  // (one system's board: any row is its).
+  const kept = { ...pathBody, directions: path.directions };
+  const keptBoard = loadFrontend().sandbox.boardFreshness("path", kept, T);
+  assert.deepEqual(
+    { ...loadFrontend().sandbox.boardLine(keptBoard, Object.values(path.directions).flat()) },
+    { words: null, kind: "", slot: null },
+  );
+  assert.ok(!render("path", { body: kept }).spoken.includes("not reporting"));
+  const njt = fx.njtArrivals();
+  const njtBody = {
+    ...njt,
+    arrivals: [],
+    served_at: T,
+    systems: { njt: { fetched_at: T, feed_timestamp: T - 620, ok: true, retained_since: null, routes: null } },
+  };
+  assert.equal(
+    render("njt", { body: njtBody }).spoken,
+    "New York Penn Station, NJ Transit. as of 10m ago. No trains.",
+  );
 });

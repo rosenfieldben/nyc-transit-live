@@ -433,7 +433,8 @@ function subwayArrivalsHtml(station, body, complex = null) {
   // they are and a current group's say nothing (6.2). The system line sits where the
   // R1 age line did and speaks only for an empty board; empty while fresh, so a live
   // popup is unchanged.
-  const board = boardFreshness("subway", body, now);
+  const board = boardFreshness("subway", body, now, station.routes);
+  const line = boardLine(board, stationArrivalsRows(body));
   /* MR5: section 5's kicker and title, and the kicker's right-hand slot carries the station's
      own route marks, which is what the design asks for there ("right: route bullets"). They are
      the MAP's plates at the design's small size (popupMarkHtml at POPUP_MARK_ROW), not a second
@@ -462,12 +463,12 @@ function subwayArrivalsHtml(station, body, complex = null) {
   let html =
     popupKickerHtml({ left: POPUP_SYSTEM_WORDS.subway, rightHtml: plates }) +
     popupTitleHtml({ text: station.name ?? station.id }) +
-    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
+    boardLineHtml(line.words);
   for (const dir of ["Northbound", "Southbound"]) {
     const arrivals = body.directions?.[dir] ?? [];
     html += popupDirHtml(dir);
     if (!arrivals.length) {
-      html += `<div class="arr-none">No trains</div>\n`;
+      html += `<div class="arr-none">${esc(boardSlotWords(line))}</div>\n`;
       continue;
     }
     html += popupArrRowsHtml(

@@ -31,6 +31,10 @@ from feeds.shared import (
 # pointing at a self-hosted bridge is a config change, not a code change.
 PATH_RT_URL = os.getenv("PATH_RT_URL", "https://path.transitdata.nyc/gtfsrt")
 
+# PATH's one system, the key of its per-system block (Amendment 1, Q10) and the name
+# path_feed_health lists when the feed fails.
+PATH_SYSTEM = "PATH"
+
 
 # Sent on every bridge request. The bridge is a community service; a
 # descriptive User-Agent lets its maintainer see who is polling and reach out,

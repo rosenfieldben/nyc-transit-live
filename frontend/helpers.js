@@ -1853,9 +1853,42 @@ function ingestSystems(body, sourceKey) {
       routes: Array.isArray(block.routes) ? block.routes : null,
       feedTimestamp: contentClock(block.feed_timestamp),
       positions: positionSteps(block.positions),
+      drawn: drawnCount(body, name, block.routes),
     };
   }
   return systems;
+}
+
+// HOW MUCH OF A SYSTEM THE MAP DRAWS, or null when the envelope cannot say (Amendment 1,
+// Q11). A subway block lists the routes its drawn trains cover, [] once nothing of the group
+// is drawn (the retention cap emptied it, or it went down holding nothing), so the routes
+// count answers. Otherwise the envelope's vehicles answer, under whichever key it serves them
+// (`data` for the subway and the railroads, `trains` for PATH and NJ Transit, `boats` for the
+// ferry): none at all is 0 for every system; a railroad's vehicles name their own system, so
+// they are counted; and a one-system envelope's vehicles are all that system's, whatever they
+// name (the adversarial round of Step 3, its F6: NJ Transit's and an empty envelope's read
+// null before). Read off what is DRAWN rather than off retained_since, because that clock
+// starts over after the cap (H4 on the 2026-10-12 record's live list) and would flip the
+// status line back to an age every poll after the one the cap fired on.
+function drawnCount(body, name, routes) {
+  if (Array.isArray(routes)) return routes.length;
+  if (body == null) return null;
+  const vehicles = [body.data, body.trains, body.boats].find(Array.isArray);
+  if (!vehicles) return null;
+  if (!vehicles.length) return 0;
+  if (vehicles.some((item) => item && typeof item.system === "string")) {
+    return vehicles.filter((item) => item && item.system === name).length;
+  }
+  const raw = body.systems;
+  return raw != null && typeof raw === "object" && Object.keys(raw).length === 1 ? vehicles.length : null;
+}
+
+// FAILING WITH NOTHING OF IT DRAWN (Amendment 1, Q11): what the status line words "not
+// reporting" once past the rider band, and what ends the withheld count, since nothing of the
+// system is on the map for either an age or "not shown" to describe. One predicate for both,
+// read off `drawn` (drawnCount) and never off retained_since (H4).
+function nothingDrawn(system) {
+  return !system.ok && system.drawn === 0;
 }
 
 // The five counts of models.PositionSteps, in the backend's order: reported, estimated,
@@ -2189,7 +2222,9 @@ function glideClock(now, staleAt) {
 //      provider serving old content to polls that keep succeeding. Before 6.2 the line
 //      could say it only through the envelope's one lag, which spoke for every system
 //      of the source at once; with the lag per system it names the one that is behind.
-//   3. BLIND: never decoded, and reported down.
+//   3. BLIND: never decoded, and reported down; and, since Amendment 1's Q11, failing
+//      with nothing of it drawn (system.drawn 0: the retention cap has taken its
+//      vehicles), past the rider band, which a board words the same way.
 // The first two share the words "as of {age} ago" (design 4.4 reuses them verbatim)
 // and never share a clause, for the reason stale and blind were split: a system in one
 // state announced with another state's age is exactly the defect that split them. A
@@ -2258,6 +2293,14 @@ function staleness(source, now = Date.now() / 1000) {
       if (!system.ok) blind.push(name);
       continue;
     }
+    // FAILING WITH NOTHING OF IT DRAWN (Amendment 1, Q11): once the retention cap has taken
+    // a system's vehicles there is nothing on the map for "as of {age} ago" to date, so it
+    // reads "not reporting", the word a board gives the same state. Inside the window, while
+    // the map still draws what it last decoded, the age stays (the stale population below).
+    if (staleAge(poll) && nothingDrawn(system)) {
+      blind.push(name);
+      continue;
+    }
     const lag = systemLag(source, system);
     if (staleAge(poll)) {
       stale.push(name);
@@ -2296,10 +2339,13 @@ function staleness(source, now = Date.now() / 1000) {
 
 // How many of a system's trains the position ladder drew nothing for, as far as the map
 // can still be told: the served `suppressed` count while the decode it describes is the
-// one on the map (the system decoded, or its rows are being retained), and 0 otherwise.
+// one on the map (the system decoded, or its rows are being retained), and 0 otherwise,
+// which includes a failed system with nothing of it drawn (nothingDrawn): retained_since
+// starts over after the cap (H4), so it alone would bring the clause back on every poll
+// after the cap's (the adversarial round of Step 3, its F7).
 function withheldTrains(system) {
   const steps = system ? system.positions : null;
-  if (!steps || !(steps.suppressed > 0)) return 0;
+  if (!steps || !(steps.suppressed > 0) || nothingDrawn(system)) return 0;
   return system.ok || system.retainedSince != null ? steps.suppressed : 0;
 }
 
@@ -2388,19 +2434,89 @@ function servedAge(stamp, servedAt, now) {
   return servedAt - stamp + Math.max(now - servedAt, 0);
 }
 
+/* WHICH SUBWAY FEED GROUP CARRIES EACH ROUTE, the backend's feeds.SUBWAY_ROUTE_GROUPS mirrored
+   (Amendment 1, Q1 and Q3). A board names a dark subway group by the routes it serves at the
+   station ("2 and 5 trains not reporting"), and a row names its route and not its group, so
+   both the naming and the "has a row here" join need the table. MIRRORED, NOT FETCHED, and held
+   to the backend's table entry for entry by frontend/boards.test.js, which reads
+   backend/feeds/subway.py: the copy Q1 accepted, "checked against the feeds it describes",
+   where models.py's route-coverage comment rejected one with nothing checking it. */
+const SUBWAY_ROUTE_GROUPS = Object.freeze({
+  1: "1-7+S", 2: "1-7+S", 3: "1-7+S", 4: "1-7+S", 5: "1-7+S", 6: "1-7+S", "6X": "1-7+S",
+  7: "1-7+S", "7X": "1-7+S", GS: "1-7+S",
+  A: "ACE", C: "ACE", E: "ACE", H: "ACE",
+  B: "BDFM", D: "BDFM", F: "BDFM", FS: "BDFM", FX: "BDFM", M: "BDFM",
+  G: "G",
+  J: "JZ", Z: "JZ",
+  L: "L",
+  N: "NQRW", Q: "NQRW", R: "NQRW", W: "NQRW",
+  SI: "SIR", SS: "SIR",
+});
+
+/* A BOARD CONTRIBUTOR'S STATE, in Amendment 1's four words (A1.3), from the three fields its
+   block already carries through the door: `ok`, `fetchedAt` and `feedTimestamp`. THE ONE RULE
+   every board surface reads, so the popup, the panel and the spoken board cannot classify one
+   block two ways.
+
+     never   ok false AND fetchedAt null: it has not decoded in this process. Both, because the
+             substitute block ingestSystems builds for a board with no systems map has a null
+             clock with ok true, and that is not this state (helpers.test.js pins it silent).
+     failed  ok false with a clock: it decoded and is failing now. `age` is its last decode's,
+             which Q11's grace is counted from (contributorDark).
+     stale   ok, and the WORSE of its poll age and its content age is past the rider band
+             (Q4): a feed answering every poll with old bytes is as stale as one not polled.
+             Either clock may be missing (Metro-North dates no content, by policy), and the
+             one that is there answers.
+     fresh   anything else.
+   `worst` is that worse of the two clocks for every state but never (which has neither): what
+   an empty board's line dates a contributor by. A FAILED CONTRIBUTOR INSIDE THE GRACE KEEPS
+   IT, so a board whose content was already old does not go back to reading as fresh empty
+   service on the first failed poll (the adversarial round of Step 3, its F1).
+   Ages are in seconds, aged through servedAge like every board clock. */
+function contributorState(block, servedAt, now) {
+  if (block.ok === false && block.fetchedAt == null) return { state: "never", age: null, worst: null };
+  const poll = servedAge(block.fetchedAt, servedAt, now);
+  const content = servedAge(block.feedTimestamp, servedAt, now);
+  const known = [poll, content].filter((age) => age != null);
+  const worst = known.length ? Math.max(...known) : null;
+  if (block.ok === false) return { state: "failed", age: poll, worst };
+  return { state: staleAge(worst) ? "stale" : "fresh", age: worst, worst };
+}
+
+// Whether a contributor in that state is DARK on a board: never decoded, at once, or failed
+// once its last decode is past the rider band (Q11's grace, so one failed poll is not news on a
+// board any more than on the status line).
+function contributorDark(contributor) {
+  return contributor.state === "never" || (contributor.state === "failed" && staleAge(contributor.age));
+}
+
 // A board's freshness, read through the door once per render: the served instant, the
-// age of its worst system's last poll (what a row with no clock of its own is as old
-// as), and whether its predictions are age-gated at all. An unknown system is gated,
-// the pessimistic default: its null rows say "age unknown" rather than nothing.
-function boardFreshness(kind, body, now) {
+// age of its worst system's last poll (what a retained row with no clock of its own is as
+// old as), whether its predictions are age-gated at all, and EACH CONTRIBUTOR'S STATE
+// (contributorState), which is what the board's line and its empty slot are decided from
+// since Amendment 1. An unknown system is gated, the pessimistic default: its null rows say
+// "age unknown" rather than nothing. `stationRoutes` is the station's own route list (its
+// static routes, the registry's), which names a subway group by the routes it serves here.
+function boardFreshness(kind, body, now, stationRoutes = null) {
   const system = boardSystem(kind, body);
   const envelope = ingestEnvelope(body, system ?? kind);
   let pollAge = null;
-  for (const block of Object.values(envelope.systems)) {
+  const contributors = [];
+  for (const [name, block] of Object.entries(envelope.systems)) {
     const age = servedAge(block.fetchedAt, envelope.servedAt, now);
     if (age != null && (pollAge == null || age > pollAge)) pollAge = age;
+    contributors.push({ name, routes: block.routes, ...contributorState(block, envelope.servedAt, now) });
   }
-  return { now, system, servedAt: envelope.servedAt, pollAge, gated: !UNDATED_SYSTEMS.has(system) };
+  return {
+    now,
+    kind,
+    system,
+    servedAt: envelope.servedAt,
+    pollAge,
+    gated: !UNDATED_SYSTEMS.has(system),
+    contributors,
+    stationRoutes: Array.isArray(stationRoutes) ? stationRoutes : [],
+  };
 }
 
 const NO_QUALIFIER = Object.freeze({ kind: "", words: "" });
@@ -2447,27 +2563,123 @@ function arrivalQualifier(row, board) {
 // or null. It speaks only for what the rows cannot, because a dated row carries its own
 // age and a line repeating it would say everything twice:
 //
-//   * an EMPTY board, whose "No trains" is only as current as the poll behind it;
-//   * rows whose provider does not date them (Metro-North's), which have no age at all.
+//   * an EMPTY board's contributors that are not dark and whose worse clock is past the band
+//     (contributorState's `worst`): the stale ones, and a failed one inside Q11's grace,
+//     whose "No trains" is only as current as the worse of their poll and their content
+//     (Amendment 1, Q4): "as of {age} ago", the worst age answering;
+//   * rows whose provider does not date them (Metro-North's), which have no age at all;
+//   * A DARK CONTRIBUTOR WITH NO ROW HERE, whether or not other contributors' rows are
+//     (A1.3's accepted proposal, Q11): "{system} not reporting", for a contributor that has
+//     never decoded at once, and for one that decoded and is failing from 90 s after its
+//     last decode. One clause per population, never merged, stale first: the status line's
+//     order (staleness()).
 //
-// For those it gives the age of the board's last poll, once that age is stale, from the
-// served values (servedAge over each system's fetched_at, the worst answering). That is
-// the R1 honesty line these boards always had, now fed by the door rather than by
-// subtracting fetched_at on the spot. For undated rows it adds "{system} prediction age
-// unavailable", the prediction form of 3.2's per-system clause (3.2's table carries it
-// since 6.2), naming the system in the RIDER'S word ("Metro-North", never the feed code
-// "MNR", because the panel speaks this line and an initialism is read letter by
-// letter), RIDING the line and never raising it: on a healthy day a Metro-North board says nothing at all, because a
-// qualifier present on every board of a railroad is one a rider stops reading (Q5).
-function boardSystemLine(board, rows) {
+// For undated rows the line gives the age of the board's last poll once that is stale,
+// and adds "{system} prediction age unavailable", the prediction form of 3.2's per-system
+// clause, naming the system in the RIDER'S word ("Metro-North", never the feed code
+// "MNR", because the panel speaks this line and an initialism is read letter by letter),
+// RIDING the line and never raising it: on a healthy day a Metro-North board says nothing
+// at all, because a qualifier present on every board of a railroad is one a rider stops
+// reading (Q5).
+//
+// THE SLOT (Q3). Where the board is empty and EVERY contributor is dark, "No trains" would
+// assert a fact about service the app cannot know, so the "not reporting" clause takes the
+// slot "No trains" occupies instead of riding the line. A board with no contributor at all
+// (no systems map: an older backend) keeps its slot.
+//
+// Returns {words, kind, slot}: `words` the line or null; `kind` what the line IS ("aged",
+// "dark:{who}", "slot:{who}", joined with "+"), which the live region compares the way it
+// compares a row's qualifier kind, so a line that changes kind is news and one that only
+// counts up is not (announcementWorthy). WHO IS DARK IS PART OF THE KIND, the words a rider
+// hears for them, which carry no age: a second group going dark, or one recovering while
+// another fails, changes what the board says about service and is news; an age counting up
+// changes no kind (the adversarial round of Step 3, its F2). `slot` the empty slot's words,
+// or null for "No trains".
+function boardLine(board, rows) {
   const all = rows || [];
-  const undated =
-    !board.gated &&
-    all.some((r) => r && r.provenance === "reported" && servedAge(r.observed_at, null, 0) == null);
-  if (all.length && !undated) return null;
-  if (!staleAge(board.pollAge)) return null;
-  const line = `as of ${humanizeAge(board.pollAge)} ago`;
-  return undated ? `${line}; ${railroadSystemLabel(board.system)} prediction age unavailable` : line;
+  const contributors = board.contributors || [];
+  const clauses = [];
+  const kinds = [];
+  if (!all.length) {
+    const aged = contributors.filter((c) => !contributorDark(c) && staleAge(c.worst));
+    if (aged.length) {
+      clauses.push(`as of ${humanizeAge(Math.max(...aged.map((c) => c.worst)))} ago`);
+      kinds.push("aged");
+    }
+  } else {
+    const undated =
+      !board.gated &&
+      all.some((r) => r && r.provenance === "reported" && servedAge(r.observed_at, null, 0) == null);
+    if (undated && staleAge(board.pollAge)) {
+      clauses.push(
+        `as of ${humanizeAge(board.pollAge)} ago; ${railroadSystemLabel(board.system)} prediction age unavailable`,
+      );
+      kinds.push("aged");
+    }
+  }
+  const slotTaken = !all.length && contributors.length > 0 && contributors.every(contributorDark);
+  const dark = contributors.filter((c) => contributorDark(c) && !contributorHasRows(board, c, all));
+  if (dark.length && !slotTaken) {
+    const who = darkWords(board, dark);
+    clauses.push(`${who} not reporting`);
+    kinds.push(`dark:${who}`);
+  }
+  const slot = slotTaken ? darkWords(board, contributors) : null;
+  if (slot) kinds.push(`slot:${slot}`);
+  return {
+    words: clauses.length ? clauses.join("; ") : null,
+    kind: kinds.join("+"),
+    slot: slot ? `${slot} not reporting` : null,
+  };
+}
+
+// The line's words alone, for every caller that renders only the line.
+function boardSystemLine(board, rows) {
+  return boardLine(board, rows).words;
+}
+
+// What an empty board's slot reads: "No trains" ("No boats" for a boat), or the dark
+// contributors' "not reporting" when every one is dark (boardLine's `slot`).
+function boardSlotWords(line, noun = "train") {
+  if (line && line.slot) return line.slot;
+  return noun === "boat" ? "No boats" : "No trains";
+}
+
+// "2", "2 and 5", "A, C and E": the list grammar a board names its routes in.
+function andList(items) {
+  if (items.length < 2) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+// Whether a contributor has a row on this board. One system's board: any row is its. A
+// subway board is a JOIN, because a row names its route and not its feed group: a row is
+// this group's when the route-to-group table puts its route here, or the group's own block
+// says it serves that route (a diverted route).
+function contributorHasRows(board, contributor, rows) {
+  if (board.kind !== "subway") return rows.length > 0;
+  const served = Array.isArray(contributor.routes) ? contributor.routes : [];
+  return rows.some(
+    (row) => row && (SUBWAY_ROUTE_GROUPS[row.route_id] === contributor.name || served.includes(row.route_id)),
+  );
+}
+
+// The rider's word for dark contributors (Q3), never a feed key: on a subway board the
+// routes they serve at this station, read from the station's own routes through the table,
+// in the station's order ("2 and 5 trains"), and "Subway" where one of them names no route
+// here; on a railroad board the railroad's rider word (railroadSystemLabel); on the others
+// the system's popup word ("PATH", "NYC Ferry", "NJ Transit").
+function darkWords(board, dark) {
+  if (board.kind === "subway") {
+    const routes = [];
+    for (const contributor of dark) {
+      const here = board.stationRoutes.filter((route) => SUBWAY_ROUTE_GROUPS[route] === contributor.name);
+      if (!here.length) return POPUP_SYSTEM_WORDS.subway;
+      for (const route of here) if (!routes.includes(route)) routes.push(route);
+    }
+    return `${andList(routes)} trains`;
+  }
+  if (board.kind === "railroad") return railroadSystemLabel(dark[0] ? dark[0].name : board.system);
+  return POPUP_SYSTEM_WORDS[board.kind] ?? board.kind;
 }
 
 // The popup's markup for the two: the system line in the slot the R1 age line used, in
@@ -2533,8 +2745,7 @@ function observationStaleAt(row) {
 //   reported, no clock, not gated      "live GPS" and nothing more: its system's status
 //                                      line says the rest (Metro-North)
 //   estimated                          "estimated from a prediction"
-//   placed                             "scheduled position (no GPS)"; compact form
-//                                      "scheduled (no GPS)"
+//   placed                             "scheduled position (no GPS)"
 //   retained                           "showing last known, as of {age} ago"
 //   anything else                      "age unknown": the `unknown` provenance, a row with
 //                                      none (an older backend), or a value no position
@@ -2555,19 +2766,21 @@ function observationStaleAt(row) {
 // `gated` reads it off UNDATED_SYSTEMS by `system`, and an unknown system is gated, the
 // pessimistic default boardFreshness takes.
 //
-// Returns {kind, words, compact, spoken, age}, the kind one of "", "aged", "unknown",
+// Returns {kind, words, spoken, age}, the kind one of "", "aged", "unknown",
 // "estimated", "placed" and "retained". As with arrivalQualifier, the kind is what the
 // row IS and holds still while its age counts on, so a live region that compares kinds
-// hears a train change state and never its clock tick. The three strings are ONE answer
-// in the three shapes a surface prints, all built here from the same pieces, so no
+// hears a train change state and never its clock tick. The two strings are ONE answer
+// in the two shapes a surface prints, both built here from the same pieces, so no
 // surface composes its own phrasing and none can disagree about an age:
 //   words    every popup's line (design 3.2's vocabulary)
-//   compact  the railroad popup's shorter form: "scheduled (no GPS)" for a placed row,
-//            which that popup has always said and memo D9 keeps; otherwise the words
 //   spoken   an accessible name's clause: "scheduled position, no GPS" for a placed row,
 //            the form every marker name has shipped with (a comma, no parentheses,
 //            because a screen reader reads a parenthesis as punctuation or as nothing);
 //            otherwise the words
+// There was a third, `compact` ("scheduled (no GPS)" for a placed row), the railroad
+// popup's until MR5 and read by nothing after it. The freshness contract's Amendment 1
+// removed it (Q8): an unread third spelling of one judgment is one a future surface can
+// pick up by accident, which is how MR3's N6 put two neutrals on one route.
 // `age` is the age those words STATE, or null when they state none (a fresh position,
 // an undated one, a row with no provenance): what a popup reads to decide whether its
 // feed's age line would only say the same thing twice (popupFreshHtml's suppression rule).
@@ -2579,10 +2792,9 @@ function positionQualifier(row, board) {
   const stale = staleAge(age);
   const aged = stale ? `, as of ${humanizeAge(age)} ago` : "";
   const undated = age == null && gated ? ", age unknown" : "";
-  const answer = (kind, words, { compact = words, spoken = words, stated = stale ? age : null } = {}) => ({
+  const answer = (kind, words, { spoken = words, stated = stale ? age : null } = {}) => ({
     kind,
     words,
-    compact,
     spoken,
     age: stated,
   });
@@ -2595,7 +2807,6 @@ function positionQualifier(row, board) {
   }
   if (r.provenance === "placed") {
     return answer("placed", `scheduled position (no GPS)${aged}${undated}`, {
-      compact: `scheduled (no GPS)${aged}${undated}`,
       spoken: `scheduled position, no GPS${aged}${undated}`,
     });
   }
@@ -3729,13 +3940,11 @@ function withheldFix(row, block, servedAt, now) {
    An AGED fix still speaks, which is the contract working rather than a compromise: the silence is
    only ever about a current one.
 
-   `.compact` STILL EXISTS AND NOW HAS NO READER, which is worth stating precisely rather than
-   softly. It is one of the three forms section 3.2 of the freshness contract defines, it still
-   differs from `.words` in exactly one family (`placed`), and positions.test.js still pins that
-   difference. But the railroad popup was its ONLY caller, so after this ruling nothing in the app
-   renders it. Deleting a form the contract defines is an amendment to that contract rather than a
-   stage's tidying, so it stays, and pins.spec.js P5b carries its string as a waiver naming exactly
-   this reason. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
+   `.compact` HAD NO READER AFTER THIS, AND IS GONE. The railroad popup was its ONLY caller, so
+   after this ruling nothing in the app rendered it. It stayed defined, pinned and waived in
+   pins.spec.js P5b until the freshness contract's Amendment 1 decided its Q8 (remove), because
+   deleting a form the contract defines is an amendment to that contract rather than a stage's
+   tidying. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
    rider-visible literal that no pin covered, on the commit that unified the call site.
 
    THE GUARD IS ON BOTH FIELDS. The ruling says an empty `.words` omits the row, and `positionQualifier`
@@ -3758,9 +3967,9 @@ function positionClause(position) {
    It rendered a vehicle popup's system age line and withheld itself where the position's words had
    already stated an age at least that old. popupFreshHtml keeps that rule exactly, keeps its
    reasoning (copied there rather than cited, so it cannot outlive this comment), and adds the two
-   states the line never had. It was the function's only caller in either direction: nothing in the
-   freshness contract names it, unlike positionQualifier's `.compact`, which is why this is deleted
-   where that is recorded and kept. */
+   states the line never had. It was the function's only caller in either direction, and nothing in
+   the freshness contract names it, so it was deleted here; positionQualifier's `.compact`, a form
+   the contract defined, waited for the contract's own amendment (Amendment 1, Q8). */
 
 // ONE WRITE PER RENDER, AS ONE STRING (memo D11). The page's live region is atomic and
 // polite, so two writes before a screen reader reads it are one sentence lost: the second
@@ -4032,7 +4241,8 @@ function orderedRailroadBuckets(directions) {
 function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPaint(null), nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row qualified by its own served age, and the system line where the R1 age
   // line was (6.2; see arrivalQualifier and boardSystemLine).
-  const board = boardFreshness("railroad", body, now);
+  const board = boardFreshness("railroad", body, now, station.routes);
+  const line = boardLine(board, stationArrivalsRows(body));
   /* MR5: section 5's kicker, title and board. The agency moves from a muted tag beside the
      station's name to the kicker above it, and it is still the SERVED `system` field: "MNR"
      here, where this station's own panel row says railroadSystemLabel's "Metro-North". That
@@ -4042,9 +4252,9 @@ function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPai
   const header =
     popupKickerHtml({ left: station.system ?? "", rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
-    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
+    boardLineHtml(line.words);
   const buckets = orderedRailroadBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
+  if (!buckets.length) return `${header}<div class="arr-none">${esc(boardSlotWords(line))}</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
     html += popupDirHtml(dir);
@@ -4201,13 +4411,14 @@ function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP
 function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // PATH dates every trip itself, so two rows on one board can carry two different
   // ages, and only the old one is qualified (6.2).
-  const board = boardFreshness("path", body, now);
+  const board = boardFreshness("path", body, now, station.routes);
+  const line = boardLine(board, stationArrivalsRows(body));
   const header =
     popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
-    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
+    boardLineHtml(line.words);
   const buckets = orderedPathBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
+  if (!buckets.length) return `${header}<div class="arr-none">${esc(boardSlotWords(line))}</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
     html += popupDirHtml(dir);
@@ -4372,7 +4583,8 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
     : "";
   // Dock rows are dated by the TripUpdates clock, never the boat's (6.1), and each is
   // qualified by it here (6.2).
-  const board = boardFreshness("ferry", body, now);
+  const board = boardFreshness("ferry", body, now, station.routes);
+  const line = boardLine(board, stationArrivalsRows(body));
   const header =
     // R3: the routes calling at this dock, then the access glyph, which keeps the glyph rightmost
     // where it has always been and is the one right-hand slot that was already occupied.
@@ -4381,9 +4593,9 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
       rightHtml: popupRouteMarksHtml(station.routes, markFor) + access,
     }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
-    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
+    boardLineHtml(line.words);
   const buckets = orderedFerryBuckets(body.routes);
-  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>\n`;
+  if (!buckets.length) return `${header}<div class="arr-none">${esc(boardSlotWords(line, "boat"))}</div>\n`;
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
@@ -4734,13 +4946,14 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // and the time is the thing the rider came for.
 function njtArrivalsHtml(station, body, now, colorFor = () => RAIL_NEUTRAL_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row dated by the TripUpdates header and qualified by it (6.2).
-  const board = boardFreshness("njt", body, now);
+  const board = boardFreshness("njt", body, now, station.routes);
+  const line = boardLine(board, stationArrivalsRows(body));
   const header =
     popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
-    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
+    boardLineHtml(line.words);
   const rows = njtOrderedArrivals(body.arrivals, now);
-  if (!rows.length) return `${header}<div class="arr-none">No trains</div>\n`;
+  if (!rows.length) return `${header}<div class="arr-none">${esc(boardSlotWords(line))}</div>\n`;
   return (
     header +
     popupArrRowsHtml(
@@ -5345,7 +5558,8 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
   }
   // THE SAME BOARD FRESHNESS THE POPUP READS, so the two surfaces qualify a row from
   // one computation and cannot word or threshold it differently (6.2).
-  const board = boardFreshness(kind, payload, now);
+  const board = boardFreshness(kind, payload, now, opts.routes);
+  const line = boardLine(board, stationArrivalsRows(payload));
   const buckets = raw.map(([name, rows]) => ({
     name,
     rows: (rows || []).map((row) => {
@@ -5384,7 +5598,11 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
     // judgement: silent while a provider served old content to a poll that kept
     // succeeding, which is F03. Rows now carry their own qualifiers, and this line
     // speaks only for what they cannot (boardSystemLine). Null when it has nothing.
-    systemLine: boardSystemLine(board, stationArrivalsRows(payload)),
+    systemLine: line.words,
+    // What the line IS, for the live region (announcementWorthy's clause 4), and the empty
+    // slot's words in place of "No trains" when every contributor is dark (boardLine).
+    systemLineKind: line.kind,
+    slot: boardSlotWords(line, opts.noun),
     buckets,
   };
 }
@@ -5501,7 +5719,9 @@ function arrivalsSignature(shaped) {
 //   4. (6.2) a bucket's set of qualifier KINDS changed, or the board's system line
 //      appeared or went: a countdown the rider heard as current is now known to be
 //      old, or is current again. Announced once, because a kind does not change as
-//      its age counts up.
+//      its age counts up. Since Amendment 1 the line's own KIND counts too (boardLine's
+//      `kind`): "as of 10m ago" becoming "not reporting", or "No trains" giving way to
+//      it, is a change a rider must hear, and the line stays present across it.
 //
 // Stay silent on everything else, and the case that matters most is the
 // countdown tick: none of clauses 1 to 3 reads the clock, so a second passing can
@@ -5521,6 +5741,11 @@ function announcementWorthy(prev, next) {
   if (!next) return false;
   if (!prev) return true;
   if ((prev.systemLine == null) !== (next.systemLine == null)) return true; // clause 4
+  // CLAUSE 4 READS THE LINE'S KIND TOO (Amendment 1): a board going from "as of 10m ago" to
+  // "not reporting", or whose "No trains" gives way to it, changes on screen while a line
+  // stays present, and a change of KIND is news exactly as it is for a row's qualifier. A
+  // line that only counts up keeps its kind and stays quiet.
+  if ((prev.systemLineKind ?? "") !== (next.systemLineKind ?? "")) return true; // clause 4
   const before = arrivalsSignature(prev);
   const after = arrivalsSignature(next);
   const names = new Set([...Object.keys(before), ...Object.keys(after)]);
@@ -5602,7 +5827,7 @@ function railroadSystemLabel(system) {
 // that punctuation cannot do in speech (a screen reader reads it as noise, or as the
 // words "middle dot"). Same facts, spoken shape. The position clause is here for the
 // same reason it is in the popup: it tells a rider how much to trust the position they
-// are being told about. It is `position.spoken`, the popup's compact line said aloud,
+// are being told about. It is `position.spoken`, the popup's position line said aloud,
 // and unlike every other system's name it is said for EVERY position, "live GPS"
 // included, because the railroad popup has always said it. The next stop is said when
 // the row names one, exactly when the popup prints it: a train drawn from a prediction
@@ -6017,6 +6242,8 @@ if (typeof module !== "undefined" && module.exports) {
     // 6.2: the boards, each row qualified by its own age.
     UNDATED_SYSTEMS, boardSystem, servedAge, boardFreshness, arrivalQualifier,
     boardSystemLine, boardLineHtml, qualifierHtml,
+    SUBWAY_ROUTE_GROUPS, contributorState, contributorDark, boardLine, boardSlotWords, andList,
+    contributorHasRows, darkWords, drawnCount,
     // 6.3: a vehicle's position, qualified by its own observation, and its rendering.
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,

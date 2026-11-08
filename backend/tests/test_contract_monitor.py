@@ -4056,11 +4056,70 @@ def test_the_lines_code_is_watched_and_explained_in_words():
     assert "never re-fetches" in health.detail and "subway-static check" in health.detail
 
 
-@pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)
+def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
+    """subway-route-unmapped (Amendment 1, Q1) is the one recognized code that WARNs: a
+    route a live group served is missing from the route-to-group table, which asks for a
+    row in the next deploy rather than a page. The WARN names each route and the groups
+    that served it, read from /api/status's subway_unmapped_routes; a name that does not
+    look like a route id or a group key is counted, never printed. Beside any other
+    recognized code the run still FAILs."""
+    import models
+
+    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped",)
+    assert "subway-route-unmapped" not in models.HEALTH_GATING_CODES
+    unmapped = {"X9": ["NQRW"], "Y1": ["ACE", "BDFM"]}
+    fetch = _healthy_prod(
+        health=_healthz_json(degraded=["subway-route-unmapped"]), subway_unmapped_routes=unmapped
+    )
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert (health.status, health.detail) == (
+        cm.WARN,
+        "degraded: subway-route-unmapped; "
+        + cm._HEALTH_CODE_NOTES["subway-route-unmapped"]
+        + "; not in the route-to-group table: route X9 (served by NQRW), "
+        "route Y1 (served by ACE and BDFM)",
+    )
+
+    fetch = _healthy_prod(
+        health=_healthz_json(degraded=["subway-groups-down", "subway-route-unmapped"]),
+        subway_unmapped_routes={"<b>": ["NQRW"], "Z7": ["G G"], "W2": ["L"]},
+    )
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert health.status == cm.FAIL
+    assert health.detail.endswith(
+        "not in the route-to-group table: route W2 (served by L), 2 with an unprintable name"
+    )
+    assert "<b>" not in health.detail and "G G" not in health.detail
+
+    fetch = _healthy_prod(health=_healthz_json(degraded=["subway-route-unmapped"]))
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert health.status == cm.WARN
+    assert health.detail.endswith(
+        "/api/status names no route (subway_unmapped_routes is empty or unreadable)"
+    )
+
+
+@pytest.mark.parametrize(
+    "code", [code for code in cm.PRODUCTION_HEALTH_CODES if code not in cm._WARN_HEALTH_CODES]
+)
 def test_every_degraded_code_fails_the_run(code):
     """Each state the probe can report has to reach a nonzero exit. Parametrized
     over the tuple itself so a code added to both sides without a witness cannot
-    slip through: the new code gets a test the moment it is listed."""
+    slip through: the new code gets a test the moment it is listed. The one code
+    that WARNs instead is pinned by name in the test above, so a code cannot leave
+    this list without a test being told."""
     fetch = _healthy_prod(health=_healthz_json(status="fail", degraded=[code]))
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
     health = next(r for r in results if r.name == "production:healthz")
@@ -4524,10 +4583,12 @@ def test_the_qualified_observations_code_is_explained_in_words():
     """The second code whose name does not say what to do. observations-qualified
     reports what riders are SHOWN, so the summary says that, out of the monitor's own
     literal, and says the two things an operator would otherwise get wrong. A redeploy
-    fixes nothing about the cause; and because a new process cannot see a group that has
-    not decoded in it, a clean run after a redeploy proves nothing, so the note points at
-    the surface that still names such a group. It also owns up to the known false
-    positive models.HEALTH_OBSERVATIONS_QUALIFIED records, a quiet night on LIRR."""
+    fixes nothing about the cause; and because a feed failing since a deploy reaches the
+    code only ten minutes after the new process first polls it, which waits for the feed's
+    static data (Amendment 1's Q5; before it, never), a clean run inside that time proves
+    nothing, so the note points at the surface that names such a feed at once. It also owns
+    up to the known false positive models.HEALTH_OBSERVATIONS_QUALIFIED records, a quiet
+    night on LIRR."""
     fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["observations-qualified"]))
     health = next(
         r
@@ -4541,10 +4602,14 @@ def test_the_qualified_observations_code_is_explained_in_words():
     assert "90s" not in health.detail
     assert "a redeploy fixes nothing about it" in health.detail
     assert "not proof of recovery" in health.detail
+    assert "ten minutes after the new process first polls it" in health.detail
+    assert "waits for the feed's static data" in health.detail
     assert "subway_feeds.failed" in health.detail
+    assert "njt_feeds.failed" in health.detail
     assert "sparsely served LIRR" in health.detail
     # The first version's sentence, which a redeploy makes untrue: the code does clear
-    # after one, for any group still failing that has not decoded in the new process.
+    # after one, for ten minutes, for any feed still failing that has not decoded in the
+    # new process.
     assert "clears nothing" not in health.detail
 
 
@@ -4698,6 +4763,187 @@ def test_an_empty_board_is_warn_on_both_lines(board):
     for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
         assert line.status == cm.WARN, line
         assert "no arrival rows" in line.detail
+
+
+# THE FOUR STATES OF AMENDMENT 1 (A1.3), as the two board lines read them. Since that
+# amendment G08's board names every group the station expects, a group that has never
+# decoded in the deployment's process as a block with fetched_at null and ok false, so the
+# two lines judge an empty board by its blocks and give a never-decoded block on a
+# populated board a state of its own. Built with the monitor's own board builder: G08
+# expecting ACE, BDFM and NQRW, served at 1000.
+_NEVER = {"fetched_at": None, "feed_timestamp": None, "ok": False, "retained_since": 940.0}
+
+
+def _g08(clocks, rows=2, **blocks):
+    """G08's board with these contributor clocks, each block then updated by `blocks`."""
+    board = _board(clocks, rows=rows)
+    for group, fields in blocks.items():
+        board["systems"][group].update(fields)
+    return board
+
+
+def test_a_fresh_empty_board_keeps_its_warn_and_its_reason():
+    """Fresh and empty: every contributor reporting and current, nothing running. The
+    WARN each line has always given an empty board, word for word."""
+    board = _g08({"ACE": 995.0, "BDFM": 990.0, "NQRW": 992.0}, rows=0)
+    assert (_clock_line(board).status, _clock_line(board).detail) == (
+        cm.WARN,
+        "board G08 serves no arrival rows, so it has no clock to judge",
+    )
+    line = _contributors_line(board, _HEALTHY_UPSTREAM)
+    assert (line.status, line.detail) == (
+        cm.WARN,
+        "board G08 serves no arrival rows, so it has no contributors to tell apart",
+    )
+
+
+def test_an_empty_board_whose_every_contributor_is_down_is_a_named_warn():
+    """Failed or never decoded, every one: a different WARN, naming each, because that
+    board's "No trains" says nothing about service and "no clock to judge" stops being
+    the reason. ACE failed after decoding, its last decode 700 s before the board; BDFM
+    likewise, 650 s; NQRW has never decoded."""
+    board = _g08(
+        {"ACE": 290.0, "BDFM": 340.0, "NQRW": None},
+        rows=0,
+        ACE={"ok": False, "fetched_at": 300.0},
+        BDFM={"ok": False, "fetched_at": 350.0},
+        NQRW=_NEVER,
+    )
+    says = (
+        "board G08 serves no arrival rows and none of its contributors is reporting "
+        "(never decoded in this process: NQRW; failed, last decoded: ACE 700s, BDFM 650s), "
+        "so its empty board says nothing about service"
+    )
+    assert (_clock_line(board).status, _clock_line(board).detail) == (cm.WARN, says)
+    line = _contributors_line(board, _HEALTHY_UPSTREAM)
+    assert (line.status, line.detail) == (cm.WARN, says)
+
+
+def test_an_empty_board_names_its_failing_and_its_stale_contributors():
+    """Some down among reporting ones: the first WARN, with the down ones named, and on
+    production:board-clock a reporting contributor whose content is past the band too."""
+    board = _g08(
+        {"ACE": 290.0, "BDFM": 300.0, "NQRW": 992.0},
+        rows=0,
+        ACE={"ok": False, "fetched_at": 300.0},
+    )
+    assert _clock_line(board).detail == (
+        "board G08 serves no arrival rows, so it has no clock to judge; failed, last decoded: "
+        "ACE 700s; content older than 600s: BDFM 700s"
+    )
+    assert _contributors_line(board, _HEALTHY_UPSTREAM).detail == (
+        "board G08 serves no arrival rows, so it has no contributors to tell apart; failed, "
+        "last decoded: ACE 700s"
+    )
+
+
+def test_a_never_decoded_contributor_on_a_populated_board_is_its_own_state():
+    """NQRW has never decoded, on a board with ACE's and BDFM's rows: no clock by design,
+    and by the board's rule 3 the envelope's feed_timestamp is null too. Both lines FAILed
+    that board as "lacks a feed_timestamp on NQRW"; now production:board-clock WARNs naming
+    the state, and production:board-contributors names it beside a PASS, judging the two
+    contributors that do carry a clock."""
+    board = _g08({"ACE": 995.0, "BDFM": 990.0, "NQRW": None}, NQRW=_NEVER)
+    assert board["feed_timestamp"] is None
+    never = "never decoded in this process: NQRW, so no clock to judge"
+    clock = _clock_line(board)
+    assert (clock.status, clock.detail) == (
+        cm.WARN,
+        f"2 rows from 2 contributors, every content clock inside 600s; {never}",
+    )
+    line = _contributors_line(board, _HEALTHY_UPSTREAM)
+    assert line.status == cm.PASS, line
+    assert line.detail.endswith(f"so there was nothing to distinguish; {never}")
+    # The others keep their band: both past it is still a FAIL, the state named beside it.
+    stale = _g08({"ACE": 300.0, "BDFM": 290.0, "NQRW": None}, NQRW=_NEVER)
+    assert (_clock_line(stale).status, _clock_line(stale).detail) == (
+        cm.FAIL,
+        f"every contributor's content is older than 600s: ACE 700s, BDFM 710s; {never}",
+    )
+    # A contributor that DID decode and serves no clock is still a missing one.
+    headerless = _g08({"ACE": 995.0, "BDFM": None, "NQRW": None}, NQRW=_NEVER)
+    for line in (_clock_line(headerless), _contributors_line(headerless, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert "lacks a feed_timestamp on BDFM." in line.detail
+
+
+def test_a_populated_board_no_decoded_contributor_dates_still_fails_both_lines():
+    """THE ROUND'S F3. Rows on the board and every contributor never decoded: nothing dates
+    those rows, which is the case the populated-board FAIL exists for, so the never-decoded
+    excuse must not reach it. And a block reading ok false and fetched_at null that still
+    carries a content clock is no never-decoded block: its clock is judged."""
+    board = _g08({"ACE": None, "BDFM": None}, ACE=_NEVER, BDFM=_NEVER)
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert (
+            "lacks a contributor that has decoded (never decoded in this process: ACE, BDFM)"
+            in line.detail
+        )
+    clocked = _g08(
+        {"ACE": 995.0, "BDFM": 300.0},
+        BDFM={"ok": False, "fetched_at": None, "feed_timestamp": 300.0},
+    )
+    assert (_clock_line(clocked).status, _clock_line(clocked).detail) == (
+        cm.WARN,
+        "content older than 600s: BDFM 700s",
+    )
+
+
+def test_a_null_clock_on_a_reporting_contributor_is_still_a_missing_clock():
+    """THE ROUND'S F11. NQRW reads ok true with both clocks null, the shape a page's
+    substitute block has: not the never-decoded state, so both lines still FAIL it."""
+    board = _g08({"ACE": 995.0, "BDFM": 990.0, "NQRW": None}, NQRW={"fetched_at": None})
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert "lacks the envelope feed_timestamp, a feed_timestamp on NQRW." in line.detail
+
+
+def test_an_empty_board_whose_contributors_all_failed_after_decoding_is_the_named_warn():
+    """THE ROUND'S F10. No never-decoded group at all: every contributor failed after
+    decoding is the same named WARN."""
+    board = _g08(
+        {"ACE": 290.0, "BDFM": 340.0, "NQRW": 345.0},
+        rows=0,
+        ACE={"ok": False, "fetched_at": 300.0},
+        BDFM={"ok": False, "fetched_at": 350.0},
+        NQRW={"ok": False, "fetched_at": 355.0},
+    )
+    says = (
+        "board G08 serves no arrival rows and none of its contributors is reporting "
+        "(failed, last decoded: ACE 700s, BDFM 650s, NQRW 645s), so its empty board says "
+        "nothing about service"
+    )
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert (line.status, line.detail) == (cm.WARN, says)
+
+
+def test_the_route_table_names_say_where_each_route_was_seen_and_are_capped():
+    """The static routes index is a source of its own ("listed in the static routes
+    index"), at most ten routes are named and the rest counted (the round's F6), and a
+    route listing more sources than exist is counted as unprintable."""
+    assert cm._unmapped_route_names({"X9": ["static"], "Y1": ["NQRW", "static"]}) == (
+        "not in the route-to-group table: route X9 (listed in the static routes index), "
+        "route Y1 (served by NQRW, listed in the static routes index)"
+    )
+    many = {f"R{n:02d}": ["NQRW"] for n in range(12)}
+    many["Z1"] = [f"G{n}" for n in range(10)]
+    named = cm._unmapped_route_names(many)
+    assert named.count("route R") == 10
+    assert named.endswith("2 more not named (over the 10 name cap), 1 with an unprintable name")
+
+
+def test_a_failed_contributor_on_a_populated_board_is_banded_by_its_kept_clock():
+    """Failed after decoding: production:board-clock ages it by the clock it kept,
+    against the 600 s band, as it always did (inside it a PASS, past it a WARN), and
+    production:board-contributors names it as not judged."""
+    inside = _g08({"ACE": 700.0, "BDFM": 990.0, "NQRW": 992.0}, ACE={"ok": False})
+    assert _clock_line(inside).status == cm.PASS
+    past = _g08({"ACE": 300.0, "BDFM": 990.0, "NQRW": 992.0}, ACE={"ok": False})
+    assert (_clock_line(past).status, _clock_line(past).detail) == (
+        cm.WARN,
+        "content older than 600s: ACE 700s",
+    )
+    assert "not judged: ACE" in _contributors_line(past, _HEALTHY_UPSTREAM).detail
 
 
 @pytest.mark.parametrize(

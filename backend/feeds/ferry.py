@@ -79,6 +79,9 @@ FERRY_RT_BASE = os.getenv(
     "FERRY_RT_BASE", "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
 ).rstrip("/")
 FERRY_VEHICLE_ENDPOINT = "vehicleposition"
+# The ferry's one system, the key of its per-system block (Amendment 1, Q10) and the name
+# ferry_feed_health lists when the pair fails.
+FERRY_SYSTEM = "ferry"
 FERRY_TRIPUPDATE_ENDPOINT = "tripupdate"
 
 # Residual arrivals bucket for a trip that carries no resolvable route (a join

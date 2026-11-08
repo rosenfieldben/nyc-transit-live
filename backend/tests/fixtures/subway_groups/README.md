@@ -82,10 +82,18 @@ exception recorded. `placement.unplaced` is empty: no archive route went unseen.
   sample were live. A fault shorter than ten minutes is not ruled out.
 - It is the only failure in 1,968 rows; every one of them was a 200, and the smallest body
   among the live rows was 3,805 bytes.
-- **The app's handling of such a body is unmeasured here, and owed to Step 2.** By the code,
-  `parse_feed` raises on an empty body (its rule 1, `backend/feeds/shared.py:141`, written for
-  exactly this "empty body served as 200"); what the poller and the served state then do with
-  that poll has not been measured.
+- **The app's handling of such a body, measured by Step 2 (`claude/a03-expected-contributors`):
+  a FAILED poll, not a decoded generation.** `parse_feed` refuses a zero-byte body (its rule 1,
+  "empty body served as 200 (no protobuf header)"), and the subway fold counts that group
+  failed, with the reason `undecodable protobuf (empty body served as 200 (no protobuf
+  header))`. Through the real `_refresh_subways` and the served JSON, in F03's world one poll
+  after a healthy one: `/api/status` lists 1-7+S failed (`{"total": 8, "ok": 7, "failed":
+  ["1-7+S"]}`), its block reads `ok: false` with its last decode's clocks (fetched at the
+  healthy poll, content 5 s before it) and `retained_since` set, and its 12 rows at 219 are
+  served `retained`, which the page's renderers word `showing last known, as of 25s ago` on
+  every row, in the popup, the panel and the spoken board. So it is not a headerless,
+  entity-less generation served as a success (Q6's world on the subway). Pinned by
+  `backend/tests/test_a03_expected_contributors.py::test_a_zero_byte_200_is_a_failed_poll_not_an_empty_generation`.
 
 ## The window
 

@@ -440,17 +440,28 @@ def _stops_table(stops: dict, shape: str) -> str:
     return _csv(_STOPS_HEADER, rows)
 
 
-def _archive_members(stops: dict, shape: str) -> dict[str, str]:
+def _archive_members(
+    stops: dict, shape: str, routes: tuple[str, str] = ("R1", "R2")
+) -> dict[str, str]:
+    """A synthesized static archive over `stops`, its two routes named `routes`.
+
+    THE SUBWAY'S ARE REAL ROUTE IDS, "1" and "2". Since the freshness contract's Amendment
+    1 (Q1) the app holds every route its static subway index names against the
+    route-to-group table, and a route the table lacks raises subway-route-unmapped on
+    /healthz, so the invented R1 and R2 made a healthy simulated app report a degraded
+    code. The other archives keep R1 and R2: nothing checks their route ids.
+    """
     child = next(iter(stops), "1")
+    first, second = routes
     return {
         "stops.txt": _stops_table(stops, shape),
         "routes.txt": _csv(
             "route_id,route_short_name,route_long_name,route_color",
-            ["R1,R1,Contract Line,00839C", "R2,R2,Contract Branch,EE352E"],
+            [f"{first},{first},Contract Line,00839C", f"{second},{second},Contract Branch,EE352E"],
         ),
         "trips.txt": _csv(
             "route_id,service_id,trip_id,trip_headsign,direction_id,shape_id",
-            ["R1,wk,t1,Uptown,0,s1..N01R", "R2,wk,t2,Downtown,1,s2..N01R"],
+            [f"{first},wk,t1,Uptown,0,s1..N01R", f"{second},wk,t2,Downtown,1,s2..N01R"],
         ),
         "shapes.txt": _csv(
             "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon",
@@ -1033,7 +1044,9 @@ class UpstreamSim:
             ("lirr", load("railroad_lirr_stops.json"), "flat"),
             ("mnr", load("railroad_mnr_stops.json"), "flat"),
         ):
-            members = _archive_members(stop_table, shape)
+            members = _archive_members(
+                stop_table, shape, ("1", "2") if key == "subway" else ("R1", "R2")
+            )
             if key == "subway":
                 # A required member of the subway archive and no other (_subway_transfers).
                 members["transfers.txt"] = _subway_transfers(stop_table)

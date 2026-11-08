@@ -12,11 +12,12 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterable
 
 from fastapi import HTTPException, Response
 
 import env_seams
-from feeds import active_alert_feeds, iter_rows
+from feeds import SUBWAY_ROUTE_GROUPS, active_alert_feeds, iter_rows
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
 # config are unchanged by the split, the same discipline the feeds package uses.
@@ -307,7 +308,10 @@ def _serve_cached(
         # PATH and ferry are each a single upstream, so their top-level fetched_at
         # already means what a per-system block would say, and adding an empty or
         # one-entry block to their envelopes would be noise the client has to
-        # special-case. See THE PER-SYSTEM RULE above.
+        # special-case. See THE PER-SYSTEM RULE above. Their station BOARDS are
+        # another matter (Amendment 1, Q10): nothing at a board's top level says
+        # `ok`, so PATH's and the ferry's pollers write the block and their boards
+        # serve it, while these vehicle envelopes still leave it out.
         if with_systems:
             body["systems"] = entry.get("systems")
         return body
@@ -321,11 +325,25 @@ def _serve_cached(
 def _require_filled_cache(entry: dict) -> None:
     """Warming gate shared by the arrivals endpoints: until the feed's cache
     has filled once there is no per-station index worth serving, so surface
-    the recorded upstream error when there is one, else the generic warming
-    503. Same contract _serve_cached keeps for the feed endpoints; the three
-    arrivals endpoints each carried an identical inline copy until the
-    13d-era cleanup."""
-    if entry["data"] is None:
+    the recorded error when there is one, else the generic warming 503. Same
+    contract _serve_cached keeps for the feed endpoints; the three arrivals
+    endpoints each carried an identical inline copy until the 13d-era cleanup.
+
+    EXCEPT A FAMILY WHOSE POLL RAN AND FAILED BEFORE IT EVER DECODED (Amendment 1,
+    Q10). Its poller has written each system it tried a never-decoded block
+    (pollers._mark_all_systems_failed: fetched_at null, ok false), and the board
+    answers 200 with that block and no rows, where it used to raise the recorded
+    error: a 502 whose detail was the upstream's own text with only its URLs
+    scrubbed, which the popup and the panel printed and the panel spoke (H6 on the
+    2026-10-12 record's live list). The detail stays on /api/status, the operator's
+    surface. Which boards that reaches is the pollers' choice of who writes the
+    block: PATH, the ferry and NJ Transit, a railroad board with both railroads
+    failing, and a subway board whose every group failed (the ruling of 2026-11-08,
+    "and the subway"). A poll that never ran writes none, so the 503 before any poll
+    stays, and so does the recorded 503 of a static group still loading or of NJ
+    Transit not configured. The vehicle envelopes do not change: _serve_cached keeps
+    raising the recorded error until data arrives."""
+    if entry["data"] is None and not entry.get("systems"):
         if entry["error"]:
             raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
         raise HTTPException(
@@ -361,9 +379,10 @@ def _static_endpoint_ready(status: str, response: Response, warming_detail: str)
 def _oldest_row_observed_at(rows) -> float | None:
     """The oldest observation time among the arrival rows actually served.
 
-    THE THIRD SELECTOR, for the two endpoints whose envelope has no per-system block
-    to read: PATH and the ferry are single-feed sources and no poller ever writes
-    them a `systems` map. Reading the cache entry's own feed_timestamp instead would
+    THE THIRD SELECTOR, for the two endpoints whose per-system block carries no content
+    clock to read: PATH and the ferry are single-feed sources, and the one block each
+    board serves since Amendment 1's Q10 holds None there by policy, for the reasons
+    below. Reading the cache entry's own feed_timestamp instead would
     be wrong on both, and differently wrong on each: PATH's is the bridge's WRITE
     time, which advances on every regeneration whether or not anything upstream
     moved, and the ferry's is the VehiclePositions header, which dates the BOATS and
@@ -438,34 +457,70 @@ def _system_fetched_at(entry: dict, system: str) -> float | None:
     return block["fetched_at"]
 
 
-def _contributing_systems(entry: dict, arrivals_by_system: dict, station_id: str) -> list[str]:
-    """The systems actually contributing arrivals at one station, in sorted order.
+def _expected_groups(station_routes: Iterable[str]) -> set[str]:
+    """The feed groups a station EXPECTS to hear from (Amendment 1, Q1): the group of each
+    route the static routes-per-station index gives it, through feeds.SUBWAY_ROUTE_GROUPS.
 
-    Shared by the two selectors below so they can never disagree about WHO is being
-    asked. A group with no arrivals at this station does not participate: a down SIR
-    feed must not age a Manhattan station's popup it was never going to appear in.
+    "Expected" is "may serve", not "is serving": the index is a union over weekday,
+    Saturday and Sunday service, so a weekend station can expect a group whose route runs
+    there only on weekdays, which is harmless (a healthy group with no rows is fresh and
+    empty). A route the table lacks expects nothing here; routes/status.py's
+    _unmapped_subway_routes names it on /api/status and raises subway-route-unmapped on
+    /healthz, whether the static index lists it or a live feed serves it.
+    """
+    return {SUBWAY_ROUTE_GROUPS[route] for route in station_routes if route in SUBWAY_ROUTE_GROUPS}
 
-    MEMBERSHIP IS THE PER-GROUP INDEX, NOT THE SERVED PAYLOAD, and the difference is
-    deliberate. combine_group_arrivals dedups trips across groups and _trim_arrivals
-    caps each bucket, so a group can have rows at this station and still have none of
-    them survive into the response. It keeps its vote anyway: the alternative is
-    letting the survivors vouch for a group whose data is still behind them, and the
-    only safe direction for a union clock is the one that cannot overstate freshness.
-    The visible consequence is that an envelope may report a time OLDER than every row
-    it carries, which the acceptance test asserts rather than tolerates.
+
+def _contributing_systems(
+    entry: dict, arrivals_by_system: dict, station_id: str, station_routes: Iterable[str]
+) -> list[str]:
+    """The systems that take part in one station's board, in sorted order: the groups the
+    station EXPECTS (_expected_groups), UNITED with every group that has rows indexed there.
+
+    Shared by the three selectors below so they can never disagree about WHO is being
+    asked. A group not expected at this station, with no rows here, does not participate:
+    a down SIR feed must not age a Manhattan station's popup it was never going to appear
+    in.
+
+    WHY EXPECTED, AND WHY THE UNION (Amendment 1, A1.3 and Q1). Membership used to be the
+    per-group arrivals index alone, and a group that has left the index is exactly the
+    case it could not see: a failed group's last retained row at a station expires, or the
+    retention cap drops it, and its key leaves the index, so the board stopped naming the
+    group while /api/status still listed it failed (A03, measured at Prospect Av), and a
+    group that has never decoded in this process was never in the index at all. Expected
+    alone fails the other way: a diverted group's rows at a station its routes do not
+    serve would stop voting (the committed capture carries route 5 at seven Lexington
+    Avenue stations the static index does not list for it), and F03's own acceptance world,
+    whose static index is empty, would name no contributor (A1.4 measured both).
+
+    THE INDEX'S ARGUMENT SURVIVES, ITS PREMISE DOES NOT. combine_group_arrivals dedups
+    trips across groups and _trim_arrivals caps each bucket, so a group can have rows at
+    this station and still have none of them survive into the response. It keeps its vote
+    anyway: the alternative is letting the survivors vouch for a group whose data is still
+    behind them, and the only safe direction for a union clock is the one that cannot
+    overstate freshness. The visible consequence is that an envelope may report a time
+    OLDER than every row it carries, which the acceptance test asserts rather than
+    tolerates. What changed is only that the index is no longer the whole of membership.
+
+    A GROUP WITH NO BLOCK DOES NOT TAKE PART, whether expected or seen. The poller writes a
+    block for all eight groups on every poll that decodes any of them (a never-decoded one
+    reads fetched_at null, ok false), and a board is served only after such a poll, so in a
+    running process every expected group has one. A directly seeded entry may not, and
+    there nothing is invented for it.
     """
     systems = entry.get("systems") or {}
-    return sorted(
+    seen = {
         system
         for system, station_map in arrivals_by_system.items()
-        if station_id in (station_map or {}) and system in systems
-    )
+        if station_id in (station_map or {})
+    }
+    return sorted(system for system in _expected_groups(station_routes) | seen if system in systems)
 
 
 def _oldest_contributing_content_at(
-    entry: dict, arrivals_by_system: dict, station_id: str
+    entry: dict, arrivals_by_system: dict, station_id: str, station_routes: Iterable[str]
 ) -> float | None:
-    """The oldest CONTENT time among the systems contributing arrivals at a station.
+    """The oldest CONTENT time among the systems that take part in a station's board.
 
     THE SIBLING OF _oldest_contributing_fetched_at, and the reason F03 needed one.
     That function answers "how long ago did we last POLL the feeds behind this
@@ -480,12 +535,16 @@ def _oldest_contributing_content_at(
       1. THE WORST CONTRIBUTOR ANSWERS. For a union there is no single clock, and
          reporting the newest would let a fresh group vouch for a stale one sharing
          the platform.
-      2. A GROUP CONTRIBUTING NOTHING HERE DOES NOT PARTICIPATE.
+      2. A GROUP NOT EXPECTED HERE, WITH NO ROWS HERE, DOES NOT PARTICIPATE
+         (_contributing_systems).
       3. ONE CONTRIBUTOR THAT CANNOT BE DATED MAKES THE ANSWER None, rather than
          letting the others speak for it. The difference from its sibling is what
          that means: there, never having decoded; here, either that or a system
-         whose header is not a usable freshness signal at all (Metro-North). Both
-         are "this cannot be dated", and both must refuse to be averaged away.
+         whose header is not a usable freshness signal at all (Metro-North), or a
+         generation that sent none. All are "this cannot be dated", and all must
+         refuse to be averaged away. Since Amendment 1 an EXPECTED group that has
+         never decoded takes part, so one such group makes a populated board's
+         content clock None too (Q2 states that cost); each row still carries its own.
 
     There is no aggregate fallback. The envelope's feed_timestamp is a min() over
     every system that decoded, including ones with no arrivals at this station, so
@@ -495,54 +554,67 @@ def _oldest_contributing_content_at(
     systems = entry.get("systems") or {}
     contributing = [
         systems[system].get("feed_timestamp")
-        for system in _contributing_systems(entry, arrivals_by_system, station_id)
+        for system in _contributing_systems(entry, arrivals_by_system, station_id, station_routes)
     ]
     if not contributing or any(value is None for value in contributing):
         return None
     return min(value for value in contributing if value is not None)
 
 
-def _contributing_freshness(entry: dict, arrivals_by_system: dict, station_id: str) -> dict | None:
-    """The per-system blocks of just the systems feeding this station.
+def _contributing_freshness(
+    entry: dict, arrivals_by_system: dict, station_id: str, station_routes: Iterable[str]
+) -> dict | None:
+    """The per-system blocks of the systems that take part in this station's board, every
+    expected group's among them (Amendment 1, Q2): a group that is failing with nothing
+    left here is named as failed, and one that has never decoded in this process is named
+    by the block the poller wrote for it, fetched_at null and ok false.
 
     "Other healthy contributors remain distinguishable" is the audit's acceptance
     clause, and it is a fact about a FIELD only if the board can name which
     contributor is behind. Publishing every system's block would answer a question
-    the rider did not ask (a down SIR group means nothing at a Manhattan station);
-    publishing only the contributors answers theirs.
+    the rider did not ask (a down SIR group means nothing at a Manhattan station).
+    Publishing only the groups with rows here was the other mistake: it answered the
+    rider's question only while the group still had a row, so a contributor whose rows
+    had expired or been capped vanished from the one field that could say it was down.
+    None only where nothing takes part, which on the live index is no station.
     """
     systems = entry.get("systems") or {}
-    names = _contributing_systems(entry, arrivals_by_system, station_id)
+    names = _contributing_systems(entry, arrivals_by_system, station_id, station_routes)
     return {name: systems[name] for name in names} or None
 
 
 def _oldest_contributing_fetched_at(
-    entry: dict, arrivals_by_system: dict, station_id: str
+    entry: dict, arrivals_by_system: dict, station_id: str, station_routes: Iterable[str]
 ) -> float | None:
-    """The oldest poll time among the systems actually contributing arrivals at one
-    station, falling back to the aggregate's (C2).
+    """The oldest poll time among the systems that take part in one station's board, or
+    the aggregate's when none does (C2).
 
     For a UNION of several systems' data there is no single per-system clock to
     report, and reporting the newest (or the aggregate, which tracks the newest)
     would let one fresh group vouch for a stale one sharing the same platform. The
     worst contributor is the only answer that cannot overstate freshness.
 
-    A group with no arrivals at this station does not participate: a down SIR feed
+    A group not expected here, with no rows here, does not participate: a down SIR feed
     must not age a Manhattan station's popup it was never going to appear in.
     """
     systems = entry.get("systems") or {}
     contributing = [
         systems[system]["fetched_at"]
-        for system in _contributing_systems(entry, arrivals_by_system, station_id)
+        for system in _contributing_systems(entry, arrivals_by_system, station_id, station_routes)
     ]
-    usable = [ts for ts in contributing if ts is not None]
-    if not usable:
-        # Either no per-system data yet (pre-first-poll, or a directly seeded entry)
-        # or every contributor has never decoded. The aggregate is the pre-C2 answer
-        # and keeps the endpoint from regressing to null.
+    if not contributing:
+        # NOTHING TAKES PART: no group is expected at this station and none has a row here,
+        # or the entry has no per-system blocks at all (a directly seeded one). The
+        # aggregate is the pre-C2 answer, kept for that case alone. On the live index no
+        # station reaches it since Amendment 1's Q1: every one of the 496 has a route the
+        # route-to-group table places (FS, which alone serves S01, S03 and S04, included).
+        # It is what served A03's 0 s old fetched_at, when a failed group's last row at a
+        # station expired and the station was left with no contributor.
         return entry["fetched_at"]
-    if len(usable) < len(contributing):
-        # A contributor exists that has NEVER decoded, so its data cannot be dated.
-        # Do not let the others speak for it.
+    if any(ts is None for ts in contributing):
+        # A contributor exists that has NEVER decoded, so its data cannot be dated. Do not
+        # let the others speak for it, and do not let the aggregate either: before
+        # Amendment 1 a board whose every contributor had never decoded fell back to the
+        # aggregate's clock, which dated a board nothing behind it had ever filled.
         return None
-    return min(usable)
+    return min(contributing)

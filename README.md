@@ -210,7 +210,7 @@ nyc-transit-live/
 │   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py, gen_ferry_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
-│   ├── requirements.lock    # pinned deps installed by Railway and CI
+│   ├── requirements-lock.txt # pinned deps installed by Railway and CI
 │   └── requirements-dev.txt # the lock + test-only extras
 ├── frontend/
 │   ├── index.html
@@ -240,7 +240,7 @@ nyc-transit-live/
 ├── package.json             # dev-only: @playwright/test + @axe-core/playwright (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
 ├── nixpacks.toml            # pins Python 3.12 for the Railway build
-├── requirements.txt         # root pointer -> backend/requirements.lock
+├── requirements.txt         # root pointer -> backend/requirements-lock.txt
 └── .env                     # BUS_TIME_API_KEY (gitignored)
 ```
 
@@ -317,7 +317,7 @@ the complete list of what is unchecked, is in
    pip install -r requirements.txt
    ```
    Deploys (Railway, via the root `requirements.txt`) install the pinned
-   `backend/requirements.lock` instead; regeneration instructions are in the
+   `backend/requirements-lock.txt` instead; regeneration instructions are in the
    lock file's header.
 4. **Run it.**
    ```bash
@@ -499,6 +499,7 @@ and each is a way a conventional poller gets this wrong:
    | **Committed** | **6** | leaving four |
    | Production, at most | 4 | `njt_auth.DAILY_MINT_ALLOWANCE`, a ceiling per process per Eastern day: with the monitor's 4 it leaves 2 for an operator |
    | Contract monitor, a delayed run | +1 | GitHub starts a scheduled run late, sometimes by hours (runs 356 and 357 started at 05:00 and 12:01 UTC against the `17 */6 * * *` slots), so the 20:17 Eastern run can land after midnight and give the next Eastern day five monitor mints: with production's 4, nine of ten, leaving 1 |
+| Cron drift, measured | 0 | The delay is the rule, not the exception: on 2026-11-01 and 2026-11-02 the scheduled monitor runs started 231 to 362 minutes after their slots, some slots were skipped, and the Step 0 route-group probe's first scheduled run started 4h54m after its merge. A slot is not a run time, so a run is read by its run number, and a missing one is never filled by a dispatch, which would spend a mint |
 
    A deploy (cold token cache), a manual `workflow_dispatch` of the monitor, a
    fixture pull (`gen_njt_fixture.py` and `gen_njt_rt_fixture.py`, one each), or a
@@ -893,14 +894,20 @@ rider's board has said "as of" since 90 seconds), undated where its provider dat
 rows, or of no known provenance; or it has been failing for longer than the retention
 cap, which has dropped its rows. That second half is aged from the system's last
 successful decode, so it holds on every poll of the outage, not only the one the cap
-fires on. It is not
+fires on. And a system serving no row at all is named from its block: quiet while it
+is healthy (an empty feed overnight is ordinary), named once it has been failing for
+more than the same 600 seconds since its last decode, or, never decoded, since the
+process first tried it (Amendment 1's Q5). A deployment where NJ Transit is not
+configured never polls it and is never named for it. It is not
 `feed-content-stale`, which is about one endpoint's feed header lagging, and the two
 occur independently. It never gates either: old upstream data is a property of the
-world, not of the build. Two limits are known. A new process cannot see a group that
-has not decoded since it came up, so a quiet probe after a redeploy is not proof of
-recovery (`/api/status`'s `subway_feeds.failed` and `railroad_feeds.failed` still name
-the group), and a sparsely served LIRR late at night can trip the code with nothing
-wrong.
+world, not of the build. Two limits are known. A feed already failing when a new
+process comes up reaches the code only ten minutes after the process first polls it,
+which for every family but the railroads waits for that family's static data to load,
+so a quiet probe inside that time is not proof of recovery (`/api/status`'s
+`subway_feeds`, `railroad_feeds`, `path_feeds`, `ferry_feeds` and `njt_feeds` name a
+failing feed at once), and a sparsely served LIRR late at night can trip the code with
+nothing wrong.
 
 One more is read off the subway lines being served. `subway-lines-degraded` says the
 subway group is `ready` and no route line it serves draws (none has two points). The
@@ -912,6 +919,18 @@ redeploy restores them. It never gates, because the usual fault is in upstream's
 publication rather than in the build, and the monitor's `subway-static` check `WARN`s
 on that publication from upstream's side, through the app's own geometry gate, so
 whoever reads the run knows whether a redeploy would bring the lines back yet.
+
+And one is read off the subway's route-to-group table. A station board names the feed
+groups the station expects, read from its static routes through that table
+(`SUBWAY_ROUTE_GROUPS` in `backend/feeds/subway.py`, one row per route, written from a
+committed capture of which feed carries which route), so a route the table lacks is a
+station that may not name a dark group on its board. `subway-route-unmapped` says the
+static routes index lists such a route, or a live subway group has served one since the
+process started. `/api/status`'s `subway_unmapped_routes` names each route and where it
+was seen (the feed groups that served it, and `static` for the index), and the contract
+monitor prints them in a `WARN`, the one recognized code that warns rather than fails,
+because what it asks for is a table row in the next deploy. It holds for the life of the
+process, since only a deploy can add the row, and it never gates.
 
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
@@ -1043,7 +1062,7 @@ current there, as it always has): "live GPS" on the
 railroad, "estimated from a prediction" for a train placed between two stops from a
 fresh prediction (LIRR's estimates, and NJ Transit's in-transit trains), and
 "scheduled position (no GPS)" for one placed at a stop (subway, PATH, NJ Transit and
-the railroad's placements, "scheduled (no GPS)" in the railroad popup). A railroad
+the railroad's placements). A railroad
 train the position ladder drew nothing for appears nowhere on the map and is counted
 instead. That count rides the status line rather than raising it: whenever the railroad
 line is already rendering for some other reason it gains a clause of its own
@@ -1182,9 +1201,18 @@ fold and a `FAIL`. Distinct clocks pass whatever their ages (a group that recove
 between the two reads carries its own new clock), and a contributor the board itself
 reports failed or retained is named as not judged, since it carries its last-known
 clock by design. A board that serves rows with no content clock is a `FAIL` on both
-lines, because every rider qualifier built on that clock would be unwatched. An empty
-board, or one that could not be fetched, is a `WARN`, since `production:status`
-already fails a deployment that is down.
+lines, because every rider qualifier built on that clock would be unwatched; a
+contributor the board names as never decoded in the deployment's process (`fetched_at`
+null and `ok` false, which also leaves the board's own content clock null) is not a
+missing clock but a state of its own, named on both lines and a `WARN` on
+`production:board-clock`. An empty board is judged by its blocks, in the freshness
+contract's four states, and is always a `WARN`: fresh and empty, every contributor
+reporting, says there is nothing to judge; a board whose every contributor is failed or
+never decoded is a different `WARN` naming each, because its "No trains" says nothing
+about service; and failing contributors among reporting ones, and on
+`production:board-clock` stale ones, are named beside the first. A board that could not
+be fetched is a `WARN` too, since `production:status` already fails a deployment that is
+down.
 
 `production:railroad-positions` reads the ladder's counts (`railroad_positions`, the
 sibling key described above) and prints them per railroad on every arm, as

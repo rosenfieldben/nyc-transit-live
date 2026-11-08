@@ -680,6 +680,10 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
   const now = panelClockNow();
   const shaped = shapeStationArrivals(entry.kind, panelBody, now, {
     nameFor: entry.nameFor || (() => null),
+    // The station's own routes name a dark subway group on the board, and its noun picks
+    // "No boats" over "No trains" for the empty slot (boardLine, Amendment 1's Q3).
+    routes: entry.routes,
+    noun: entry.noun,
   });
 
   // THE BOARD'S SYSTEM LINE, the one line a board says about its system rather than a
@@ -700,7 +704,8 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
 
   if (!shaped.buckets.length) {
     const none = document.createElement("p");
-    none.textContent = entry.noun === "boat" ? "No boats." : "No trains.";
+    // "No trains.", or the dark contributors' "not reporting" when every one is dark (Q3).
+    none.textContent = `${shaped.slot}.`;
     stationsDetail.appendChild(none);
   }
 
@@ -850,7 +855,7 @@ function arrivalsSpeech(shaped, staleLine) {
     lines.push(`${bucket.name}: ${sentences.join(". ")}`);
   }
   if (!shaped.buckets.length) {
-    lines.push(panelStation.noun === "boat" ? "No boats." : "No trains.");
+    lines.push(`${shaped.slot}.`);
   }
   return lines.join(". ");
 }

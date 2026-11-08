@@ -43,6 +43,94 @@ SUBWAY_FEED_URLS = {
     "SIR": _SUBWAY_BASE + "-si",
 }
 
+# WHICH GROUP'S FEED CARRIES EACH ROUTE (Amendment 1 to the freshness contract, Q1), one
+# row per route id, each in exactly one group. It is for one question, which groups a
+# station EXPECTS to hear from, read through the static routes-per-station index
+# (cache._expected_groups), so a group that has never decoded, or whose last row at a
+# station has expired, can still be named on that station's board. Nothing in the decode
+# reads it: the routes a group serves are still learned from the trains its feed carries
+# (pollers._routes_by_system), as they were before the table existed.
+#
+# WRITTEN FROM A MEASUREMENT, NOT FROM A DOCUMENT OR FROM A ROUTE'S BRANDING. Every row is
+# what Step 0's probe saw the live feeds carry over 246 samples, 2026-11-03T22:34:52Z to
+# 2026-11-05T19:37:29Z (backend/tests/fixtures/subway_groups/capture.json, whose README
+# says how it was taken). tests/test_subway_route_groups.py holds this table to that
+# capture row for row, so the two cannot drift apart silently. Three rows a key's name
+# would get wrong: GS rides 1-7+S (244 samples), not G; FS rides BDFM and H rides ACE.
+#
+# D IS BDFM, AND ONE SAMPLE SAYS OTHERWISE. The capture shows D under two groups: in every
+# one of BDFM's 246 samples, and in one NQRW sample, 2026-11-04T07:45:24Z (02:45 New York),
+# one trip update and one vehicle beside N, Q and R. An overnight D run over N, Q, R or W
+# tracks would explain it, and nothing in the capture shows which trip it was. It is
+# recorded here as an exception, not placed: a second placement would make every D station
+# expect NQRW all day on the strength of one trip.
+#
+# SS IS SIR AND IS NOT IN THE ARCHIVE. The SIR feed carries SS (81 samples) and the live
+# archive's routes.txt has no SS route, so no station's static routes can name it and it
+# makes no group expected anywhere. It has a row so the route check below reads it as
+# placed rather than unknown; SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE marks it.
+SUBWAY_ROUTE_GROUPS: dict[str, str] = {
+    "1": "1-7+S",
+    "2": "1-7+S",
+    "3": "1-7+S",
+    "4": "1-7+S",
+    "5": "1-7+S",
+    "6": "1-7+S",
+    "6X": "1-7+S",
+    "7": "1-7+S",
+    "7X": "1-7+S",
+    "GS": "1-7+S",
+    "A": "ACE",
+    "C": "ACE",
+    "E": "ACE",
+    "H": "ACE",
+    "B": "BDFM",
+    "D": "BDFM",
+    "F": "BDFM",
+    "FS": "BDFM",
+    "FX": "BDFM",
+    "M": "BDFM",
+    "G": "G",
+    "J": "JZ",
+    "Z": "JZ",
+    "L": "L",
+    "N": "NQRW",
+    "Q": "NQRW",
+    "R": "NQRW",
+    "W": "NQRW",
+    "SI": "SIR",
+    "SS": "SIR",
+}
+# The rows a live feed carries that the archive's routes.txt does not list (the capture's
+# placement.seen_not_in_archive). Marked so a reader of the table knows no station's static
+# routes will ever name them.
+SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE = frozenset({"SS"})
+
+
+def routes_outside_the_table(
+    trains_by_group: dict[str, list[dict]],
+    arrivals_by_group: dict[str, dict[str, dict[str, list[dict]]]],
+) -> set[tuple[str, str]]:
+    """Every (route id, group) a decoded group served this poll whose route has no row in
+    SUBWAY_ROUTE_GROUPS: the check Q1 asks for, "every route a live group serves is in the
+    table".
+
+    ROUTE IN TABLE, NOT ROUTE UNDER THIS GROUP. A D trip on the NQRW feed passes, because D
+    has a row; what this catches is a route id the table has never heard of. This is the
+    FEED side of the check; the side membership reads, the static routes-per-station index,
+    is checked where both are served (routes/status.py, _unmapped_subway_routes). Both
+    outputs are read, placed trains and arrival rows, because a trip not yet started is
+    indexed for arrivals and skipped for placement. A row with no route id says nothing.
+    """
+    found: set[tuple[str, str]] = set()
+    for group, trains in trains_by_group.items():
+        found.update((train["route_id"], group) for train in trains if train.get("route_id"))
+    for group, stations in arrivals_by_group.items():
+        for buckets in stations.values():
+            for rows in buckets.values():
+                found.update((row["route_id"], group) for row in rows if row.get("route_id"))
+    return {(route, group) for route, group in found if route not in SUBWAY_ROUTE_GROUPS}
+
 
 def _platform_direction(stop_id: str) -> tuple[str | None, str]:
     """(direction, station_id) for a platform stop_id via its N/S suffix.

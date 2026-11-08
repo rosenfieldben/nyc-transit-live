@@ -34,6 +34,7 @@ from feeds.buses import (
 )
 from feeds.ferry import (
     FERRY_RT_BASE,
+    FERRY_SYSTEM,
     FERRY_TRIPUPDATE_ENDPOINT,
     FERRY_VEHICLE_ENDPOINT,
     _decode_ferry_arrivals,
@@ -53,6 +54,7 @@ from feeds.path import (
     PATH_IDENTITY_EXPIRY_GENERATIONS,
     PATH_MATCH_TOLERANCE_S,
     PATH_RT_URL,
+    PATH_SYSTEM,
     PATH_USER_AGENT,
     _decode_path_feed,
     _path_time_delta,
@@ -105,15 +107,19 @@ from feeds.shared import (
     _trim_arrivals,
     _trip_start_ts,
     carry_forward_prev,
+    drop_departed_rows,
     drop_expired_arrivals,
     iter_rows,
     logger,
     merge_system_generations,
     parse_feed,
+    row_departed,
 )
 from feeds.subway import (
     _SUBWAY_BASE,
     SUBWAY_FEED_URLS,
+    SUBWAY_ROUTE_GROUPS,
+    SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE,
     _aggregate_feeds,
     _decode_feed,
     _decode_trains,
@@ -121,6 +127,7 @@ from feeds.subway import (
     combine_group_arrivals,
     combine_group_trains,
     fetch_subway_trains,
+    routes_outside_the_table,
 )
 
 __all__ = [
@@ -155,6 +162,8 @@ __all__ = [
     "iter_rows",
     "merge_system_generations",
     "drop_expired_arrivals",
+    "drop_departed_rows",
+    "row_departed",
     # The strict parse boundary every decoder goes through (C3).
     "parse_feed",
     "FeedDecodeError",
@@ -162,6 +171,7 @@ __all__ = [
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",
     "FERRY_RT_BASE",
+    "FERRY_SYSTEM",
     "FERRY_VEHICLE_ENDPOINT",
     "FERRY_TRIPUPDATE_ENDPOINT",
     "_status_name",
@@ -174,11 +184,14 @@ __all__ = [
     "decode_njt_trip_updates",
     "_SUBWAY_BASE",
     "SUBWAY_FEED_URLS",
+    "SUBWAY_ROUTE_GROUPS",
+    "SUBWAY_ROUTES_ABSENT_FROM_ARCHIVE",
     "_platform_direction",
     "_decode_feed",
     "_decode_trains",
     "_aggregate_feeds",
     "fetch_subway_trains",
+    "routes_outside_the_table",
     "RAILROAD_FEED_URLS",
     "RAILROAD_FRESHNESS_SYSTEMS",
     "_decode_railroad_vehicles",
@@ -195,6 +208,7 @@ __all__ = [
     "_decode_railroad_placements",
     "fetch_railroad_trains",
     "PATH_RT_URL",
+    "PATH_SYSTEM",
     "PATH_USER_AGENT",
     "_PATH_DIRECTION",
     "_decode_path_feed",

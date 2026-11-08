@@ -16,12 +16,17 @@ the 2026-10-12 audit, the last section of this document) is DECIDED, 2026-11-01,
 Step 0 of its A1.6, the subway probe, ran on three branches (PRs #133, #134 and #136), and
 Step 1, A10, was built on `claude/a10-headerless-generation` (PR #138, merged as `11e0dc5`),
 alone rather than on the one build branch A1.6 names (A1.6 says why). **Amended 2026-11-07:**
-Step 2, A03's backend half, is built on `claude/a03-expected-contributors`, the branch this
-sentence is written on, on a branch of its own as Step 1 was; Step 3, A03's frontend half
-and the operator's code, is next, after it. Amendment 1's decisions amended the body in place on 2026-11-01, each amended
+Step 2, A03's backend half, is built on `claude/a03-expected-contributors`, on a branch of
+its own as Step 1 was. **Amended 2026-11-08: Amendment 1 is BUILT.** Step 3, A03's frontend
+half and the operator's code, is built on `claude/a03-renderers-operator`, stacked on Step 2's
+branch and merged into it, so Steps 2 and 3 land on `main` together as one deploy, PR #139
+(the ruling of 2026-11-08 on that pull request's F1; A1.6's erratum says why). Day one:
+DAY_ONE_COUNTS (filled at the close-out, from the deploy and its first two scheduled monitor
+ticks). Amendment 1's decisions amended the body in place on 2026-11-01, each amended
 sentence marked `Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states
 the rule the build is to meet, not what the code does until that build lands; for A10's rules
-(Q6 and Q7) it has landed, on Step 1's branch, and for Q1, Q2, Q9 and Q10 on Step 2's. Its
+(Q6 and Q7) it has landed, on Step 1's branch, for Q1, Q2, Q9 and Q10 on Step 2's, and for
+Q3, Q4, Q5, Q8 and Q11, and Q9 and Q10 on the subway, on Step 3's. Its
 citations are at `1d17aa0`, and the application code is `1d17aa0`'s: the branch's fork
 commit is `74bd2ee` (PR #131's merge), and the two merges between change no application
 code.
@@ -2739,6 +2744,31 @@ failed and unknown empty service in both surfaces."* Concretely, each of A03's s
 boards A, B and C reads differently from the fresh one on the popup, the panel and the spoken
 board, and the fresh one reads exactly as it does today; B (never decoded) and C (failed)
 differ in the served field, and, **Amended 2026-11-01 (Q11),** share the rider's word.
+
+**Amended 2026-11-08: Step 3 is built on `claude/a03-renderers-operator`**, stacked on Step 2's
+branch and merged into it before either reaches `main` (the ruling of 2026-11-08 on PR #139's
+F1, and the erratum below). The acceptance above holds as written, measured by the A03
+witness, which reads FIXED: A, content 620 s old behind a 0 s poll, reads "as of 10m ago" on
+the popup, the panel and the spoken board; B reads "2 and 5 trains not reporting" in place of
+"No trains", spoken as "Prospect Av, Subway. 2 and 5 trains not reporting."; C reads the same
+words, its served `fetched_at` telling it from B; and fresh empty service reads "No trains" and
+nothing else, pinned as it read before and run over Step 2's frontend to show it. One helper,
+`contributorState`, reads a block's `ok`, `fetchedAt` and `feedTimestamp` into A1.3's four
+states, and one rule, `boardLine`, gives every surface its line, its kind and its empty slot,
+with Q11's 90 s grace. The status line reads `{system} not reporting` once nothing of a failed
+system is drawn, read off what is drawn rather than off `retained_since`, which starts over
+after the cap (H4). `.compact` is removed (Q8: the 12 tests A1.4 counted moved, the waiver
+deleted, and P5b passes without it). `observations-qualified` reads the four states (Q5): a
+failed or never-decoded system serving no row is named past the 600 s band, from its last
+decode or from a first-attempt clock written once beside the blocks; every family hands the
+rule its block; NJ Transit's poll health is served as `/api/status` `njt_feeds` (H5); and NJ
+Transit is left out when it is not configured. That closes PR #138's F1, named at the band by
+two roads (the dropped rung, where LIRR has no entry, and Q5's failed arm), and Step 2's Q9
+quiet-early item. Of A1.4's three silence pins, `:464` moved and `:417` and `:439` held, as A1.4
+measured; the 2026-09-05 F10 witness did not move. By the rulings of 2026-11-08 Q9 and Q10
+reach the subway too, which closes the other two things Step 2 measured outside them: its total
+failure prunes both its indexes, and its board answers a total first-poll failure with a 200
+naming every expected group.
 
 **Steps 2 and 3 land together or in that order, never 3 alone.** The frontend half reads
 fields only the backend half serves, and the reverse order is safe: a backend that names a

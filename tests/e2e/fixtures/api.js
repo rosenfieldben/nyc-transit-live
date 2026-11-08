@@ -910,7 +910,33 @@ const njtArrivalsHoboken = () => ({
   systems: { njt: systemBlock(FROZEN_S) },
 });
 
+/* AMENDMENT 1's NEVER-DECODED BOARDS (Step 3): each family's board as the backend serves it
+   when that family's first poll failed (Q10, and the subway since the ruling of 2026-11-08), so
+   no row and its block reading fetched_at null, ok false. The rider reads "{system} not
+   reporting" in the slot "No trains" held (Q3); pins.spec.js P5f pins those popups, which is
+   what puts the new literals in a golden, and a11y.spec.js scans one open. Built from the
+   stock boards so the stations, and Times Sq's routes 1, 2 and 3, are the stock world's. */
+const NEVER_DECODED = { fetched_at: null, feed_timestamp: null, ok: false, retained_since: null, routes: null, positions: null };
+const darkBoard = (body, empty, systems) => ({
+  ...body,
+  ...empty,
+  fetched_at: null,
+  feed_timestamp: null,
+  served_at: FROZEN_S,
+  systems,
+});
+const darkBoards = () => ({
+  subway: darkBoard(subwayArrivals(), { directions: { Northbound: [], Southbound: [] } }, {
+    "1-7+S": { ...NEVER_DECODED, routes: [] },
+  }),
+  railroad: darkBoard(railroadArrivalsLirr(), { directions: {} }, { LIRR: NEVER_DECODED }),
+  path: darkBoard(pathArrivals(), { directions: {} }, { PATH: NEVER_DECODED }),
+  njt: darkBoard(njtArrivals(), { arrivals: [] }, { njt: NEVER_DECODED }),
+  ferry: darkBoard(ferryArrivals(), { routes: {} }, { ferry: NEVER_DECODED }),
+});
+
 module.exports = {
+  darkBoards,
   FROZEN_MS,
   FROZEN_S,
   envelope,

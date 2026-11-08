@@ -1800,7 +1800,9 @@ test("6.2 the door reads each block's content clock, and nothing it was not aske
   // surface until this function reads it, which is how 6.1's per-system content clock
   // reached none. Pinned as an exact key set, so a seventh name cannot slip in unread and
   // the sixth cannot slip out. 6.3 added the sixth, `positions`, the ladder's counts the
-  // status line reads (null on every one of these blocks, which carry none).
+  // status line reads (null on every one of these blocks, which carry none). Amendment 1
+  // added the seventh, `drawn`, how much of the system the map draws (Q11): a subway
+  // block's routes count, and null where the envelope cannot say.
   const systems = ingestSystems(
     {
       fetched_at: 1000,
@@ -1818,10 +1820,14 @@ test("6.2 the door reads each block's content clock, and nothing it was not aske
   for (const [name, system] of Object.entries(systems)) {
     assert.deepEqual(
       Object.keys(system).sort(),
-      ["feedTimestamp", "fetchedAt", "ok", "positions", "retainedSince", "routes"],
+      ["drawn", "feedTimestamp", "fetchedAt", "ok", "positions", "retainedSince", "routes"],
       name,
     );
   }
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(systems).map(([name, system]) => [name, system.drawn])),
+    { ACE: 1, G: 1, MNR: null, OLD: null, BAD: null },
+  );
   // The three states: a number, NULL as the backend's real answer (no content clock),
   // and UNDEFINED for a block that predates the clock or carries garbage in it.
   assert.equal(systems.ACE.feedTimestamp, 400);
@@ -4608,4 +4614,89 @@ test("MR1: the theme renders with storage empty, and an unrecognised value is no
   assert.equal(nextTheme("light"), "dark");
   assert.equal(nextTheme("dark"), "light");
   assert.equal(nextTheme(null), "dark"); // an absent attribute reads as light, so pressing darkens
+});
+
+// ---- Amendment 1, Step 3: the board's four states, and the status line past the cap ----
+
+const A1 = require("./helpers.js");
+
+test("A03 the route-to-group table is the backend's, entry for entry", () => {
+  // The mirror Q1 accepted only with something checking it: read straight out of
+  // backend/feeds/subway.py, so a row added on one side alone fails here.
+  const src = require("node:fs").readFileSync(`${__dirname}/../backend/feeds/subway.py`, "utf8");
+  const block = src.match(/^SUBWAY_ROUTE_GROUPS: dict\[str, str\] = \{([\s\S]*?)^\}/m);
+  assert.ok(block, "the backend's table is where this test reads it");
+  const backend = Object.fromEntries([...block[1].matchAll(/^\s*"([^"]+)": "([^"]+)",/gm)].map((m) => [m[1], m[2]]));
+  assert.equal(Object.keys(backend).length, 30);
+  assert.deepEqual({ ...A1.SUBWAY_ROUTE_GROUPS }, backend);
+});
+
+test("A03 one helper reads a contributor's state from ok, fetchedAt and feedTimestamp", () => {
+  const now = 10_000;
+  const state = (block) => A1.contributorState(block, now, now);
+  assert.deepEqual(state({ ok: false, fetchedAt: null, feedTimestamp: null }), { state: "never", age: null });
+  assert.deepEqual(state({ ok: false, fetchedAt: now - 200, feedTimestamp: now - 205 }), { state: "failed", age: 200 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 620 }), { state: "stale", age: 620 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now - 95, feedTimestamp: null }), { state: "stale", age: 95 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 5 }), { state: "fresh", age: 5 });
+  // A null clock with ok true (the substitute block) is not never decoded: fresh, ageless.
+  assert.deepEqual(state({ ok: true, fetchedAt: null, feedTimestamp: null }), { state: "fresh", age: null });
+  assert.deepEqual([A1.andList(["2"]), A1.andList(["2", "5"]), A1.andList(["A", "C", "E"])], ["2", "2 and 5", "A, C and E"]);
+});
+
+test("A03 the status line reads not reporting once nothing of a failed system is drawn, and keeps the age inside", () => {
+  // Q11. Inside the window BDFM's retained trains are still drawn (its block lists route B),
+  // so the age dates what is drawn; once the cap has taken them its routes are [] and the
+  // line says what a board says. The vocabulary pin above is the inside half, unmoved.
+  const now = 20_000;
+  const source = (bdfmRoutes) => ({
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          ACE: { fetched_at: now, feed_timestamp: now - 600, ok: true, routes: ["A"] },
+          BDFM: { fetched_at: now - 700, feed_timestamp: now - 705, ok: false, retained_since: null, routes: bdfmRoutes },
+          SIR: { fetched_at: null, ok: false, routes: [] },
+        },
+      },
+      "subways",
+    ),
+  });
+  assert.equal(
+    staleness(source(["B", "D"]), now),
+    "trains: BDFM group as of 12m ago; ACE group as of 10m ago; SIR group not reporting",
+  );
+  assert.equal(staleness(source([]), now), "trains: ACE group as of 10m ago; BDFM group, SIR group not reporting");
+  // A railroad's blocks list no routes, so its envelope's own trains say what is drawn.
+  const rail = (trains) => ({
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        data: trains,
+        systems: {
+          LIRR: { fetched_at: now - 700, feed_timestamp: now - 705, ok: false, retained_since: null },
+          MNR: { fetched_at: now, feed_timestamp: null, ok: true },
+        },
+      },
+      "railroads",
+    ),
+  });
+  assert.equal(staleness(rail([{ system: "LIRR" }, { system: "MNR" }]), now), "railroad: LIRR as of 12m ago; MNR position age unavailable");
+  assert.equal(staleness(rail([{ system: "MNR" }]), now), "railroad: LIRR not reporting; MNR position age unavailable");
+});
+
+test("A03 a board line that changes KIND is announced, one that counts up is not", () => {
+  // announcementWorthy's clause 4, widened: "as of 10m ago" becoming "not reporting" keeps a
+  // line on screen, and is news; the age growing is not.
+  const shaped = (systemLine, systemLineKind) => ({ systemLine, systemLineKind, slot: "No trains", buckets: [] });
+  assert.equal(A1.announcementWorthy(shaped("as of 10m ago", "aged"), shaped("as of 11m ago", "aged")), false);
+  assert.equal(A1.announcementWorthy(shaped("as of 10m ago", "aged"), shaped("as of 10m ago; R trains not reporting", "aged+dark")), true);
+  assert.equal(A1.announcementWorthy(shaped(null, ""), shaped(null, "slot")), true);
 });

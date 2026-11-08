@@ -1106,6 +1106,33 @@ test("P5c. the F01 ladder's popups, one per position state", async ({ page }) =>
   pin("popupText/f01", out);
 });
 
+/* P5f: AMENDMENT 1's DARK BOARDS, one popup per family (Step 3). Each family's board as the
+   backend serves it after a failed first poll: no row, and its block never decoded. The rider reads
+   "{system} not reporting" in the slot "No trains" held (Q3), the subway naming the routes its
+   dark group serves at the station ("1, 2 and 3 trains not reporting" at Times Sq). Pinned here so
+   the new words are in a golden rather than a waiver, which is what P5b reads. */
+const DARK_SURFACES = ["subway station", "lirr station", "path station", "njt station", "ferry dock"];
+
+test("P5f. Amendment 1's never-decoded boards, one popup per family", async ({ page }) => {
+  await boot(page, (c) => {
+    const dark = fx.darkBoards();
+    c.overrides.subwayArrivals = (route) => json(route, dark.subway);
+    c.overrides.railroadArrivals = (route) => json(route, dark.railroad);
+    c.overrides.pathArrivals = (route) => json(route, dark.path);
+    c.overrides.njtArrivals = (route) => json(route, dark.njt);
+    c.overrides.ferryArrivals = (route) => json(route, dark.ferry);
+  });
+  const world = await captureWorld(page, DARK_SURFACES);
+  pin("popupText/a03", world.surfaces);
+  // Outside pin(), so regeneration cannot swallow it: every board says its system is not
+  // reporting, and none says "No trains" or "No boats".
+  for (const which of DARK_SURFACES) {
+    expect(world.surfaces[which].spoken, `${which}: not reporting`).toMatch(/not reporting/);
+    expect(world.surfaces[which].spoken, `${which}: still claims empty service`).not.toMatch(/No (trains|boats)/);
+  }
+  expect(world.surfaces["subway station"].spoken).toMatch(/1, 2 and 3 trains not reporting/);
+});
+
 /* THE COVERAGE TEST, and it is the hardest claim in the stage: that every rider-visible
    string in a popup is pinned.
 

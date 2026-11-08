@@ -1,8 +1,8 @@
 # Dev/test dependencies — not installed on Railway (root requirements.txt
-# references only requirements.lock). Chains to the lock so tests run against
+# references only requirements-lock.txt). Chains to the lock so tests run against
 # the exact versions production deploys; dev-only extras live below and must
 # never leak into the lock.
--r requirements.lock
+-r requirements-lock.txt
 # Pinned like ruff and mypy below: `pytest>=8` took 9.2.0 when it was published on
 # 2026-10-27, and its MonkeyPatch restore changed under this suite (it reads the old value
 # from __dict__, which app.state does not use). Move it on purpose, gates run under the new

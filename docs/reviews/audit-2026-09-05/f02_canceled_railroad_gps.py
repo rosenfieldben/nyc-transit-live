@@ -749,7 +749,7 @@ pin_line = next(
 )
 lock_line = next(
     line.strip()
-    for line in (ROOT / "backend" / "requirements.lock").read_text().splitlines()
+    for line in (ROOT / "backend" / "requirements-lock.txt").read_text().splitlines()
     if line.startswith("gtfs-realtime-bindings")
 )
 gps_source = railroad_mod._decode_railroad_vehicles.__doc__ or ""

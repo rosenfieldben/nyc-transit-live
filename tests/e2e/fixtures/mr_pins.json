@@ -2107,6 +2107,35 @@
   }
  },
  "popupText": {
+  "a03": {
+   "subway station": {
+    "seen": "Subway 1 2 3 Times Sq-42 St Northbound 1, 2 and 3 trains not reporting Southbound 1, 2 and 3 trains not reporting",
+    "spoken": "Subway 1, 2, 3 Times Sq-42 St Northbound 1, 2 and 3 trains not reporting Southbound 1, 2 and 3 trains not reporting",
+    "labels": []
+   },
+   "lirr station": {
+    "seen": "LIRR L BAB Jamaica LIRR not reporting",
+    "spoken": "LIRR Babylon Branch Jamaica LIRR not reporting",
+    "labels": []
+   },
+   "path station": {
+    "seen": "PATH World Trade Center PATH not reporting",
+    "spoken": "PATH Newark - World Trade Center, Hoboken - 33rd World Trade Center PATH not reporting",
+    "labels": []
+   },
+   "njt station": {
+    "seen": "NJ Transit NJ NEC NJ MNBTN New York Penn Station NJ Transit not reporting",
+    "spoken": "NJ Transit Northeast Corridor, Montclair-Boonton Line New York Penn Station NJ Transit not reporting",
+    "labels": []
+   },
+   "ferry dock": {
+    "seen": "NYC Ferry ♿ Wall St/Pier 11 NYC Ferry not reporting",
+    "spoken": "NYC Ferry East River, South Brooklyn, SV ♿ Wall St/Pier 11 NYC Ferry not reporting",
+    "labels": [
+     "Wheelchair accessible"
+    ]
+   }
+  },
   "f01": {
    "aged": {
     "seen": "LIRR L 5 route 5 Train 514 Position live GPS, as of 5m ago",

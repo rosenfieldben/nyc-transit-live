@@ -1,8 +1,9 @@
 """Q10 of the freshness contract's Amendment 1: a board answers a failed first poll with
 its block, never with the upstream's error text.
 
-A single-system board (PATH, NJ Transit, the ferry), and a railroad board with both
-railroads failing, answered a failed FIRST poll with HTTP 502 and `{"detail": ...}`, the
+A single-system board (PATH, NJ Transit, the ferry), a railroad board with both
+railroads failing, and (by the ruling of 2026-11-08) a subway board whose every group
+failed, answered a failed FIRST poll with HTTP 502 and `{"detail": ...}`, the
 upstream exception's own text with only its URLs scrubbed, and the popup and the panel
 printed it and the panel spoke it (H6 on the 2026-10-12 record's live list, measured with a
 stub whose reason phrase and body each carried a marker: the reason phrase reached the rider
@@ -54,6 +55,7 @@ NEVER_DECODED = {
 # rendered half can call the board the way its loader does), and which marker its 502 used
 # to hand the rider (H6).
 FAMILIES = {
+    "subway": ("subways", "/api/subway-arrivals/127", "/api/subways", REASON),
     "path": ("path", "/api/path-arrivals/26734", "/api/path", REASON),
     "ferry": ("ferry", "/api/ferry-arrivals/18", "/api/ferry", REASON),
     "njt": ("njt", "/api/njt-arrivals/109", "/api/njt-trains", BODY),
@@ -117,9 +119,9 @@ def fresh(monkeypatch):
         "railroad_positions": {},
         "railroad_feed_health": None,
         "subway_static_status": "ready",
-        "subway_stops": {"101N": {"name": "Van Cortlandt Park-242 St", "lat": 0, "lon": 0}},
-        "subway_stations": {"101": {"name": "Van Cortlandt Park-242 St", "lat": 0, "lon": 0}},
-        "subway_station_routes": {"101": ["1"]},
+        "subway_stops": {"127N": {"name": "Times Sq-42 St", "lat": 0, "lon": 0}},
+        "subway_stations": {"127": {"name": "Times Sq-42 St", "lat": 0, "lon": 0}},
+        "subway_station_routes": {"127": ["1", "2", "3"]},
         "subway_arrivals": {},
         "subway_arrivals_by_system": {},
         "subway_positions": {},
@@ -146,6 +148,7 @@ async def _first_failure() -> dict[str, dict]:
     """Each family's first poll, failing; then each board, its vehicle envelope and the
     operator's copy of the failure, as served."""
     upstream = _H6Upstream()
+    await pollers._refresh_subways(app_module.app, upstream)
     await pollers._refresh_path(app_module.app, upstream)
     await pollers._refresh_ferry(app_module.app, upstream)
     await pollers._refresh_njt(app_module.app, upstream)
@@ -177,7 +180,11 @@ async def test_every_board_answers_a_failed_first_poll_with_its_never_decoded_bl
             None,
             NOW,
         ), family
-        assert list(board["systems"].values()) == [NEVER_DECODED], family
+        assert list(board["systems"].values()) == [
+            {**NEVER_DECODED, "routes": []} if family == "subway" else NEVER_DECODED
+        ], family
+    assert set(bodies["subway"]["systems"]) == {"1-7+S"}
+    assert bodies["subway"]["directions"] == {"Northbound": [], "Southbound": []}
     assert set(bodies["path"]["systems"]) == {"PATH"}
     assert set(bodies["ferry"]["systems"]) == {"ferry"}
     assert set(bodies["njt"]["systems"]) == {"njt"}
@@ -188,7 +195,7 @@ async def test_every_board_answers_a_failed_first_poll_with_its_never_decoded_bl
 
 async def test_the_upstreams_text_stays_on_the_operators_surface(fresh):
     """H6, split the way Q10 splits it. Each failure's detail still carries the marker H6
-    measured (the reason phrase on PATH, the ferry and the railroads, the body on NJ
+    measured (the reason phrase on the subway, PATH, the ferry and the railroads, the body on NJ
     Transit) on /api/status's last_error and on the vehicle envelope's 502, and neither
     marker is anywhere in a board. The served boards and the operator's details are the
     committed fixture frontend/boards.test.js renders: the rider half, rendered."""
@@ -266,6 +273,25 @@ async def test_an_undecodable_first_poll_writes_the_same_block(fresh, monkeypatc
     assert response.json()["systems"] == {system: NEVER_DECODED}
 
 
+async def test_a_deadline_on_the_subways_first_poll_names_its_expected_groups(fresh, monkeypatch):
+    """The subway through the cycle's degrader: a first poll killed by the deadline writes a
+    never-decoded block for every group, with the subway's route coverage ([]), so Times Sq's
+    board answers 200 naming 1-7+S, the group its routes 1, 2 and 3 expect."""
+    entry = app_module.app.state.feed_cache["subways"]
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+
+    async def wedged():
+        await pollers.asyncio.Event().wait()
+
+    await pollers._bounded_refresh(
+        entry, wedged(), pollers._feed_degrader(app_module.app, "subways", entry)
+    )
+    assert sorted(entry["systems"]) == sorted(pollers.SUBWAY_FEED_URLS)
+    response = await _get("/api/subway-arrivals/127")
+    assert response.status_code == 200
+    assert response.json()["systems"] == {"1-7+S": {**NEVER_DECODED, "routes": []}}
+
+
 async def test_a_deadline_on_the_first_poll_writes_the_same_block(fresh, monkeypatch):
     """A first poll killed by the refresh deadline never reaches the refresher's own arms;
     the cycle's degrader writes the never-decoded block, so the board answers 200 too."""
@@ -325,12 +351,9 @@ async def test_path_and_the_ferry_carry_their_block_on_every_answer(fresh, monke
     assert (await _get("/api/ferry-arrivals/18")).json()["systems"] == {"ferry": failed}
 
 
-async def test_the_subway_and_one_railroad_down_are_not_changed(fresh, monkeypatch):
-    """Q10 named the single-system boards and a railroad board with both railroads failing.
-    LIRR failing on the first poll beside a healthy Metro-North already answered 200 with
-    LIRR's never-decoded block, and still does. The subway's total first-poll failure
-    still answers its recorded 502, carrying the upstream's text: raised in this branch's
-    pull request for a ruling, not changed here."""
+async def test_one_railroad_down_is_unchanged(fresh, monkeypatch):
+    """LIRR failing on the first poll beside a healthy Metro-North already answered 200 with
+    LIRR's never-decoded block before Q10, and still does."""
 
     async def mnr_up(client, stops):
         return [], {"MNR": {}}, None, ["LIRR"], {"MNR": None}, {}
@@ -341,9 +364,3 @@ async def test_the_subway_and_one_railroad_down_are_not_changed(fresh, monkeypat
     assert response.status_code == 200
     assert response.json()["systems"]["LIRR"]["fetched_at"] is None
     assert response.json()["systems"]["LIRR"]["ok"] is False
-
-    await pollers._refresh_subways(app_module.app, _H6Upstream())
-    response = await _get("/api/subway-arrivals/101")
-    assert response.status_code == 502
-    assert REASON in response.json()["detail"]
-    assert app_module.app.state.feed_cache["subways"].get("systems") is None

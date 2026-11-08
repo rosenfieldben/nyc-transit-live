@@ -4941,19 +4941,37 @@ async def test_q7_a_metro_north_failure_beside_a_headerless_lirr_keeps_nothing(r
 async def test_q7_lirr_down_after_a_headerless_success_has_no_clock_to_keep(railroad_poll):
     """WHAT Q7 KEEPS IS THE ENVELOPE'S LAST CLOCK, and after a headerless LIRR success that
     is null. So an LIRR outage that follows one, Metro-North decoding, ages nothing:
-    feed_age_s stays unknown and /healthz stays clean, here at 100 s and 300 s into the
-    outage. On the committed capture the first code to name it is observations-qualified,
-    600 s into the outage, and never feed-content-stale (the adversarial round's F1,
-    measured). Pinned as decided, not as endorsed: the 2026-10-12 record's live list
-    carries it for a ruling. Before Q7 the same sequence kept 900 and read
-    feed-content-stale, but only because it kept 900 through the headerless success as
-    well, which is the A10 defect."""
+    feed_age_s stays unknown and /healthz never reads feed-content-stale (PR #138's
+    adversarial round, its F1, measured on the committed capture). Before Q7 the same
+    sequence kept 900 and read feed-content-stale, but only because it kept 900 through
+    the headerless success as well, which is the A10 defect.
+
+    RULED 2026-11-07 (accept, to close with Amendment 1's Q5) AND CLOSED BY Q5: the outage
+    is named by observations-qualified at the 600 s band from LIRR's last decode (1000),
+    quiet at 1580 and named from 1600 on. TWO ROADS REACH IT THERE, measured: LIRR's
+    generation runs no train, so LIRR has no entry in the index, and the dropped rung
+    (_was_dropped, `>=` the cap) names a failing system with no entry from 1600, as it did
+    before Q5, which is the "600 s in" the ruling cited; Q5's failed arm
+    (_dark_past_the_operator_band, `>` the band) names it from 1620 off the block's `ok`.
+    Removing either alone leaves this world named; the arm Q5 alone carries is pinned
+    where the dropped rung cannot reach, test_q9_departed_rows' PATH outage after its last
+    kept row departs."""
     dated = await railroad_poll(900.0, _rail_generation(900), _rail_generation(880))
     assert dated == (900.0, 900.0, 0.0, _BOTH_UP, [])
     headerless = await railroad_poll(1000.0, _rail_generation(None), _rail_generation(880))
     assert headerless == (1000.0, None, None, _BOTH_UP, [])
-    outage = [await railroad_poll(at, 503, _rail_generation(880)) for at in (1100.0, 1300.0)]
-    assert outage == [(1100.0, None, None, _LIRR_DOWN, []), (1300.0, None, None, _LIRR_DOWN, [])]
+    outage = [
+        await railroad_poll(at, 503, _rail_generation(880))
+        for at in (1100.0, 1300.0, 1580.0, 1600.0, 1620.0, 1700.0)
+    ]
+    assert outage == [
+        (1100.0, None, None, _LIRR_DOWN, []),
+        (1300.0, None, None, _LIRR_DOWN, []),
+        (1580.0, None, None, _LIRR_DOWN, []),
+        (1600.0, None, None, _LIRR_DOWN, ["observations-qualified"]),
+        (1620.0, None, None, _LIRR_DOWN, ["observations-qualified"]),
+        (1700.0, None, None, _LIRR_DOWN, ["observations-qualified"]),
+    ]
 
 
 async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):

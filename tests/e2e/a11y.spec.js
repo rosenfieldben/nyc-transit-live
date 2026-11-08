@@ -68,8 +68,14 @@ const agencyAlert = (n) => ({
 // analyze() never resolves and the spec dies on the test timeout rather than on a
 // violation. setFixedTime pins Date.now (which keeps the app's skew calibration at zero
 // and its ages deterministic) while leaving timers running.
-async function open(page, { alerts = 0, stationAlerts = false, staleRailroad = false } = {}) {
+async function open(page, { alerts = 0, stationAlerts = false, staleRailroad = false, darkBoards = false } = {}) {
   const ctx = await installMocks(page);
+  // Amendment 1's never-decoded boards (fixtures.darkBoards): every station board in the
+  // state the backend serves after a failed first poll, so its popup reads "not reporting".
+  if (darkBoards) {
+    const dark = fx.darkBoards();
+    ctx.overrides.subwayArrivals = (route) => json(route, dark.subway);
+  }
   // Metro-North's own poll aged six minutes: enough to raise the status line and dim its
   // markers, and nothing else about the page changes.
   if (staleRailroad) {
@@ -724,6 +730,33 @@ const STATES = [
     // popup rule reaches for a token.
     themes: ["light", "dark"],
   },
+  /* AMENDMENT 1, STEP 3: A NEVER-DECODED BOARD'S POPUP, at every width and in both themes, as the
+     cross-link popup is scanned. The slot "No trains" held now reads "1, 2 and 3 trains not
+     reporting" at Times Sq, new text in the popup's empty-board notice, so its contrast and its
+     reach are measured where a rider reads it. The state proves the words are on screen before
+     the scan, so it cannot quietly scan an ordinary board. */
+  {
+    key: "popup open on a never-decoded board",
+    alerts: 0,
+    darkBoards: true,
+    viewports: [DESKTOP, PHONE, NARROW],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      await page.evaluate(() => {
+        const row = stationRegistry.find((r) => r.key === "subway|127");
+        if (!row) throw new Error("the fixture no longer has Times Sq in the station registry");
+        row.marker.openPopup();
+      });
+      await expect(page.locator(".leaflet-popup-content .arr-none").first()).toHaveText(
+        "1, 2 and 3 trains not reporting",
+      );
+      await expectState(page, ["one popup open", "popup finished opening"], "the gate's dark-board state");
+    },
+    targets: ["leaflet-popup", "arr-none"],
+    themes: ["light", "dark"],
+  },
   /* FOLLOW-UP 1: THE BUS BAND, SCANNED FROM BOTH SIDES AND AT THE DOOR. Below City zoom every bus
      marker is display:none and also aria-hidden with its pointer-events off; at City all of that
      comes back. Three states, each at every width this suite uses and in both themes: the LANDING,
@@ -922,6 +955,7 @@ for (const state of STATES) {
           alerts: state.alerts,
           stationAlerts: state.stationAlerts,
           staleRailroad: state.staleRailroad,
+          darkBoards: state.darkBoards,
         });
         if (theme !== "light") await setTheme(page, theme);
         await state.reach(page);

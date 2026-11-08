@@ -1106,6 +1106,33 @@ test("P5c. the F01 ladder's popups, one per position state", async ({ page }) =>
   pin("popupText/f01", out);
 });
 
+/* P5f: AMENDMENT 1's DARK BOARDS, one popup per family (Step 3). Each family's board as the
+   backend serves it after a failed first poll: no row, and its block never decoded. The rider reads
+   "{system} not reporting" in the slot "No trains" held (Q3), the subway naming the routes its
+   dark group serves at the station ("1, 2 and 3 trains not reporting" at Times Sq). Pinned here so
+   the new words are in a golden rather than a waiver, which is what P5b reads. */
+const DARK_SURFACES = ["subway station", "lirr station", "path station", "njt station", "ferry dock"];
+
+test("P5f. Amendment 1's never-decoded boards, one popup per family", async ({ page }) => {
+  await boot(page, (c) => {
+    const dark = fx.darkBoards();
+    c.overrides.subwayArrivals = (route) => json(route, dark.subway);
+    c.overrides.railroadArrivals = (route) => json(route, dark.railroad);
+    c.overrides.pathArrivals = (route) => json(route, dark.path);
+    c.overrides.njtArrivals = (route) => json(route, dark.njt);
+    c.overrides.ferryArrivals = (route) => json(route, dark.ferry);
+  });
+  const world = await captureWorld(page, DARK_SURFACES);
+  pin("popupText/a03", world.surfaces);
+  // Outside pin(), so regeneration cannot swallow it: every board says its system is not
+  // reporting, and none says "No trains" or "No boats".
+  for (const which of DARK_SURFACES) {
+    expect(world.surfaces[which].spoken, `${which}: not reporting`).toMatch(/not reporting/);
+    expect(world.surfaces[which].spoken, `${which}: still claims empty service`).not.toMatch(/No (trains|boats)/);
+  }
+  expect(world.surfaces["subway station"].spoken).toMatch(/1, 2 and 3 trains not reporting/);
+});
+
 /* THE COVERAGE TEST, and it is the hardest claim in the stage: that every rider-visible
    string in a popup is pinned.
 
@@ -1131,19 +1158,6 @@ const NOT_RIDER_TEXT = {
   "scheduled position, no GPS":
     "positionQualifier's SPOKEN form, which reaches a marker's accessible name (positionClause) " +
     "and never a popup. a11y's name specs are its witness, not a popup pin",
-  /* MR5, ruling Q1. positionQualifier's COMPACT form, which after Q1 has no reader at all: the
-     railroad popup was its only one, and it now renders `.words` through positionWords like
-     every other popup. So no rider reads this string on any surface, which is why it is here rather
-     than in UNREACHED_STATES: that map is for text a rider WOULD read in a state no world reaches,
-     and there is no such state left for this one.
-     THE FIELD IS NOT REMOVED AND THAT IS DELIBERATE. `.compact` is one of the three forms section
-     3.2 of the freshness contract defines, positions.test.js holds the difference between it and
-     `.words`, and deleting a contract form is an amendment to that contract rather than a stage's
-     tidying. Recorded here so the next stage finds it named rather than guesses. */
-  "scheduled (no GPS)":
-    "positionQualifier's COMPACT form. After MR5's ruling Q1 it has no reader: the railroad popup " +
-    "was the only surface that rendered it and now takes .words through positionWords. The " +
-    "contract still defines the form and positions.test.js still pins it; no popup prints it",
   /* MR5: A CLASS NAME THAT READS AS PROSE, which is the one shape the candidate filter cannot tell
      from rider text. popupArrRowsHtml writes `class="n now"` on the countdown cell of a row that
      reads "now", and two words with a space in them is exactly what the filter looks for.

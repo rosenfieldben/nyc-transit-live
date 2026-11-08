@@ -25,9 +25,11 @@ import feeds
 from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, OPERATOR_STALE_AFTER_S
 from routes import status as status_routes
 from routes.status import (
+    _dark_past_the_operator_band,
     _served_arrival_systems,
     _ServedSystem,
     _systems_serving_nothing_current,
+    _was_dropped,
 )
 
 FIX = Path(__file__).parent / "fixtures"
@@ -414,18 +416,28 @@ def test_a_dropped_system_fires_on_the_cap_poll_and_on_the_poll_after():
 # ---------------------------------------------------------------------------
 
 
-def test_a_system_that_never_decoded_has_dropped_nothing():
+def test_a_system_that_never_decoded_has_dropped_nothing_and_is_named_from_its_first_attempt():
     """ok False on a block with no decode behind it: a group down since this process
     started. It serves nothing, but nothing was taken away, and fetched_at is what keeps
-    it out of the dropped rung, HOWEVER LONG it fails. That is the blind spot the
-    contract monitor's note for this code names: after a deploy, a group that was
-    already failing is invisible here until it decodes."""
+    it out of the dropped rung, HOWEVER LONG it fails. THAT WAS THE FIRST KNOWN BLIND SPOT,
+    and this test pinned it whole until Amendment 1's Q5: after a deploy, a group already
+    failing was invisible here until it decoded. Q5 names it from the block's `ok` once
+    the process first tried its family's poll more than the operator band ago
+    (pollers._note_first_attempt writes that clock into the entry beside the blocks).
+    Measured: the old assertions still held under Q5, because this state carries no such
+    clock, which is the one world where the group stays quiet: a family never tried."""
     state = _state(
         feed_cache={"subways": {"systems": {"SIR": _block(ok=False, fetched_at=None)}}},
         subway_arrivals_by_system={},
     )
     assert _serving_nothing(state) == []
     assert _serving_nothing(state, now=NOW + 10 * FEED_RETENTION_MAX_S) == []
+    state.feed_cache["subways"]["first_attempt_at"] = NOW - 600.0
+    sir = _served_arrival_systems(state)["subway:SIR"]
+    assert _was_dropped(sir, NOW + 10 * FEED_RETENTION_MAX_S) is False
+    assert _serving_nothing(state) == []  # 600 s: on the band, strict `>`
+    assert _serving_nothing(state, now=NOW + 1.0) == ["subway:SIR"]
+    assert _serving_nothing(state, now=NOW + 10 * FEED_RETENTION_MAX_S) == ["subway:SIR"]
 
 
 def test_a_healthy_group_with_nothing_running_is_quiet():
@@ -461,7 +473,7 @@ def test_a_failing_group_inside_its_window_with_nothing_to_carry_is_quiet():
     assert _serving_nothing(state, now=last_decode + FEED_RETENTION_MAX_S) == ["subway:SIR"]
 
 
-def test_a_total_outage_leaves_an_empty_entry_undropped():
+def test_a_total_outage_leaves_an_empty_entry_undropped_and_named_past_the_band():
     """THE CASE THAT SHAPED _was_dropped. A total outage returns before any merge, so
     _mark_all_systems_failed leaves every block ok False with retained_since None, the
     very pair the cap leaves, while the index keeps every group's entry. A group whose
@@ -469,13 +481,24 @@ def test_a_total_outage_leaves_an_empty_entry_undropped():
     reproduction's world (eight groups, empty arrival entries, all failed), and a rule
     that read the block alone reported all eight as dropped. The second half is the
     same block over NO entry, a group failing past the cap that the merge has emptied,
-    and does count."""
+    and does count.
+
+    MOVED BY AMENDMENT 1's Q5, the one of this file's three silence pins that failed under
+    it (A1.4 measured the same): the empty entry is still not DROPPED, but a group failing
+    with nothing to show is named once its last decode is more than the operator band old,
+    and here it is 720 s old. Inside the band it is quiet, which is the F10 world as its
+    witness drives it (its subway poll 120 s old), and that witness does not move."""
     last_decode = NOW - FEED_RETENTION_MAX_S - 120.0
     state = _state(
         feed_cache={"subways": {"systems": {"SIR": _block(ok=False, fetched_at=last_decode)}}},
         subway_arrivals_by_system={"SIR": {}},
     )
+    sir = _served_arrival_systems(state)["subway:SIR"]
+    assert _was_dropped(sir, NOW) is False
+    assert _serving_nothing(state) == ["subway:SIR"]
+    state.feed_cache["subways"]["systems"]["SIR"]["fetched_at"] = NOW - 120.0
     assert _serving_nothing(state) == []
+    state.feed_cache["subways"]["systems"]["SIR"]["fetched_at"] = last_decode
     state.subway_arrivals_by_system = {}
     assert _serving_nothing(state) == ["subway:SIR"]
 
@@ -484,7 +507,10 @@ def test_a_single_failed_njt_poll_is_quiet_with_or_without_rows():
     """NJ Transit keeps last-known rows on a failed poll and never retains, so its
     block's ok False with retained_since None means one failed poll there, not a cap
     that fired. Fresh rows keep it quiet; and on an empty night the same block must not
-    read as dropped observations, which is why the rule is handed no NJ Transit block."""
+    read as dropped observations. Before Amendment 1's Q5 the rule was handed no NJ
+    Transit block for that reason; since Q5 it is, and its index is handed over as a map,
+    never None, so the dropped rung cannot read it, and the four states keep a failure
+    20 s old quiet."""
     state = _state(
         feed_cache={"njt": {"systems": {"njt": _block(ok=False, fetched_at=NOW - 20.0)}}},
         njt_arrivals={"105": [_row(observed_at=NOW - 25.0)]},
@@ -492,6 +518,126 @@ def test_a_single_failed_njt_poll_is_quiet_with_or_without_rows():
     assert _serving_nothing(state) == []
     state.njt_arrivals = {}
     assert _serving_nothing(state) == []
+
+
+# ---------------------------------------------------------------------------
+# The four states (Amendment 1's Q5)
+# ---------------------------------------------------------------------------
+
+# Each family as its index and its block name it, and the app.state index its rows live in.
+_FAMILIES = {
+    "subway:ACE": ("subways", "ACE", "subway_arrivals_by_system", True),
+    "railroad:LIRR": ("railroads", "LIRR", "railroad_arrivals", True),
+    "path": ("path", "PATH", "path_arrivals", False),
+    "ferry": ("ferry", "ferry", "ferry_arrivals", False),
+    "njt": ("njt", "njt", "njt_arrivals", False),
+}
+
+
+def _family_state(name, block, *, first_attempt=None, rows=None):
+    """One family in one state: its block, its first-attempt clock, and its rows (an empty
+    entry by default; a keyed index keeps the system's key, a flat one is empty)."""
+    entry_name, system, index, keyed = _FAMILIES[name]
+    entry = {"systems": {system: block}}
+    if first_attempt is not None:
+        entry["first_attempt_at"] = first_attempt
+    served = rows if rows is not None else {}
+    return _state(
+        feed_cache={entry_name: entry},
+        **{index: ({system: served} if keyed else served)},
+        njt_static_status="ready",
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_FAMILIES))
+def test_fresh_and_empty_says_nothing_on_every_family(name):
+    """An empty feed decoded now, or decoded long ago with an ok block (an overnight
+    ferry, a group with nothing running): nothing to age and nothing failing."""
+    assert _serving_nothing(_family_state(name, _block())) == []
+    stale_ok = _block(fetched_at=NOW - 4 * OPERATOR_STALE_AFTER_S)
+    assert _serving_nothing(_family_state(name, stale_ok, first_attempt=NOW - 9_000.0)) == []
+
+
+@pytest.mark.parametrize("name", sorted(_FAMILIES))
+def test_failed_with_nothing_to_show_is_named_past_the_band_on_every_family(name):
+    """FAILED: ok False, last decode 600 s ago is on the band (strict `>`) and quiet, 601 s
+    is past it and named. The first-attempt clock has no say once a system has decoded."""
+    on_the_band = _block(ok=False, fetched_at=NOW - 600.0)
+    assert _serving_nothing(_family_state(name, on_the_band, first_attempt=NOW - 9_000.0)) == []
+    past = _block(ok=False, fetched_at=NOW - 601.0)
+    assert _serving_nothing(_family_state(name, past, first_attempt=NOW - 1.0)) == [name]
+
+
+@pytest.mark.parametrize("name", sorted(_FAMILIES))
+def test_never_decoded_is_named_from_the_first_attempt_on_every_family(name):
+    """NEVER DECODED: ok False with no fetched_at, aged from the process's first attempt at
+    its family's poll; never from retained_since, which starts over after the cap (H4): a
+    block whose window opened a moment ago does not quiet a system dark for 601 s."""
+    never = _block(ok=False, fetched_at=None, retained_since=NOW - 1.0)
+    assert _serving_nothing(_family_state(name, never, first_attempt=NOW - 600.0)) == []
+    assert _serving_nothing(_family_state(name, never, first_attempt=NOW - 601.0)) == [name]
+    assert _serving_nothing(_family_state(name, never)) == []
+
+
+@pytest.mark.parametrize("name", sorted(_FAMILIES))
+def test_a_system_with_rows_is_judged_by_its_rows_alone(name):
+    """STALE is the row rule: a failing system still serving a row inside the band is not
+    named from its block, however long ago it last decoded, and one whose every row is past
+    the band is named whatever its block says."""
+    old = _block(ok=False, fetched_at=NOW - 9_000.0)
+    rows = _index(_row()) if _FAMILIES[name][3] else {"105": [_row()]}
+    assert _serving_nothing(_family_state(name, old, rows=rows)) == []
+    past = _row(observed_at=PAST)
+    aged = _index(past) if _FAMILIES[name][3] else {"105": [past]}
+    assert _serving_nothing(_family_state(name, _block(), rows=aged)) == [name]
+
+
+def test_every_family_hands_the_rule_its_block_and_its_first_attempt():
+    """The rule's input since Q5: PATH, the ferry and NJ Transit pass their block, as the
+    subway groups and the railroads did, and every system carries its family's clock from
+    the entry beside its blocks. The flat indexes are handed over as maps, never None."""
+    names = ("ACE", "LIRR", "PATH", "ferry", "njt")
+    blocks = {name: _block(ok=False, fetched_at=None) for name in names}
+    state = _state(
+        feed_cache={
+            "subways": {"systems": {"ACE": blocks["ACE"]}, "first_attempt_at": 1.0},
+            "railroads": {"systems": {"LIRR": blocks["LIRR"]}, "first_attempt_at": 2.0},
+            "path": {"systems": {"PATH": blocks["PATH"]}, "first_attempt_at": 3.0},
+            "ferry": {"systems": {"ferry": blocks["ferry"]}, "first_attempt_at": 4.0},
+            "njt": {"systems": {"njt": blocks["njt"]}, "first_attempt_at": 5.0},
+        },
+        njt_static_status="ready",
+    )
+    systems = _served_arrival_systems(state)
+    assert {name: (s.block, s.first_attempt, s.rows) for name, s in systems.items()} == {
+        "subway:ACE": (blocks["ACE"], 1.0, None),
+        "railroad:LIRR": (blocks["LIRR"], 2.0, None),
+        "path": (blocks["PATH"], 3.0, {}),
+        "ferry": (blocks["ferry"], 4.0, {}),
+        "njt": (blocks["njt"], 5.0, {}),
+    }
+
+
+def test_a_family_that_is_not_configured_is_left_out():
+    """NJ Transit with no credentials never polls, which is a deployment's choice and not
+    an outage, so it is never named, whatever its block says: a block left from a healthy
+    start whose credentials were then removed (test_pollers_concurrency's case) failing
+    for hours, with a first attempt long ago, reads as nothing here."""
+    block = _block(ok=False, fetched_at=NOW - 9_000.0)
+    state = _family_state("njt", block, first_attempt=NOW - 9_000.0)
+    assert _serving_nothing(state) == ["njt"]
+    state.njt_static_status = "not-configured"
+    assert "njt" not in _served_arrival_systems(state)
+    assert _serving_nothing(state) == []
+
+
+def test_the_dark_rung_reads_no_retention_clock():
+    """M6's guard at the rule: _dark_past_the_operator_band takes no clock but fetched_at
+    and the first attempt, so a retained_since the cap started over (H4) changes nothing."""
+    for reopened in (None, NOW, NOW - 9_000.0):
+        block = _block(ok=False, fetched_at=None, retained_since=reopened)
+        never = _ServedSystem({}, True, block, NOW - 601.0)
+        assert _dark_past_the_operator_band(never, NOW) is True
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 # Root-level requirements so Railway's Python builder detects the app.
 # Deploys install the pinned lock; local dev uses backend/requirements.txt
-# (the friendly lower-bound file) per the README.
--r backend/requirements.lock
+# (the friendly lower-bound file) per the README. The lock's name ends in .txt
+# so Dependabot fetches it (its header says why).
+-r backend/requirements-lock.txt

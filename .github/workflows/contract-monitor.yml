@@ -69,10 +69,10 @@ jobs:
           # Matches the runtime pinned in nixpacks.toml and ci.yml, so the monitor
           # decodes with the same Python the deployment runs.
           python-version: "3.12"
-      # requirements.lock is the exact pinned runtime set Railway deploys, so the
+      # requirements-lock.txt is the exact pinned runtime set Railway deploys, so the
       # monitor exercises the same decoder library versions as production. No dev
       # deps: this job runs the script, not the test suite.
-      - run: pip install -r backend/requirements.lock
+      - run: pip install -r backend/requirements-lock.txt
       - name: Run contract monitor
         working-directory: backend
         env:

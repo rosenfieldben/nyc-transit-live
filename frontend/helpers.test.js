@@ -2832,7 +2832,7 @@ test("A2: every marker name is built from the fields its popup renders", () => {
 
   // Railroad: the popup's own head builder, and the position clause, which is the part
   // that tells a rider how much to trust the position. Since 6.3 it is the answer
-  // positionQualifier gives the popup's compact line, said aloud, handed to the builder
+  // positionQualifier gives the popup's position line, said aloud, handed to the builder
   // rather than guessed from stop_id.
   const at = { now: 1000, servedAt: 1000 };
   const gps = positionQualifier({ observed_at: 995, provenance: "reported" }, { ...at, system: "LIRR" });

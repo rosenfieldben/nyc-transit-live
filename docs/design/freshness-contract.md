@@ -641,7 +641,7 @@ today:
 | `live GPS` | `helpers.js:2358-2359` (`positionQualifier`) | a real reported position |
 | `scheduled position (no GPS)` | `helpers.js:2365` (`positionQualifier`'s `placed` answer) | a position the app placed from a prediction |
 | `scheduled position, no GPS` | `helpers.js:2367` (the same answer's `.spoken`) | the same fact in an accessible name |
-| `scheduled (no GPS)` | *no reader since MR5, see the note at the end* | the compact form, once the railroad popup's. **Amended 2026-11-01 (Amendment 1's Q8):** removed from the contract and the code in the build; until then the string still ships |
+| ~~`scheduled (no GPS)`~~ | *removed 2026-11-08; no reader since MR5, see the note at the end* | the compact form, once the railroad popup's. **Amended 2026-11-01 (Amendment 1's Q8):** removed from the contract and the code in the build. **Removed 2026-11-08** by Step 3 of that build: `positionQualifier` returns `words` and `spoken` only, and the string no longer ships |
 | `as of {age} ago` | `helpers.js:2211` (a row's qualifier), `:2237` (a board's line), `:2056-2057` (the status line); `As of {age} ago` at `:677` (the feed strip and a vehicle popup's footer) | how old the thing just named is |
 | `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded. **Amended 2026-11-01 (Amendment 1's Q11):** from the build also, on a board and on the status line past the cap, a failing system with nothing of it shown (the second table's added rows) |
 | `feed empty, showing last known` | `helpers.js:3486`, `:3492` | a bounded empty run |

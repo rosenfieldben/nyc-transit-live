@@ -14,9 +14,11 @@
 //
 // THE EXPECTATIONS ARE LITERAL STRINGS, section 3.2's vocabulary for a position as the
 // implementation memo's word table (D9) settles it, one case per row of that table, in
-// every form the helper returns: `words`, `compact` (the railroad popup's shorter form),
-// `spoken` (an accessible name's clause), and `age`, the age those words state.
-// Nothing here recomputes an answer from the helper it is checking.
+// every form the helper returns: `words`, `spoken` (an accessible name's clause), and
+// `age`, the age those words state. Nothing here recomputes an answer from the helper
+// it is checking. TWO FORMS SINCE THE FRESHNESS CONTRACT'S AMENDMENT 1 (Q8), which
+// removed the third, `compact`: every deepEqual below is also the proof it is gone, since
+// an answer carrying a key the expectation does not fails it.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -77,19 +79,17 @@ const row = (at, provenance) => ({ observed_at: at, provenance });
 const lirr = { now: NOW, servedAt: NOW, system: "LIRR", gated: true };
 const mnr = { now: NOW, servedAt: NOW, system: "MNR", gated: false };
 const q = (r, board = lirr) => positionQualifier(r, board);
-// An expected answer, spelled out: its compact and spoken forms are its words unless
-// given, and it states no age unless given.
-const said = (kind, words, { compact = words, spoken = words, age = null } = {}) => ({
+// An expected answer, spelled out: its spoken form is its words unless given, and it
+// states no age unless given.
+const said = (kind, words, { spoken = words, age = null } = {}) => ({
   kind,
   words,
-  compact,
   spoken,
   age,
 });
-// A placed row's three forms, which are the only ones that differ from each other.
+// A placed row's two forms, the one family where they differ.
 const placed = (suffix = "", age = null) =>
   said("placed", `scheduled position (no GPS)${suffix}`, {
-    compact: `scheduled (no GPS)${suffix}`,
     spoken: `scheduled position, no GPS${suffix}`,
     age,
   });
@@ -150,10 +150,10 @@ test("6.3 estimated: the new marker string, with its prediction's age once that 
   assert.deepEqual(q(row(null, "estimated"), mnr), said("estimated", "estimated from a prediction"));
 });
 
-test("6.3 placed: 'scheduled position (no GPS)', the railroad popup's 'scheduled (no GPS)', and the name's 'scheduled position, no GPS', aged alike", () => {
-  // D9 keeps the railroad popup's compact form, and every accessible name has shipped
-  // the comma form. All three come out of this same table, so no surface can word a
-  // placed train's age differently from every other surface.
+test("6.3 placed: 'scheduled position (no GPS)' and the name's 'scheduled position, no GPS', aged alike", () => {
+  // Every accessible name has shipped the comma form. Both come out of this same table,
+  // so no surface can word a placed train's age differently from every other surface.
+  // (D9's third, the railroad popup's "scheduled (no GPS)", went with Amendment 1's Q8.)
   assert.deepEqual(q(row(NOW - 4, "placed")), placed());
   // 887 s, the median age of the capture's timestamped trip updates.
   assert.deepEqual(q(row(NOW - 887, "placed")), placed(", as of 15m ago", 887));
@@ -697,7 +697,7 @@ test("6.3 every vehicle surface says its position from one answer: the popup's w
   const sched = q(row(NOW - 5, "placed"));
   const estimate = q(row(NOW - 4, "estimated"));
   // Railroad: the name ends with the spoken form for every position, "live GPS" included,
-  // as the popup's compact line always says it.
+  // as the railroad popup's own line said it until MR5: a name has no silence to mean anything with.
   assert.equal(
     railroadTrainName({ system: "LIRR", route_id: "10", train_num: "2751" }, "Babylon Branch", fresh),
     "LIRR Babylon Branch, train 2751, live GPS",
@@ -973,7 +973,7 @@ test("6.3 a no-times Metro-North placement is still a placement: the provenance 
   assert.equal(railroadHollow(train), true);
   assert.equal(drawnFromPrediction(train), true);
   assert.equal(railroadAtItsStation(train), true);
-  assert.equal(q(train, mnr).compact, "scheduled (no GPS)");
+  assert.equal(q(train, mnr).words, "scheduled position (no GPS)");
 });
 
 /* ===== MR5, ruling Q1: every popup's position row is positionWords' ======================
@@ -1027,10 +1027,11 @@ test("MR5 Q1: the two strings the unification changes, and the two it does not",
   const board = { now: 1000, servedAt: 1000, system: "LIRR" };
   const line = (row, b = board) => positionWords(positionQualifier(row, b));
 
-  // ONE: a placed train gains the contract's own word. `.compact` is what the railroad popup used
-  // to print and it still exists, so the difference is asserted rather than described.
+  // ONE: a placed train gains the contract's own word, where the railroad popup used to print
+  // `.compact`'s "scheduled (no GPS)". That form is gone since Amendment 1's Q8, and its absence is
+  // asserted rather than described.
   const placed = positionQualifier({ observed_at: 1000, provenance: "placed" }, board);
-  assert.equal(placed.compact, "scheduled (no GPS)");
+  assert.equal("compact" in placed, false, "Amendment 1's Q8 removed the compact form");
   assert.equal(placed.words, "scheduled position (no GPS)");
   assert.match(line({ observed_at: 1000, provenance: "placed" }), /scheduled position \(no GPS\)/);
 

@@ -2714,8 +2714,7 @@ function observationStaleAt(row) {
 //   reported, no clock, not gated      "live GPS" and nothing more: its system's status
 //                                      line says the rest (Metro-North)
 //   estimated                          "estimated from a prediction"
-//   placed                             "scheduled position (no GPS)"; compact form
-//                                      "scheduled (no GPS)"
+//   placed                             "scheduled position (no GPS)"
 //   retained                           "showing last known, as of {age} ago"
 //   anything else                      "age unknown": the `unknown` provenance, a row with
 //                                      none (an older backend), or a value no position
@@ -2736,19 +2735,21 @@ function observationStaleAt(row) {
 // `gated` reads it off UNDATED_SYSTEMS by `system`, and an unknown system is gated, the
 // pessimistic default boardFreshness takes.
 //
-// Returns {kind, words, compact, spoken, age}, the kind one of "", "aged", "unknown",
+// Returns {kind, words, spoken, age}, the kind one of "", "aged", "unknown",
 // "estimated", "placed" and "retained". As with arrivalQualifier, the kind is what the
 // row IS and holds still while its age counts on, so a live region that compares kinds
-// hears a train change state and never its clock tick. The three strings are ONE answer
-// in the three shapes a surface prints, all built here from the same pieces, so no
+// hears a train change state and never its clock tick. The two strings are ONE answer
+// in the two shapes a surface prints, both built here from the same pieces, so no
 // surface composes its own phrasing and none can disagree about an age:
 //   words    every popup's line (design 3.2's vocabulary)
-//   compact  the railroad popup's shorter form: "scheduled (no GPS)" for a placed row,
-//            which that popup has always said and memo D9 keeps; otherwise the words
 //   spoken   an accessible name's clause: "scheduled position, no GPS" for a placed row,
 //            the form every marker name has shipped with (a comma, no parentheses,
 //            because a screen reader reads a parenthesis as punctuation or as nothing);
 //            otherwise the words
+// There was a third, `compact` ("scheduled (no GPS)" for a placed row), the railroad
+// popup's until MR5 and read by nothing after it. The freshness contract's Amendment 1
+// removed it (Q8): an unread third spelling of one judgment is one a future surface can
+// pick up by accident, which is how MR3's N6 put two neutrals on one route.
 // `age` is the age those words STATE, or null when they state none (a fresh position,
 // an undated one, a row with no provenance): what a popup reads to decide whether its
 // feed's age line would only say the same thing twice (popupFreshHtml's suppression rule).
@@ -2760,10 +2761,9 @@ function positionQualifier(row, board) {
   const stale = staleAge(age);
   const aged = stale ? `, as of ${humanizeAge(age)} ago` : "";
   const undated = age == null && gated ? ", age unknown" : "";
-  const answer = (kind, words, { compact = words, spoken = words, stated = stale ? age : null } = {}) => ({
+  const answer = (kind, words, { spoken = words, stated = stale ? age : null } = {}) => ({
     kind,
     words,
-    compact,
     spoken,
     age: stated,
   });
@@ -2776,7 +2776,6 @@ function positionQualifier(row, board) {
   }
   if (r.provenance === "placed") {
     return answer("placed", `scheduled position (no GPS)${aged}${undated}`, {
-      compact: `scheduled (no GPS)${aged}${undated}`,
       spoken: `scheduled position, no GPS${aged}${undated}`,
     });
   }
@@ -3910,13 +3909,11 @@ function withheldFix(row, block, servedAt, now) {
    An AGED fix still speaks, which is the contract working rather than a compromise: the silence is
    only ever about a current one.
 
-   `.compact` STILL EXISTS AND NOW HAS NO READER, which is worth stating precisely rather than
-   softly. It is one of the three forms section 3.2 of the freshness contract defines, it still
-   differs from `.words` in exactly one family (`placed`), and positions.test.js still pins that
-   difference. But the railroad popup was its ONLY caller, so after this ruling nothing in the app
-   renders it. Deleting a form the contract defines is an amendment to that contract rather than a
-   stage's tidying, so it stays, and pins.spec.js P5b carries its string as a waiver naming exactly
-   this reason. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
+   `.compact` HAD NO READER AFTER THIS, AND IS GONE. The railroad popup was its ONLY caller, so
+   after this ruling nothing in the app rendered it. It stayed defined, pinned and waived in
+   pins.spec.js P5b until the freshness contract's Amendment 1 decided its Q8 (remove), because
+   deleting a form the contract defines is an amendment to that contract rather than a stage's
+   tidying. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
    rider-visible literal that no pin covered, on the commit that unified the call site.
 
    THE GUARD IS ON BOTH FIELDS. The ruling says an empty `.words` omits the row, and `positionQualifier`
@@ -3939,9 +3936,9 @@ function positionClause(position) {
    It rendered a vehicle popup's system age line and withheld itself where the position's words had
    already stated an age at least that old. popupFreshHtml keeps that rule exactly, keeps its
    reasoning (copied there rather than cited, so it cannot outlive this comment), and adds the two
-   states the line never had. It was the function's only caller in either direction: nothing in the
-   freshness contract names it, unlike positionQualifier's `.compact`, which is why this is deleted
-   where that is recorded and kept. */
+   states the line never had. It was the function's only caller in either direction, and nothing in
+   the freshness contract names it, so it was deleted here; positionQualifier's `.compact`, a form
+   the contract defined, waited for the contract's own amendment (Amendment 1, Q8). */
 
 // ONE WRITE PER RENDER, AS ONE STRING (memo D11). The page's live region is atomic and
 // polite, so two writes before a screen reader reads it are one sentence lost: the second
@@ -5799,7 +5796,7 @@ function railroadSystemLabel(system) {
 // that punctuation cannot do in speech (a screen reader reads it as noise, or as the
 // words "middle dot"). Same facts, spoken shape. The position clause is here for the
 // same reason it is in the popup: it tells a rider how much to trust the position they
-// are being told about. It is `position.spoken`, the popup's compact line said aloud,
+// are being told about. It is `position.spoken`, the popup's position line said aloud,
 // and unlike every other system's name it is said for EVERY position, "live GPS"
 // included, because the railroad popup has always said it. The next stop is said when
 // the row names one, exactly when the popup prints it: a train drawn from a prediction

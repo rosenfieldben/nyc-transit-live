@@ -1055,7 +1055,7 @@ current there, as it always has): "live GPS" on the
 railroad, "estimated from a prediction" for a train placed between two stops from a
 fresh prediction (LIRR's estimates, and NJ Transit's in-transit trains), and
 "scheduled position (no GPS)" for one placed at a stop (subway, PATH, NJ Transit and
-the railroad's placements, "scheduled (no GPS)" in the railroad popup). A railroad
+the railroad's placements). A railroad
 train the position ladder drew nothing for appears nowhere on the map and is counted
 instead. That count rides the status line rather than raising it: whenever the railroad
 line is already rendering for some other reason it gains a clause of its own

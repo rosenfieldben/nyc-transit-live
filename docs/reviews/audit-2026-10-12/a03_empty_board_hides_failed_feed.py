@@ -195,17 +195,18 @@ and below is disabled because the script reads the same failure off /api/status 
 The page runs under the node named by the NODE environment variable (run_all.sh's
 override), else the first node on PATH.
 
-RECORDED DISPOSITION: PARTLY (claude/a03-expected-contributors): the backend half fixed,
-the frontend half open. Exit 0 while both hold: the repaired half's nine regression checks
-and the open half's records; exit 1 with the failed checks named the moment either stops,
-including a read that is not served (HTTP 200), a page that does not boot, a request of
-the page's that the harness could not answer from the app, and an import that fails. A
-regression check that fails on its BEFORE value says the finding is back. Each check is
-tagged [backend], [frontend], [rider] or [world]. [rider] checks are end to end: the board
-the backend served, rendered by the page, so a repair of either half that reaches the
-rider moves them, while a [backend] or [frontend] check moves only with its own half.
-Step 3 (A03's frontend half) turns the [frontend] checks for A and B and the [rider]
-checks for the stale-content and never-decoded boards, and completes the flip to FIXED.
+RECORDED DISPOSITION: FIXED (claude/a03-renderers-operator, stacked on
+claude/a03-expected-contributors): the backend half by Step 2 of the freshness contract's
+Amendment 1, the frontend half by its Step 3. Exit 0 while every regression check holds:
+the backend half's nine, the four Step 3 turned (the [frontend] checks for A and B and the
+[rider] checks for the stale-content and never-decoded boards), and the one that tells B
+from C; exit 1 with the failed checks named the moment one stops, including a read that is
+not served (HTTP 200), a page that does not boot, a request of the page's that the harness
+could not answer from the app, and an import that fails. A regression check that fails on
+its BEFORE value says the finding is back. Each check is tagged [backend], [frontend],
+[rider] or [world]. [rider] checks are end to end: the board the backend served, rendered
+by the page, so a repair of either half that reaches the rider moves them, while a
+[backend] or [frontend] check moves only with its own half.
 """
 
 from __future__ import annotations
@@ -1400,8 +1401,9 @@ def main_script() -> None:
             before='identical on popup, panel and spoken: "No trains" and nothing else',
             back=rider_text(views[name]) == rider_text(served_fresh),
         )
-    # STILL THE DEFECT, Step 3's to turn: no renderer reads a block's `ok` or its content
-    # clock on an empty board.
+    # THE TWO RIDER CHECKS STEP 3 TURNED (Amendment 1's Q3, Q4 and Q11): the renderers read
+    # each expected contributor's `ok` and content clock on an empty board, so the stale
+    # board dates its content and the never-decoded one names its trains not reporting.
     for name, road in (
         (
             "A (stale content), as served",
@@ -1409,14 +1411,16 @@ def main_script() -> None:
         ),
         ("B (never decoded), as served", f"with {FAILED} never decoded"),
     ):
+        changed = moved(views[name], served_fresh)
         check(
-            rider_text(views[name]) == rider_text(served_fresh),
+            {"popup", "panel", "spoken"} <= set(changed),
             "rider",
-            f"{road}, both surfaces read exactly as genuinely fresh empty service: "
-            '"No trains" and nothing else',
-            f"differs on {moved(views[name], served_fresh)}"
-            if moved(views[name], served_fresh)
+            f"{road}, every surface reads differently from genuinely fresh empty service",
+            f"differs on {changed}: {extra_lines(views[name], served_fresh)}"
+            if changed
             else "identical on popup, panel and spoken",
+            before='identical on popup, panel and spoken: "No trains" and nothing else',
+            back=rider_text(views[name]) == rider_text(served_fresh),
         )
 
     rule("(d) FRONTEND: empty boards that DO carry the contributor, through the real page")
@@ -1466,17 +1470,38 @@ def main_script() -> None:
         ),
         ("B: never-decoded failed contributor", f"B ({FAILED} failing, never decoded)"),
     ):
+        changed = moved(views[name], fresh_view)
         check(
-            rider_text(views[name]) == rider_text(fresh_view),
+            {"popup", "panel", "spoken"} <= set(changed),
             "frontend",
-            f"{label} reads exactly as fresh empty service on the popup, the panel and the "
-            "spoken board: no warning",
-            f"differs on {moved(views[name], fresh_view)}: {extra_lines(views[name], fresh_view)}"
-            if moved(views[name], fresh_view)
+            f"{label} reads differently from fresh empty service on the popup, the panel and "
+            "the spoken board",
+            f"differs on {changed}: {extra_lines(views[name], fresh_view)}"
+            if changed
             else "identical on popup, panel and spoken",
+            before="identical on popup, panel and spoken: no warning",
+            back=rider_text(views[name]) == rider_text(fresh_view),
         )
     control = views["C: failed after decoding (control)"]
     control_age = age(built["C: failed after decoding (control)"][0])
+    # B AND C ARE TWO STATES WITH ONE WORD FOR THE RIDER (A1.3): never decoded and failed
+    # past the grace both read "{routes} trains not reporting", and the served field is what
+    # tells them apart, B's fetched_at null against C's last decode.
+    never_view = views["B: never-decoded failed contributor"]
+    b_served = built["B: never-decoded failed contributor"][0]["systems"][FAILED]
+    c_served = built["C: failed after decoding (control)"][0]["systems"][FAILED]
+    check(
+        b_served["fetched_at"] is None
+        and c_served["fetched_at"] is not None
+        and b_served["ok"] is False
+        and c_served["ok"] is False
+        and rider_text(never_view) == rider_text(control)
+        and rider_text(control) != rider_text(fresh_view),
+        "frontend",
+        "B (never decoded) and C (failed after decoding) differ in the served field, "
+        f"fetched_at null against a decode {control_age:.0f} s old, and share the rider's word",
+        f"both add {extra_lines(control, fresh_view)}",
+    )
     check(
         {"popup", "panel"} <= set(moved(control, fresh_view)),
         "frontend",
@@ -1527,21 +1552,27 @@ def main_script() -> None:
     print()
     if failures:
         raise Halt
+    a_words = extra_lines(views["A: stale content behind a current poll"], fresh_view)
+    b_words = extra_lines(never_view, fresh_view)
     print(
         "FIXED: the backend half (Step 2 of the freshness contract's Amendment 1, "
-        "claude/a03-expected-contributors). OPEN: the frontend half (its Step 3)."
+        "claude/a03-expected-contributors) and the frontend half (its Step 3, "
+        "claude/a03-renderers-operator)."
     )
     print(
-        "DISPOSITION: PARTLY (claude/a03-expected-contributors)  BACKEND HALF FIXED: with "
+        "DISPOSITION: FIXED (claude/a03-renderers-operator)  BEFORE: with "
         f"{FAILED} failing (HTTP 503) and {HEALTHY} and six other groups healthy, Prospect Av "
-        f"({STATION})'s board still names {FAILED}, failed, after its last retained prediction "
-        f"(T0{last_call - T0:+.0f} s) expired by the T0{after['at'] - T0:+.0f} s poll, its "
-        f"fetched_at {age(ab):.0f} s old (BEFORE: systems null, 0 s old), and at the cap "
-        f"(T0{cap_after['at'] - T0:+.0f} s); the stale-content and never-decoded boards name it "
-        "too, and none of the four is identical to fresh empty service's board. FRONTEND HALF "
-        f"OPEN: the real page renders an empty board with {content_age:.0f} s old content behind "
-        f"a {poll_age:.0f} s old poll, and one for a never-decoded failed contributor, exactly as "
-        'genuinely fresh empty service: "No trains" with no warning on the popup or the panel.'
+        f"({STATION})'s board dropped {FAILED} once its last retained prediction expired "
+        "(systems null, a current fetched_at), and the real page rendered that board, an "
+        f"empty board with {content_age:.0f} s old content behind a {poll_age:.0f} s old poll, "
+        "and one for a never-decoded failed contributor exactly as genuinely fresh empty "
+        'service: "No trains" with no warning on the popup, the panel or the spoken board. '
+        f"AFTER: the board names {FAILED}, failed, after the expiry "
+        f"(T0{after['at'] - T0:+.0f} s, fetched_at {age(ab):.0f} s old) and at the cap "
+        f"(T0{cap_after['at'] - T0:+.0f} s); the stale board reads {a_words}, the "
+        f"never-decoded board reads {b_words}, the failed board reads the same words as the "
+        "never-decoded one with its decode served, and fresh empty service still reads "
+        '"No trains" and nothing else.'
     )
 
 

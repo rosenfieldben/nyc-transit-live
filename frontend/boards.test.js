@@ -875,12 +875,13 @@ test("Q10 a failed first poll reaches the rider as a board, never as the upstrea
   );
   const markers = ["Q10-REASON-PHRASE-MARKER", "Q10-RESPONSE-BODY-MARKER"];
   const expected = {
+    subway: ["Times Sq-42 St (Subway)", "No trains"],
     path: ["World Trade Center (PATH)", "No trains"],
     ferry: ["Wall St/Pier 11 (Ferry)", "No boats"],
     njt: ["New York Penn Station (NJ Transit)", "No trains"],
     lirr: ["Jamaica (LIRR)", "No trains"],
   };
-  assert.deepEqual(Object.keys(served).sort(), ["ferry", "lirr", "njt", "path"]);
+  assert.deepEqual(Object.keys(served).sort(), ["ferry", "lirr", "njt", "path", "subway"]);
   for (const [family, [heading, words]] of Object.entries(expected)) {
     const { board, detail } = served[family];
     const station = heading.replace(/ \(.*\)$/, "");
@@ -895,8 +896,12 @@ test("Q10 a failed first poll reaches the rider as a board, never as the upstrea
     assert.equal(after.spoken, `${station}, ${label}. ${words}.`, family);
     assert.equal(after.panel[0], `h3 ${heading}`, family);
     assert.equal(after.panel.at(-1), `p ${words}.`, family);
+    // The subway's popup has a slot per direction; every other board, one.
+    const slot = `<div class="arr-none">${words}</div>\n`;
     assert.ok(
-      after.popup.endsWith(`<div class="pt"><span>${station}</span></div>\n<div class="arr-none">${words}</div>\n`),
+      family === "subway"
+        ? after.popup.endsWith(`${dir("Northbound")}${slot}${dir("Southbound")}${slot}`)
+        : after.popup.endsWith(`<div class="pt"><span>${station}</span></div>\n${slot}`),
       after.popup,
     );
     for (const surface of [after.popup, after.panel.join("\n"), after.spoken]) {

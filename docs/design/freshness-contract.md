@@ -2757,6 +2757,11 @@ never-decoded group already read as fresh empty service, is unchanged. The page 
 the vehicle envelopes still answer the recorded 502, and its detail, the upstream's text
 included, reaches the status line. Landing Steps 2 and 3 together closes that window, and the
 2026-10-12 record's live list carries it for a ruling.
+**ERRATUM, 2026-11-08:** the "reverse order is safe" sentence above did not hold for Q10, as the
+amended sentence after it measured, so Steps 2 and 3 landed together: by the ruling of that day
+on the Step 2 pull request's F1, Step 3 was built on a branch stacked on Step 2's and merged into
+it, and the two reached `main` as one deploy, with no interim in which a never-decoded board read
+as fresh empty service.
 
 ### Decisions, 2026-11-01
 
@@ -2775,8 +2780,8 @@ until the build flips them, and the build starts at Step 0, which Q1 makes a pre
 | Q6 | **`None`** | A decoded generation with no usable header publishes `None` under its key; Metro-North is recorded as `None` by policy rather than left absent. The railroad is the one producer that changes, and no LIRR row moves (0 of 763 undated on the capture). |
 | Q7 | **Yes**: narrowed to "LIRR failed this poll", with a test pinning both arms | A headerless LIRR success publishes `None` on the envelope and `feed_age_s` reads unknown; `/healthz` reads a null age as healthy and the monitor's `railroad-realtime` WARN names the cause. The branch keeps the last clock exactly when LIRR is in the poll's failed list, so "LIRR down, Metro-North up" still reads `feed-content-stale`. |
 | Q8 | **Remove** | `.compact` leaves `positionQualifier`, the contract and the code; `positions.test.js` pins two forms (12 tests move, all in that file); the `NOT_RIDER_TEXT` waiver for "scheduled (no GPS)" is deleted in the same change. |
-| Q9 | **Yes** | PATH, NJ Transit, the ferry, and the railroads on a total failure prune a kept row once its time has passed, through `drop_expired_arrivals`'s own rule with its zero grace. Retention is unchanged; nothing undeparted is dropped. State (ii) exists on every family. |
-| Q10 | **Yes** | PATH's and the ferry's boards carry their one system's block; a single-system board, and a railroad board with both railroads failing, answers a failed first poll with a 200 board whose block reads `fetched_at: null`, `ok: false`, and the rider reads `{system} not reporting` instead of the 502's detail. The 503 before any poll stays. H6's rider-facing half closes with this; its `/api/status` half stays on the live list. |
+| Q9 | **Yes** | PATH, NJ Transit, the ferry, and the railroads on a total failure prune a kept row once its time has passed, through `drop_expired_arrivals`'s own rule with its zero grace. Retention is unchanged; nothing undeparted is dropped. State (ii) exists on every family. **Amended 2026-11-08: and the subway**, by the ruling of that day on the Step 2 pull request's findings: the subway's total failure, which also returns before any merge, prunes its kept rows by the same rule and the same zero grace. |
+| Q10 | **Yes** | PATH's and the ferry's boards carry their one system's block; a single-system board, and a railroad board with both railroads failing, answers a failed first poll with a 200 board whose block reads `fetched_at: null`, `ok: false`, and the rider reads `{system} not reporting` instead of the 502's detail. The 503 before any poll stays. H6's rider-facing half closes with this; its `/api/status` half stays on the live list. **Amended 2026-11-08: and the subway**, by the same ruling: a subway board whose every group failed on the first poll answers 200 with a never-decoded block for each expected group, the 503 before any poll staying, so the upstream's text reaches no rider board of any family. |
 | Q11 | **Yes**: on the board, and on the status line past the cap | A failed contributor with no row on a board reads `{system} not reporting` from 90 s after its last decode; the status line reads the same once the cap has taken a system's vehicles, and keeps `as of {age} ago` inside the window, where it dates what is drawn. The status line's vocabulary pin (`helpers.test.js:1962-1973`) moves in the build, past the cap only. |
 
 **The four proposals are accepted as proposed**: a decoded system always has a key; expected

@@ -245,11 +245,10 @@ async def test_a_deadline_or_an_unclassified_failure_prunes_the_same_way(world, 
     assert [r["trip_id"] for r in app_module.app.state.njt_arrivals["105"]] == ["later"]
 
 
-async def test_a_retaining_familys_paths_are_untouched(world, monkeypatch):
-    """Q9 named four families. A railroad PARTIAL failure still retains the failed system's
-    rows, marked `retained`, and prunes them by the rule it always had; and the subway's
-    total failure, which Q9 does not name, keeps its last decode whole, a departed row
-    included (raised for a ruling in this branch's pull request)."""
+async def test_a_railroad_partial_failure_retains_as_before(world, monkeypatch):
+    """A retaining family's PARTIAL failure is untouched by the prune: the failed railroad's
+    rows are still carried forward, marked `retained`, and pruned by the rule they always
+    had."""
 
     async def lirr_down(client, stops):
         mnr = [_row("m-later", T + 300, train_num="3")]
@@ -263,9 +262,17 @@ async def test_a_retaining_familys_paths_are_untouched(world, monkeypatch):
     lirr = app_module.app.state.railroad_arrivals["LIRR"]["12"]["Outbound"]
     assert [(r["trip_id"], r["provenance"]) for r in lirr] == [("l-later", "retained")]
 
-    departed = {"Northbound": [{"route_id": "1", "trip_id": "s", "arrival": T - 60}]}
-    app_module.app.state.subway_arrivals = {"101": departed}
-    app_module.app.state.subway_arrivals_by_system = {"1-7+S": {"101": departed}}
+
+async def test_the_subways_total_failure_prunes_both_its_indexes(world, monkeypatch):
+    """THE SUBWAY JOINED Q9's FOUR (the ruling of 2026-11-08). Every group failing returns
+    before any merge, as the railroads' total failure does; the departed row at T-60 leaves
+    both indexes, the combined one the board reads and the per-group one membership and
+    /healthz read, the row due at T+300 stays, and the group keeps its key there."""
+    departed = {"route_id": "1", "trip_id": "s1", "arrival": T - 60}
+    later = {"route_id": "1", "trip_id": "s2", "arrival": T + 300}
+    board = {"Northbound": [departed, later]}
+    app_module.app.state.subway_arrivals = {"101": board}
+    app_module.app.state.subway_arrivals_by_system = {"1-7+S": {"101": board}, "SIR": {}}
     app_module.app.state.subway_stops = {
         "101N": {"name": "Van Cortlandt", "lat": 40.9, "lon": -73.9}
     }
@@ -276,8 +283,11 @@ async def test_a_retaining_familys_paths_are_untouched(world, monkeypatch):
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", all_down)
     await pollers._refresh_subways(app_module.app, None)
-    assert app_module.app.state.subway_arrivals == {"101": departed}
-    assert app_module.app.state.subway_arrivals_by_system == {"1-7+S": {"101": departed}}
+    assert app_module.app.state.subway_arrivals == {"101": {"Northbound": [later]}}
+    assert app_module.app.state.subway_arrivals_by_system == {
+        "1-7+S": {"101": {"Northbound": [later]}},
+        "SIR": {},
+    }
 
 
 async def test_a_total_outage_goes_quiet_on_healthz_once_its_last_kept_row_departs(

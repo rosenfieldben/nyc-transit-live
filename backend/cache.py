@@ -337,11 +337,12 @@ def _require_filled_cache(entry: dict) -> None:
     scrubbed, which the popup and the panel printed and the panel spoke (H6 on the
     2026-10-12 record's live list). The detail stays on /api/status, the operator's
     surface. Which boards that reaches is the pollers' choice of who writes the
-    block: PATH, the ferry and NJ Transit, and a railroad board with both railroads
-    failing. A poll that never ran writes none, so the 503 before any poll stays,
-    and so does the recorded 503 of a static group still loading or of NJ Transit
-    not configured; the subway writes none either. The vehicle envelopes do not
-    change: _serve_cached keeps raising the recorded error until data arrives."""
+    block: PATH, the ferry and NJ Transit, a railroad board with both railroads
+    failing, and a subway board whose every group failed (the ruling of 2026-11-08,
+    "and the subway"). A poll that never ran writes none, so the 503 before any poll
+    stays, and so does the recorded 503 of a static group still loading or of NJ
+    Transit not configured. The vehicle envelopes do not change: _serve_cached keeps
+    raising the recorded error until data arrives."""
     if entry["data"] is None and not entry.get("systems"):
         if entry["error"]:
             raise HTTPException(entry["error"]["status"], entry["error"]["detail"])

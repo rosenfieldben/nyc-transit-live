@@ -1102,7 +1102,7 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         if getattr(app.state, "njt_static_status", None) == "not-configured":
             fail(
                 503,
-                "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
+                f"NJ Transit is not configured ({njt_auth.NOT_CONFIGURED_WHY}); "
                 "no realtime poll is attempted.",
                 log=False,
                 polled=False,

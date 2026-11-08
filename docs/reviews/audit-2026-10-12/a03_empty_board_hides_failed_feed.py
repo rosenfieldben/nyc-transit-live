@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""A03 (Medium) "Empty arrival boards can hide a failed or stale feed": the backend half's
-repair, pinned, and the frontend half's defect, recorded.
+"""A03 (Medium) "Empty arrival boards can hide a failed or stale feed": the repair of both
+halves, pinned.
 
 THE AUDIT'S CLAIM (the 2026-10-12 report, finding A03), verbatim:
 
@@ -28,16 +28,17 @@ THE AUDIT'S CLAIM (the 2026-10-12 report, finding A03), verbatim:
     backend/feeds/shared.py:519, backend/routes/subway.py:108, frontend/helpers.js:2395,
     frontend/helpers.js:2462, frontend/stations.js:701.
 
-PARTLY FIXED ON claude/a03-expected-contributors, Step 2 of the freshness contract's
-Amendment 1, by its decisions Q1 and Q2 (A1.3, A1.4, A1.6). A station board names the
-groups it EXPECTS, read from the static routes-per-station index through a route-to-group
-table, UNITED with the groups that have rows indexed there, and a group that has never
-decoded in this process is named as a block reading fetched_at null and ok false. So the
-backend half of the repair the audit names, "Maintain station-to-feed coverage
-independently of displayed predictions; preserve expected failed contributors after
-expiry or retention limits", is built. The frontend half, "Carry availability, unknown
-clocks and source-content age through the board renderer", is Step 3's, and it is still
-the defect this script records.
+FIXED, IN TWO STEPS OF THE FRESHNESS CONTRACT'S AMENDMENT 1. The backend half on
+claude/a03-expected-contributors (Step 2, its decisions Q1 and Q2): a station board names
+the groups it EXPECTS, read from the static routes-per-station index through a
+route-to-group table, UNITED with the groups that have rows indexed there, and a group that
+has never decoded in this process is named as a block reading fetched_at null and ok false,
+which is "Maintain station-to-feed coverage independently of displayed predictions;
+preserve expected failed contributors after expiry or retention limits". The frontend half
+on claude/a03-renderers-operator (Step 3, its Q3, Q4 and Q11): every board surface reads
+each expected contributor's ok, poll clock and content clock, so a stale contributor dates
+an empty board and a dark one is named "not reporting", which is "Carry availability,
+unknown clocks and source-content age through the board renderer".
 
 BEFORE (this script's record from 32a34f5 to 11e0dc5, VERIFIED, the numbers the ledger's
 A03 row carried): after 219's last retained prediction expired (T0+194 s), the T0+200 s
@@ -48,17 +49,19 @@ boards, every clock read relative to the instant it was served, was identical to
 genuinely fresh empty service's, and the page read the expiry and cap boards exactly as
 fresh empty service: "No trains" and nothing else.
 
-AFTER, asserted below as nine regression checks, each printing its BEFORE beside what it
-measures: after expiry 219 names 1-7+S, ok false, its fetched_at T0 (200 s old) and its
-content T0-5; at the cap it names 1-7+S, ok false, 620 s old; in the stale-content world
-it names 1-7+S ok with content 620 s old; in the never-decoded world it names 1-7+S with
-fetched_at null; none of the four is identical to fresh empty service's board; and the
-page reads the expiry and cap boards differently from fresh empty service (its board line,
-"as of 3m ago" and "as of 10m ago"), because today's renderer already dates a failed
-contributor's last decode once it is 90 s old. Still recorded as the defect, Step 3's to
-turn: the page reads the stale-content and never-decoded boards exactly as fresh empty
-service, as served and as section (d) builds them, because no renderer reads a block's
-`ok` or its content clock on an empty board.
+AFTER, asserted below as thirteen regression checks, each printing its BEFORE beside what
+it measures, and one check that tells B from C. The backend half's nine (Step 2): after
+expiry 219 names 1-7+S, ok false, its fetched_at T0 (200 s old) and its content T0-5; at
+the cap it names 1-7+S, ok false, 620 s old; in the stale-content world it names 1-7+S ok
+with content 620 s old; in the never-decoded world it names 1-7+S with fetched_at null;
+none of the four is identical to fresh empty service's board; and the page reads the
+expiry and cap boards differently from fresh empty service, "2 and 5 trains not
+reporting" since Step 3 (Step 2's page read "as of 3m ago" and "as of 10m ago"). The
+frontend half's four (Step 3): the page reads the stale-content board "as of 10m ago" and
+the never-decoded board "2 and 5 trains not reporting", as served and as section (d)
+builds them, on the popup, the panel and the spoken board. And the failed board C reads the
+same words as B, its served fetched_at telling them apart. Fresh empty service still reads
+"No trains" and nothing else.
 
 RUN IT (from the repository root):
 

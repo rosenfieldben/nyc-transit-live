@@ -4634,13 +4634,16 @@ test("A03 the route-to-group table is the backend's, entry for entry", () => {
 test("A03 one helper reads a contributor's state from ok, fetchedAt and feedTimestamp", () => {
   const now = 10_000;
   const state = (block) => A1.contributorState(block, now, now);
-  assert.deepEqual(state({ ok: false, fetchedAt: null, feedTimestamp: null }), { state: "never", age: null });
-  assert.deepEqual(state({ ok: false, fetchedAt: now - 200, feedTimestamp: now - 205 }), { state: "failed", age: 200 });
-  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 620 }), { state: "stale", age: 620 });
-  assert.deepEqual(state({ ok: true, fetchedAt: now - 95, feedTimestamp: null }), { state: "stale", age: 95 });
-  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 5 }), { state: "fresh", age: 5 });
+  assert.deepEqual(state({ ok: false, fetchedAt: null, feedTimestamp: null }), { state: "never", age: null, worst: null });
+  // A failed contributor's `age` is its last decode's (the grace counts from it), and its
+  // `worst` the worse of its two clocks, which an empty board dates it by inside the grace.
+  assert.deepEqual(state({ ok: false, fetchedAt: now - 200, feedTimestamp: now - 205 }), { state: "failed", age: 200, worst: 205 });
+  assert.deepEqual(state({ ok: false, fetchedAt: now - 20, feedTimestamp: now - 640 }), { state: "failed", age: 20, worst: 640 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 620 }), { state: "stale", age: 620, worst: 620 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now - 95, feedTimestamp: null }), { state: "stale", age: 95, worst: 95 });
+  assert.deepEqual(state({ ok: true, fetchedAt: now, feedTimestamp: now - 5 }), { state: "fresh", age: 5, worst: 5 });
   // A null clock with ok true (the substitute block) is not never decoded: fresh, ageless.
-  assert.deepEqual(state({ ok: true, fetchedAt: null, feedTimestamp: null }), { state: "fresh", age: null });
+  assert.deepEqual(state({ ok: true, fetchedAt: null, feedTimestamp: null }), { state: "fresh", age: null, worst: null });
   assert.deepEqual([A1.andList(["2"]), A1.andList(["2", "5"]), A1.andList(["A", "C", "E"])], ["2", "2 and 5", "A, C and E"]);
 });
 
@@ -4690,6 +4693,82 @@ test("A03 the status line reads not reporting once nothing of a failed system is
   });
   assert.equal(staleness(rail([{ system: "LIRR" }, { system: "MNR" }]), now), "railroad: LIRR as of 12m ago; MNR position age unavailable");
   assert.equal(staleness(rail([{ system: "MNR" }]), now), "railroad: LIRR not reporting; MNR position age unavailable");
+  // NOTHING AT ALL DRAWN is 0 for every system, so a railroad whose sibling runs no train reads
+  // the same (the adversarial round of Step 3, its F6).
+  assert.equal(staleness(rail([]), now), "railroad: LIRR not reporting; MNR position age unavailable");
+});
+
+test("A03 the status line's not-reporting clause keeps the rider band's grace", () => {
+  // BDFM failed 30 s ago and draws nothing (it ran no train): one failed poll is not news, on the
+  // status line as on a board. Past the band the same block reads "not reporting".
+  const now = 20_000;
+  const source = (ago) => ({
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          ACE: { fetched_at: now, feed_timestamp: now - 5, ok: true, routes: ["A"] },
+          BDFM: { fetched_at: now - ago, feed_timestamp: now - ago - 5, ok: false, retained_since: null, routes: [] },
+        },
+      },
+      "subways",
+    ),
+  });
+  assert.equal(staleness(source(30), now), null);
+  assert.equal(staleness(source(89), now), null);
+  assert.equal(staleness(source(90), now), "trains: BDFM group not reporting");
+});
+
+test("A03 a failed system with nothing of it drawn withholds no trains, whatever its retention clock", () => {
+  // LIRR past the cap: nothing of it is drawn, and retained_since started over at the poll after
+  // the cap (H4). The withheld clause read that clock and came back beside "not reporting" on
+  // every poll but the cap's; read off what is drawn, it stays gone (the adversarial round of
+  // Step 3, its F7). Inside the window, with LIRR's trains still drawn, it rides as before.
+  const now = 20_000;
+  const steps = { reported: 0, estimated: 0, qualified: 0, placed: 0, suppressed: 24 };
+  const rail = (trains, retainedSince) => ({
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        data: trains,
+        systems: {
+          LIRR: { fetched_at: now - 700, feed_timestamp: now - 705, ok: false, retained_since: retainedSince, positions: steps },
+          MNR: { fetched_at: now, feed_timestamp: null, ok: true },
+        },
+      },
+      "railroads",
+    ),
+  });
+  for (const restarted of [null, now - 20]) {
+    assert.equal(staleness(rail([{ system: "MNR" }], restarted), now), "railroad: LIRR not reporting; MNR position age unavailable");
+  }
+  assert.equal(
+    staleness(rail([{ system: "LIRR" }, { system: "MNR" }], now - 680), now),
+    "railroad: LIRR as of 12m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
+  );
+});
+
+test("A03 what is drawn is read off every envelope's vehicles, under whichever key it serves them", () => {
+  // NJ Transit serves `trains` and the ferry `boats`, one system each, and neither names a system
+  // on its vehicles: their count is the system's. An empty list is 0 for every system. The
+  // subway's routes answer first; an envelope with no vehicle list at all cannot say.
+  const drawn = (body, key) => ingestSystems(body, key);
+  const one = (key, vehicles) => ({ fetched_at: 1000, [key]: vehicles, systems: { only: { fetched_at: 1000, ok: false } } });
+  assert.equal(drawn(one("trains", []), "njt").only.drawn, 0);
+  assert.equal(drawn(one("trains", [{ id: "t1" }, { id: "t2" }]), "njt").only.drawn, 2);
+  assert.equal(drawn(one("boats", [{ id: "b1" }]), "ferry").only.drawn, 1);
+  const two = { fetched_at: 1000, data: [], systems: { LIRR: { fetched_at: 1000 }, MNR: { fetched_at: 1000 } } };
+  assert.deepEqual([drawn(two, "railroads").LIRR.drawn, drawn(two, "railroads").MNR.drawn], [0, 0]);
+  const unnamed = { ...two, data: [{ id: "x" }] };
+  assert.deepEqual([drawn(unnamed, "railroads").LIRR.drawn, drawn(unnamed, "railroads").MNR.drawn], [null, null]);
+  assert.equal(drawn({ fetched_at: 1000, systems: { only: { fetched_at: 1000 } } }, "x").only.drawn, null);
 });
 
 test("A03 a board line that changes KIND is announced, one that counts up is not", () => {

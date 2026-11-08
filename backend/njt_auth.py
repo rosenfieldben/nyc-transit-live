@@ -126,6 +126,17 @@ _PLACEHOLDERS = {
     PASSWORD_VAR: "your-njt-password",
 }
 
+# WHY NJ TRANSIT READS AS NOT CONFIGURED, in the one clause every surface that says so prints
+# (this module's two refusals, the static loader's, the warmup's status error and the
+# poller's /api/status detail). "Not set" alone was false of the realistic case credentials()
+# also refuses, a real value pasted over one name and the other left blank or as the shipped
+# placeholder, and since Amendment 1's Q5 a deployment that is not configured is left out of
+# /healthz's observations-qualified, so this sentence is the operator's one pointer at it (the
+# adversarial round of that amendment's Step 3, its F11).
+NOT_CONFIGURED_WHY = (
+    f"{USERNAME_VAR}/{PASSWORD_VAR} are unset, blank or still the .env.example placeholder"
+)
+
 # THE DAILY MINT BUDGET. Ten getToken calls per ACCOUNT per EASTERN DAY, observed
 # 2026-09-02, and EVERY ATTEMPT COUNTS against it whether or not it yields a token.
 # The eleventh comes back HTTP 500 with a JSON body whose errorMessage begins
@@ -783,9 +794,7 @@ async def mint(
     """
     creds = credentials(env)
     if creds is None:
-        raise NjtNotConfigured(
-            f"{USERNAME_VAR}/{PASSWORD_VAR} are not set; NJ Transit is not configured"
-        )
+        raise NjtNotConfigured(f"{NOT_CONFIGURED_WHY}; NJ Transit is not configured")
     username, password = creds
     post = transport or _httpx_post
     target = url if url is not None else NJT_TOKEN_URL
@@ -1403,9 +1412,7 @@ async def njt_post(
     raises NjtMintAllowanceError instead.
     """
     if not is_configured(env):
-        raise NjtNotConfigured(
-            f"{USERNAME_VAR}/{PASSWORD_VAR} are not set; NJ Transit is not configured"
-        )
+        raise NjtNotConfigured(f"{NOT_CONFIGURED_WHY}; NJ Transit is not configured")
     fields = dict(form or {})
     token_cache = cache if cache is not None else TOKEN_CACHE
     post = transport or _httpx_post

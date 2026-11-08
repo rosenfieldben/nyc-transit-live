@@ -161,7 +161,7 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         "total": 1,
         "ok": 0,
         "failed": ["njt"],
-        "cross_check_failures": 0,
+        "cross_check_failures": None,
     }
 
 

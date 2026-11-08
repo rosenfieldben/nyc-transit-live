@@ -1862,17 +1862,33 @@ function ingestSystems(body, sourceKey) {
 // HOW MUCH OF A SYSTEM THE MAP DRAWS, or null when the envelope cannot say (Amendment 1,
 // Q11). A subway block lists the routes its drawn trains cover, [] once nothing of the group
 // is drawn (the retention cap emptied it, or it went down holding nothing), so the routes
-// count answers; a railroad envelope's vehicles name their own system, so they are counted.
-// Read off what is DRAWN rather than off retained_since, because that clock restarts after
-// the cap (H4 on the 2026-10-12 record's live list) and would flip the status line back to
-// an age every poll after the one the cap fired on.
+// count answers. Otherwise the envelope's vehicles answer, under whichever key it serves them
+// (`data` for the subway and the railroads, `trains` for PATH and NJ Transit, `boats` for the
+// ferry): none at all is 0 for every system; a railroad's vehicles name their own system, so
+// they are counted; and a one-system envelope's vehicles are all that system's, whatever they
+// name (the adversarial round of Step 3, its F6: NJ Transit's and an empty envelope's read
+// null before). Read off what is DRAWN rather than off retained_since, because that clock
+// starts over after the cap (H4 on the 2026-10-12 record's live list) and would flip the
+// status line back to an age every poll after the one the cap fired on.
 function drawnCount(body, name, routes) {
   if (Array.isArray(routes)) return routes.length;
-  const data = body == null ? null : body.data;
-  if (!Array.isArray(data) || !data.some((item) => item && typeof item.system === "string")) {
-    return null;
+  if (body == null) return null;
+  const vehicles = [body.data, body.trains, body.boats].find(Array.isArray);
+  if (!vehicles) return null;
+  if (!vehicles.length) return 0;
+  if (vehicles.some((item) => item && typeof item.system === "string")) {
+    return vehicles.filter((item) => item && item.system === name).length;
   }
-  return data.filter((item) => item && item.system === name).length;
+  const raw = body.systems;
+  return raw != null && typeof raw === "object" && Object.keys(raw).length === 1 ? vehicles.length : null;
+}
+
+// FAILING WITH NOTHING OF IT DRAWN (Amendment 1, Q11): what the status line words "not
+// reporting" once past the rider band, and what ends the withheld count, since nothing of the
+// system is on the map for either an age or "not shown" to describe. One predicate for both,
+// read off `drawn` (drawnCount) and never off retained_since (H4).
+function nothingDrawn(system) {
+  return !system.ok && system.drawn === 0;
 }
 
 // The five counts of models.PositionSteps, in the backend's order: reported, estimated,
@@ -2281,7 +2297,7 @@ function staleness(source, now = Date.now() / 1000) {
     // a system's vehicles there is nothing on the map for "as of {age} ago" to date, so it
     // reads "not reporting", the word a board gives the same state. Inside the window, while
     // the map still draws what it last decoded, the age stays (the stale population below).
-    if (!system.ok && staleAge(poll) && system.drawn === 0) {
+    if (staleAge(poll) && nothingDrawn(system)) {
       blind.push(name);
       continue;
     }
@@ -2323,10 +2339,13 @@ function staleness(source, now = Date.now() / 1000) {
 
 // How many of a system's trains the position ladder drew nothing for, as far as the map
 // can still be told: the served `suppressed` count while the decode it describes is the
-// one on the map (the system decoded, or its rows are being retained), and 0 otherwise.
+// one on the map (the system decoded, or its rows are being retained), and 0 otherwise,
+// which includes a failed system with nothing of it drawn (nothingDrawn): retained_since
+// starts over after the cap (H4), so it alone would bring the clause back on every poll
+// after the cap's (the adversarial round of Step 3, its F7).
 function withheldTrains(system) {
   const steps = system ? system.positions : null;
-  if (!steps || !(steps.suppressed > 0)) return 0;
+  if (!steps || !(steps.suppressed > 0) || nothingDrawn(system)) return 0;
   return system.ok || system.retainedSince != null ? steps.suppressed : 0;
 }
 
@@ -2442,21 +2461,26 @@ const SUBWAY_ROUTE_GROUPS = Object.freeze({
      never   ok false AND fetchedAt null: it has not decoded in this process. Both, because the
              substitute block ingestSystems builds for a board with no systems map has a null
              clock with ok true, and that is not this state (helpers.test.js pins it silent).
-     failed  ok false with a clock: it decoded and is failing now. `age` is its last decode's.
+     failed  ok false with a clock: it decoded and is failing now. `age` is its last decode's,
+             which Q11's grace is counted from (contributorDark).
      stale   ok, and the WORSE of its poll age and its content age is past the rider band
              (Q4): a feed answering every poll with old bytes is as stale as one not polled.
              Either clock may be missing (Metro-North dates no content, by policy), and the
              one that is there answers.
      fresh   anything else.
-   `age` is in seconds, aged through servedAge like every board clock. */
+   `worst` is that worse of the two clocks for every state but never (which has neither): what
+   an empty board's line dates a contributor by. A FAILED CONTRIBUTOR INSIDE THE GRACE KEEPS
+   IT, so a board whose content was already old does not go back to reading as fresh empty
+   service on the first failed poll (the adversarial round of Step 3, its F1).
+   Ages are in seconds, aged through servedAge like every board clock. */
 function contributorState(block, servedAt, now) {
-  if (block.ok === false && block.fetchedAt == null) return { state: "never", age: null };
+  if (block.ok === false && block.fetchedAt == null) return { state: "never", age: null, worst: null };
   const poll = servedAge(block.fetchedAt, servedAt, now);
-  if (block.ok === false) return { state: "failed", age: poll };
   const content = servedAge(block.feedTimestamp, servedAt, now);
   const known = [poll, content].filter((age) => age != null);
-  const age = known.length ? Math.max(...known) : null;
-  return { state: staleAge(age) ? "stale" : "fresh", age };
+  const worst = known.length ? Math.max(...known) : null;
+  if (block.ok === false) return { state: "failed", age: poll, worst };
+  return { state: staleAge(worst) ? "stale" : "fresh", age: worst, worst };
 }
 
 // Whether a contributor in that state is DARK on a board: never decoded, at once, or failed
@@ -2539,9 +2563,10 @@ function arrivalQualifier(row, board) {
 // or null. It speaks only for what the rows cannot, because a dated row carries its own
 // age and a line repeating it would say everything twice:
 //
-//   * an EMPTY board's stale contributors (contributorState), whose "No trains" is only as
-//     current as the worse of their poll and their content (Amendment 1, Q4): "as of {age}
-//     ago", the worst stale age answering;
+//   * an EMPTY board's contributors that are not dark and whose worse clock is past the band
+//     (contributorState's `worst`): the stale ones, and a failed one inside Q11's grace,
+//     whose "No trains" is only as current as the worse of their poll and their content
+//     (Amendment 1, Q4): "as of {age} ago", the worst age answering;
 //   * rows whose provider does not date them (Metro-North's), which have no age at all;
 //   * A DARK CONTRIBUTOR WITH NO ROW HERE, whether or not other contributors' rows are
 //     (A1.3's accepted proposal, Q11): "{system} not reporting", for a contributor that has
@@ -2563,18 +2588,22 @@ function arrivalQualifier(row, board) {
 // (no systems map: an older backend) keeps its slot.
 //
 // Returns {words, kind, slot}: `words` the line or null; `kind` what the line IS ("aged",
-// "dark", "slot", joined with "+"), which the live region compares the way it compares a
-// row's qualifier kind, so a line that changes kind is news and one that only counts up is
-// not (announcementWorthy); `slot` the empty slot's words, or null for "No trains".
+// "dark:{who}", "slot:{who}", joined with "+"), which the live region compares the way it
+// compares a row's qualifier kind, so a line that changes kind is news and one that only
+// counts up is not (announcementWorthy). WHO IS DARK IS PART OF THE KIND, the words a rider
+// hears for them, which carry no age: a second group going dark, or one recovering while
+// another fails, changes what the board says about service and is news; an age counting up
+// changes no kind (the adversarial round of Step 3, its F2). `slot` the empty slot's words,
+// or null for "No trains".
 function boardLine(board, rows) {
   const all = rows || [];
   const contributors = board.contributors || [];
   const clauses = [];
   const kinds = [];
   if (!all.length) {
-    const stale = contributors.filter((c) => c.state === "stale");
-    if (stale.length) {
-      clauses.push(`as of ${humanizeAge(Math.max(...stale.map((c) => c.age)))} ago`);
+    const aged = contributors.filter((c) => !contributorDark(c) && staleAge(c.worst));
+    if (aged.length) {
+      clauses.push(`as of ${humanizeAge(Math.max(...aged.map((c) => c.worst)))} ago`);
       kinds.push("aged");
     }
   } else {
@@ -2591,14 +2620,16 @@ function boardLine(board, rows) {
   const slotTaken = !all.length && contributors.length > 0 && contributors.every(contributorDark);
   const dark = contributors.filter((c) => contributorDark(c) && !contributorHasRows(board, c, all));
   if (dark.length && !slotTaken) {
-    clauses.push(`${darkWords(board, dark)} not reporting`);
-    kinds.push("dark");
+    const who = darkWords(board, dark);
+    clauses.push(`${who} not reporting`);
+    kinds.push(`dark:${who}`);
   }
-  if (slotTaken) kinds.push("slot");
+  const slot = slotTaken ? darkWords(board, contributors) : null;
+  if (slot) kinds.push(`slot:${slot}`);
   return {
     words: clauses.length ? clauses.join("; ") : null,
     kind: kinds.join("+"),
-    slot: slotTaken ? `${darkWords(board, contributors)} not reporting` : null,
+    slot: slot ? `${slot} not reporting` : null,
   };
 }
 

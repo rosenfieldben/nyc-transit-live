@@ -902,8 +902,9 @@ configured never polls it and is never named for it. It is not
 `feed-content-stale`, which is about one endpoint's feed header lagging, and the two
 occur independently. It never gates either: old upstream data is a property of the
 world, not of the build. Two limits are known. A feed already failing when a new
-process comes up reaches the code only from that process's tenth minute, so a quiet
-probe inside those ten minutes is not proof of recovery (`/api/status`'s
+process comes up reaches the code only ten minutes after the process first polls it,
+which for every family but the railroads waits for that family's static data to load,
+so a quiet probe inside that time is not proof of recovery (`/api/status`'s
 `subway_feeds`, `railroad_feeds`, `path_feeds`, `ferry_feeds` and `njt_feeds` name a
 failing feed at once), and a sparsely served LIRR late at night can trip the code with
 nothing wrong.

@@ -2768,7 +2768,15 @@ quiet-early item. Of A1.4's three silence pins, `:464` moved and `:417` and `:43
 measured; the 2026-09-05 F10 witness did not move. By the rulings of 2026-11-08 Q9 and Q10
 reach the subway too, which closes the other two things Step 2 measured outside them: its total
 failure prunes both its indexes, and its board answers a total first-poll failure with a 200
-naming every expected group.
+naming every expected group. **Its adversarial round settled two things A1.3 left open**, each
+pinned: a contributor failing INSIDE the 90 s grace, which A1.3's four states leave silent,
+dates an empty board by the worse of its two clocks as a stale one does, so a board whose
+content was already old does not read as fresh empty service on its first failed poll (the
+round's F1); and the line's kind names WHO is dark, so a second group going dark, or one
+recovering while another fails, is announced, where an age counting up still is not (its F2).
+A third, a stale contributor with no row on a POPULATED board, which A1.3 dates on an empty
+board only, is left as A1.3 has it and is on the 2026-10-12 record's live list for a ruling
+(its F8).
 
 **Steps 2 and 3 land together or in that order, never 3 alone.** The frontend half reads
 fields only the backend half serves, and the reverse order is safe: a backend that names a

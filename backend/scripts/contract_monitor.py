@@ -333,9 +333,10 @@ _WARN_HEALTH_CODES = ("subway-route-unmapped",)
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
 # that nothing on the deployment's side can clear it, that a feed failing since a deploy
-# reaches it only from the new process's tenth minute (Amendment 1's Q5; before Q5 a
-# fresh process could not see such a feed at all), so a clean run inside those ten
-# minutes is not proof of recovery, or that one railroad can trip it on a quiet night.
+# reaches it only ten minutes after the new process first polls it, which waits for the
+# feed's static data (Amendment 1's Q5; before Q5 a fresh process could not see such a
+# feed at all), so a clean run inside that time is not proof of recovery, or that one
+# railroad can trip it on a quiet night.
 # Every
 # other code names something broken, and its name is the whole instruction. OURS, not the
 # deployment's: these are literals in this file keyed by codes from this file's own
@@ -373,9 +374,10 @@ _HEALTH_CODE_NOTES = {
         "rows dropped, or serves no row and has been failing, or has never decoded, for "
         f"more than {int(REALTIME_STALE_S)}s since its last decode or since the process "
         "first tried it; the cause is upstream or the failing feed, so a redeploy fixes "
-        "nothing about it, and a feed failing since a deploy reaches this only from the "
-        "new process's tenth minute, so a clean run inside those ten minutes is not proof "
-        "of recovery (read /api/status: subway_feeds.failed, railroad_feeds.failed, "
+        "nothing about it, and a feed failing since a deploy reaches this only ten minutes "
+        "after the new process first polls it, which waits for the feed's static data, so "
+        "a clean run inside that time is not proof of recovery (read /api/status: "
+        "subway_feeds.failed, railroad_feeds.failed, "
         "path_feeds.failed, ferry_feeds.failed and njt_feeds.failed name every feed "
         "failing now); known false positive: a sparsely served LIRR (a late night with "
         f"few trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "

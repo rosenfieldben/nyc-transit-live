@@ -4584,10 +4584,11 @@ def test_the_qualified_observations_code_is_explained_in_words():
     reports what riders are SHOWN, so the summary says that, out of the monitor's own
     literal, and says the two things an operator would otherwise get wrong. A redeploy
     fixes nothing about the cause; and because a feed failing since a deploy reaches the
-    code only from the new process's tenth minute (Amendment 1's Q5; before it, never), a
-    clean run inside those ten minutes proves nothing, so the note points at the surface
-    that names such a feed at once. It also owns up to the known false positive
-    models.HEALTH_OBSERVATIONS_QUALIFIED records, a quiet night on LIRR."""
+    code only ten minutes after the new process first polls it, which waits for the feed's
+    static data (Amendment 1's Q5; before it, never), a clean run inside that time proves
+    nothing, so the note points at the surface that names such a feed at once. It also owns
+    up to the known false positive models.HEALTH_OBSERVATIONS_QUALIFIED records, a quiet
+    night on LIRR."""
     fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["observations-qualified"]))
     health = next(
         r
@@ -4601,7 +4602,8 @@ def test_the_qualified_observations_code_is_explained_in_words():
     assert "90s" not in health.detail
     assert "a redeploy fixes nothing about it" in health.detail
     assert "not proof of recovery" in health.detail
-    assert "new process's tenth minute" in health.detail
+    assert "ten minutes after the new process first polls it" in health.detail
+    assert "waits for the feed's static data" in health.detail
     assert "subway_feeds.failed" in health.detail
     assert "njt_feeds.failed" in health.detail
     assert "sparsely served LIRR" in health.detail

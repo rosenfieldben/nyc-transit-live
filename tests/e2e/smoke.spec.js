@@ -2338,7 +2338,7 @@ test("35. two NJT states with nothing to draw: an empty feed clears, an absent o
       route,
       {
         detail:
-          "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); " +
+          "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset, blank or still the .env.example placeholder); " +
           "no realtime poll is attempted.",
       },
       503,

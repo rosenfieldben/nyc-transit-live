@@ -856,9 +856,11 @@ class NjtFeedHealth(BaseModel):
     ok: int
     failed: list[str]  # ["njt"] when the last poll failed, else []
     # The last successful poll's entity.id / trip_short_name cross-check disagreements
-    # (feeds/njt.py log_cross_check). Defaulted, as PathFeedHealth's `unresolved` is,
-    # because the failure-branch health dicts carry no count (no decode ran).
-    cross_check_failures: int = 0
+    # (feeds/njt.py log_cross_check), NULL on a failed poll: no decode ran, so there is no
+    # count, and a 0 there would read as "no disagreements" to an operator sampling it for
+    # drift (the adversarial round of Amendment 1's Step 3, its F14). Unlike PathFeedHealth's
+    # `unresolved`, which defaults to 0 for the same failure dicts and predates this.
+    cross_check_failures: int | None = None
 
 
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
@@ -1233,7 +1235,9 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # show, or once their last kept row has departed (Q9), are named ten minutes after their
 # last decode, as is a total railroad outage in the same case (the second). THE COST,
 # accepted by Q5: the contract monitor fails a run on a group dark since a deploy from
-# its tenth minute. A family that is not configured (NJ Transit with no credentials)
+# ten minutes after the process first polls it (a family's first poll waits for its static
+# data, so that is later than the deploy's tenth minute by however long the static load
+# took). A family that is not configured (NJ Transit with no credentials)
 # never polls and is never named. test_health_observations.py pins each state, and
 # /api/status names the failing feeds beside it: subway_feeds, railroad_feeds,
 # path_feeds, ferry_feeds and, since Q5, njt_feeds.

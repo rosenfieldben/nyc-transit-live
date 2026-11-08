@@ -407,7 +407,7 @@ async def _warm_njt_static(app: FastAPI) -> None:
             app,
             "njt_static_status",
             "not-configured",
-            RuntimeError(f"{njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} are not set"),
+            RuntimeError(njt_auth.NOT_CONFIGURED_WHY),
         )
         return
     attempt = 0

@@ -20,7 +20,12 @@ on:
     # enough that a courteous single fetch per source is a negligible load on the
     # community-hosted feeds (PATH bridge, NYC Ferry Connexionz).
     - cron: "17 */6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      njt_mint:
+        description: "Mint an NJ Transit token for this run: one of the account's ten a day, shared with production. Unticked, both NJ Transit checks skip."
+        type: boolean
+        default: false
 
 # A single scheduled monitor should never pile up: if a run is somehow still
 # going when the next fires, skip rather than stack.
@@ -120,4 +125,8 @@ jobs:
           # njt_auth.DAILY_MINT_LIMIT.
           NJT_USERNAME: ${{ secrets.NJT_USERNAME }}
           NJT_PASSWORD: ${{ secrets.NJT_PASSWORD }}
+          # The dispatch's explicit yes (the njt_mint input above), which
+          # njt_mint_permitted reads beside GITHUB_EVENT_NAME and GITHUB_RUN_ATTEMPT.
+          # Empty on a scheduled run, which mints without it; a re-run never mints.
+          MONITOR_NJT_MINT: ${{ inputs.njt_mint }}
         run: python scripts/contract_monitor.py

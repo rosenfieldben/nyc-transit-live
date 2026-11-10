@@ -44,12 +44,14 @@ warmup, and is never a gate on the normal CI pipeline.
 
 from __future__ import annotations
 
+import ast
 import csv
 import io
 import json
 import math
 import os
 import re
+import string
 import sys
 import tempfile
 import time
@@ -1249,6 +1251,74 @@ def _njt_straddling_trips(feed, now: float, stops: dict[str, dict]) -> set[str]:
     return straddling
 
 
+# How many of the decoder's entity.id/trip_short_name pairs njt-realtime's cross-check
+# WARN names before the rest are only counted. The two overnight runs that printed the
+# WARN (434 and 441) counted 7 and 1, and a drift that starts across the whole feed would
+# count hundreds: five pairs are enough to see which side moved, and a bounded line keeps
+# the job summary's one row from growing with the feed.
+_MAX_NAMED_MISMATCHES = 5
+
+# How many characters of one id the WARN prints. NJ Transit's train numbers are four
+# digits and its trip ids one to four, so this truncates nothing real, and it keeps a
+# hostile or broken id from making one pair as long as the feed.
+_MAX_ID_CHARS = 24
+
+# One string literal as Python's repr writes it, either quote style, escapes included.
+_REPR_STR = r"'(?:[^'\\]|\\.)*'" + "|" + r'"(?:[^"\\]|\\.)*"'
+
+# THE DECODER'S OWN WORDS for a cross-check miss (feeds.njt._identity), read back rather
+# than re-derived: the monitor reuses the decoder's rule and never restates it. A warning
+# of the decoder's other two kinds (no identity at all, a repeated identity), or one whose
+# wording has drifted, does not match and is counted, not named.
+_MISMATCH_WARNING_RE = re.compile(
+    rf"entity\.id (?P<entity>{_REPR_STR}) does not match trip_short_name "
+    rf"(?P<short>{_REPR_STR}) for trip (?P<trip>{_REPR_STR})"
+)
+
+
+def _markdown_literal(text: str) -> str:
+    """One upstream string, made inert for the job summary, which renders markdown.
+
+    Every ASCII punctuation character is backslash-escaped (CommonMark lets any of them
+    be), so an id carrying `*`, `_`, `[`, `<` or a bare domain renders as its own
+    characters and never as emphasis, a link or HTML. The pipe is the one exception,
+    because format_summary_table escapes it for every detail and a second escape would
+    print the backslash. A character that is not printable (a newline, a control
+    character, a line separator) is written as its escape sequence, so one id cannot end
+    the table row or format_lines' one line. Truncated past _MAX_ID_CHARS, marked."""
+    out = []
+    for ch in text[:_MAX_ID_CHARS]:
+        if ch in string.punctuation and ch != "|":
+            out.append("\\" + ch)
+        elif ch.isprintable():
+            out.append(ch)
+        else:
+            out.append(ch.encode("unicode_escape").decode("ascii"))
+    return "".join(out) + ("..." if len(text) > _MAX_ID_CHARS else "")
+
+
+def _mismatch_pairs(warnings: list[str]) -> tuple[list[str], int]:
+    """The cross-check WARN's named pairs, `entity.id/trip_short_name on trip trip_id`,
+    at most _MAX_NAMED_MISMATCHES of them in the decoder's order, and how many warnings
+    were left unnamed (past the cap, of another kind, or unreadable)."""
+    named: list[str] = []
+    for warning in warnings:
+        if len(named) == _MAX_NAMED_MISMATCHES:
+            break
+        match = _MISMATCH_WARNING_RE.fullmatch(warning)
+        if match is None:
+            continue
+        try:
+            entity, short, trip = (ast.literal_eval(match[g]) for g in ("entity", "short", "trip"))
+        except (ValueError, SyntaxError):
+            continue
+        named.append(
+            f"{_markdown_literal(entity)}/{_markdown_literal(short)} "
+            f"on trip {_markdown_literal(trip)}"
+        )
+    return named, len(warnings) - len(named)
+
+
 def check_njt_realtime(
     fetch: Fetcher,
     sleep: Callable[[float], None],
@@ -1398,8 +1468,18 @@ def check_njt_realtime(
         # 745. WARN rather than FAIL: nothing is served wrong when it drifts, but
         # it is the assumption feeds.njt._identity is built on and a drift that
         # STARTS is worth a human deciding about rather than a log line nobody reads.
+        #
+        # THE PAIRS EXPLAIN IT. The count alone (runs 434 and 441, both overnight) says
+        # something moved and not which side, so the decoder's own warnings are read back
+        # for up to five pairs, each through _markdown_literal, the rest counted.
         statuses.append(WARN)
-        details.append(f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745)")
+        named, unnamed = _mismatch_pairs(warnings)
+        detail = f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745)"
+        if named:
+            detail += ": " + ", ".join(named)
+            if unnamed:
+                detail += f", {unnamed} more not named"
+        details.append(detail)
 
     straddling = _njt_straddling_trips(feed, now, stops_table)
     if entities >= NJT_MIN_TRIPS_FOR_RATIO and in_service:

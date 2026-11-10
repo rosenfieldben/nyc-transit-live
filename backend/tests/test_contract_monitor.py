@@ -2559,6 +2559,70 @@ def test_njt_realtime_warns_on_entity_id_cross_check_drift():
     assert "entity.id" in result.detail
 
 
+def test_njt_realtime_cross_check_names_five_pairs_and_counts_the_rest():
+    """THE WARN EXPLAINS ITSELF. Runs 434 (7) and 441 (1) printed only a count, which says
+    something moved and not which side. The decoder's own warnings name each pair, read
+    back here through the real decoder, five at most, in the feed's order."""
+    drifted = _njt_tu(count=8, entity_ids=False)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
+    assert result.status == cm.WARN
+    assert result.detail == (
+        "8 entity.id/trip_short_name mismatches (probe: 0 of 745): x0/3800 on trip T0, "
+        "x1/3801 on trip T1, x2/3802 on trip T2, x3/3803 on trip T3, x4/3804 on trip T4, "
+        "3 more not named"
+    )
+
+
+def test_njt_realtime_cross_check_escapes_a_markdown_active_id():
+    """An id is NJ Transit's string, and the detail is rendered as markdown in the job
+    summary. A link-shaped id prints as its characters and a newline as its escape
+    sequence, so the summary table keeps its one row and the log its one line."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_njt_tu(count=2))
+    feed.entity[0].id = "[x](http://evil.example)"
+    feed.entity[1].id = "38\n01"
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.detail == (
+        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): "
+        "\\[x\\]\\(http\\:\\/\\/evil\\.example\\)/3800 on trip T0, 38\\n01/3801 on trip T1"
+    )
+    assert len(cm.format_summary_table([result]).splitlines()) == 3
+    assert len(cm.format_lines([result]).splitlines()) == 1
+
+
+def test_njt_realtime_cross_check_counts_a_warning_of_another_kind():
+    """The decoder's other two warnings (no identity at all, a repeated identity) carry no
+    pair. They stay in the count, as they always were, and are counted, not named."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_njt_tu(count=2))
+    feed.entity[0].id = ""
+    feed.entity[0].trip_update.trip.trip_id = ""
+    feed.entity[1].id = "x1"
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.detail == (
+        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): x1/3801 on trip T1, "
+        "1 more not named"
+    )
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3800", "3800"),
+        ("*3800*", "\\*3800\\*"),
+        ("a|b", "a|b"),
+        ("a\tb", "a\\tb"),
+        ("\u2028", "\\u2028"),
+        ("x" * 25, "x" * 24 + "..."),
+    ],
+)
+def test_markdown_literal_escapes_markdown_and_leaves_the_pipe_to_the_table(text, expected):
+    """Punctuation escaped, the pipe left to format_summary_table (a second escape would
+    print the backslash), an unprintable character as its escape sequence, a long id cut
+    and marked."""
+    assert cm._markdown_literal(text) == expected
+
+
 @pytest.mark.parametrize(
     "hour,minute,expected",
     [
@@ -2578,8 +2642,53 @@ def test_njt_service_hours_wrap_midnight(hour, minute, expected):
     assert cm._in_njt_service_hours(when, feeds.NYC_TZ) is expected
 
 
-def test_run_all_mints_exactly_one_token_for_both_njt_checks():
+@pytest.mark.parametrize(
+    "trigger,expected_mints",
+    [
+        pytest.param(
+            {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "1"}, 1, id="schedule"
+        ),
+        pytest.param(
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "MONITOR_NJT_MINT": "true",
+            },
+            1,
+            id="dispatch-ticked",
+        ),
+        pytest.param({"MONITOR_NJT_MINT": "true"}, 1, id="by-hand-yes"),
+        pytest.param(
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "MONITOR_NJT_MINT": "false",
+            },
+            0,
+            id="dispatch-unticked",
+        ),
+        pytest.param(
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_RUN_ATTEMPT": "2",
+                "MONITOR_NJT_MINT": "true",
+            },
+            0,
+            id="re-run-of-a-ticked-dispatch",
+        ),
+        pytest.param({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "2"}, 0, id="re-run"),
+        pytest.param({}, 0, id="by-hand-no-yes"),
+    ],
+)
+def test_run_all_mints_exactly_one_token_for_both_njt_checks(trigger, expected_mints, monkeypatch):
     """THE CONSERVATION CLAIM, made where it actually has to hold: run_all.
+
+    EXACTLY ONCE WHEN THE MINT RULE PERMITS THE RUN, AND NEVER WHEN IT REFUSES
+    (njt_mint_permitted). On the Eastern day 2026-11-08 a dispatch run three times and
+    one re-run took the account to nine of its ten, each of them minting as a schedule
+    does. So the count is asserted for every arm that mints and every arm that must not,
+    and so is the number of _NjtToken objects built: a refused run builds none, which is
+    what keeps a token built before the rule is read from ever reaching a check.
 
     By 15b three RailData consumers run in one pass (the static archive, the
     realtime trip updates, and the realtime alerts). Minting is rate-limited below
@@ -2593,6 +2702,14 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
     Asserted against run_all rather than either check, because run_all is the only
     place the sharing is expressed.
     """
+    built = []
+
+    class CountingToken(cm._NjtToken):
+        def __init__(self, *args, **kwargs):
+            built.append(args)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(cm, "_NjtToken", CountingToken)
     calls = []
 
     def fetch(url, headers=None, params=None, files=None):
@@ -2621,22 +2738,27 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
             "NJT_USERNAME": "rider",
             "NJT_PASSWORD": "secret",
             "MONITOR_SKIP_PRODUCTION": "1",
-            **SCHEDULED_RUN,
+            **trigger,
         },
     )
     mints = [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL]
-    assert len(mints) == 1, (
-        f"one token for the whole run, got {len(mints)}. Each NJ Transit check "
-        "minting its own would pass every other test here and triple what the "
-        "schedule spends out of the account's ten a day."
+    assert len(mints) == expected_mints, (
+        f"{expected_mints} token(s) for the whole run, got {len(mints)}. Each NJ Transit "
+        "check minting its own would triple what the schedule spends out of the account's "
+        "ten a day, and a refused run minting at all is the 2026-11-08 day again."
     )
-    # Non-vacuous: all three consumers really did fetch behind that one token.
-    assert cm.njt_static.NJT_STATIC_URL in calls
-    assert cm.njt_feed.NJT_TU_URL in calls
-    assert cm.njt_feed.NJT_ALERTS_URL in calls
+    assert len(built) == expected_mints, f"{len(built)} _NjtToken built"
     by_name = {r.name: r for r in results}
-    assert by_name["njt-static"].status == cm.PASS, by_name["njt-static"].detail
-    assert by_name["njt-realtime"].status == cm.PASS, by_name["njt-realtime"].detail
+    njt_data = [cm.njt_static.NJT_STATIC_URL, cm.njt_feed.NJT_TU_URL, cm.njt_feed.NJT_ALERTS_URL]
+    if expected_mints:
+        # Non-vacuous: all three consumers really did fetch behind that one token.
+        assert [url for url in njt_data if url in calls] == njt_data
+        assert by_name["njt-static"].status == cm.PASS, by_name["njt-static"].detail
+        assert by_name["njt-realtime"].status == cm.PASS, by_name["njt-realtime"].detail
+    else:
+        assert [url for url in njt_data if url in calls] == []
+        assert by_name["njt-static"].status == cm.WARN
+        assert by_name["njt-realtime"].status == cm.WARN
 
 
 def test_run_all_a_failed_mint_fails_both_njt_checks_with_the_same_reason():
@@ -2801,6 +2923,208 @@ def test_run_all_does_not_mint_at_all_without_credentials():
     by_name = {r.name: r for r in results}
     assert by_name["njt-static"].status == cm.WARN
     assert by_name["njt-realtime"].status == cm.WARN
+
+
+# ---------------------------------------------------------------------------
+# The mint rule (njt_mint_permitted): the README's budget rules, made code
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("yes", [None, "", "true", "false"])
+def test_mint_rule_a_scheduled_runs_first_attempt_mints(yes):
+    """The budget's four a day. The schedule needs no yes, and on a scheduled run the
+    workflow maps the empty inputs context to "", which changes nothing."""
+    env = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "1"}
+    if yes is not None:
+        env["MONITOR_NJT_MINT"] = yes
+    assert cm.njt_mint_permitted(env) == (True, "a scheduled run, its first attempt")
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        (
+            {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "2"},
+            (False, "attempt 2 is a re-run, and a re-run never mints"),
+        ),
+        (
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_RUN_ATTEMPT": "3",
+                "MONITOR_NJT_MINT": "true",
+            },
+            (False, "attempt 3 is a re-run, and a re-run never mints"),
+        ),
+        (
+            {"GITHUB_RUN_ATTEMPT": "2", "MONITOR_NJT_MINT": "true"},
+            (False, "attempt 2 is a re-run, and a re-run never mints"),
+        ),
+        (
+            {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ATTEMPT": "50"},
+            (False, "attempt 50 is a re-run, and a re-run never mints"),
+        ),
+    ],
+)
+def test_mint_rule_any_attempt_above_one_is_refused(env, expected):
+    """Whatever the event or the yes. A re-run keeps its original run's event (run 438's
+    attempt 2 reads `schedule`, run 439's attempts 2 and 3 `workflow_dispatch`), so an
+    arm that read only the event would let a re-run of a scheduled run mint."""
+    assert cm.njt_mint_permitted(env) == expected
+
+
+@pytest.mark.parametrize(
+    "yes,expected",
+    [
+        ("true", (True, "a dispatch with njt_mint ticked")),
+        ("false", (False, "a dispatch mints only with njt_mint ticked")),
+        ("", (False, "a dispatch mints only with njt_mint ticked")),
+        ("True", (False, "a dispatch mints only with njt_mint ticked")),
+        ("1", (False, "a dispatch mints only with njt_mint ticked")),
+        (None, (False, "a dispatch mints only with njt_mint ticked")),
+    ],
+)
+def test_mint_rule_a_dispatch_mints_only_on_the_yes(yes, expected):
+    """The workflow maps the ticked box as the string "true"; nothing else is a yes."""
+    env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1"}
+    if yes is not None:
+        env["MONITOR_NJT_MINT"] = yes
+    assert cm.njt_mint_permitted(env) == expected
+
+
+@pytest.mark.parametrize(
+    "yes,expected",
+    [
+        ("true", (True, "a run by hand with MONITOR_NJT_MINT=true")),
+        (None, (False, "a run by hand mints only with MONITOR_NJT_MINT=true")),
+        ("1", (False, "a run by hand mints only with MONITOR_NJT_MINT=true")),
+        ("TRUE", (False, "a run by hand mints only with MONITOR_NJT_MINT=true")),
+    ],
+)
+def test_mint_rule_a_run_by_hand_mints_only_on_the_yes(yes, expected):
+    """No GITHUB_EVENT_NAME at all is a run outside Actions: a developer's shell, where
+    the project-root .env carries real credentials."""
+    env = {} if yes is None else {"MONITOR_NJT_MINT": yes}
+    assert cm.njt_mint_permitted(env) == expected
+
+
+@pytest.mark.parametrize(
+    "event", ["push", "pull_request", "workflow_run", "repository_dispatch", "", "Schedule"]
+)
+def test_mint_rule_any_other_event_is_refused(event):
+    """Even with the yes. The workflow fires on its schedule and on dispatch only, so any
+    other event is a workflow this rule was not written for."""
+    env = {"GITHUB_EVENT_NAME": event, "GITHUB_RUN_ATTEMPT": "1", "MONITOR_NJT_MINT": "true"}
+    assert cm.njt_mint_permitted(env) == (
+        False,
+        "only a scheduled run, a dispatch with njt_mint ticked, or a run by hand with "
+        "MONITOR_NJT_MINT=true mints",
+    )
+
+
+@pytest.mark.parametrize(
+    "attempt", [None, "0", "-1", "x", "", " 1", "+1", "1.0", "1_0", "\u0661", "9" * 5000]
+)
+def test_mint_rule_an_attempt_that_is_not_a_positive_integer_is_refused(attempt):
+    """GitHub writes the attempt as ASCII digits from 1, in every step. A missing one
+    beside an event, or anything int() would accept that GitHub never writes (a sign,
+    a space, an underscore, an Arabic-Indic one, more digits than int() reads), is no
+    attempt number, and a run that cannot say which attempt it is does not mint."""
+    env = {"GITHUB_EVENT_NAME": "schedule", "MONITOR_NJT_MINT": "true"}
+    if attempt is not None:
+        env["GITHUB_RUN_ATTEMPT"] = attempt
+    assert cm.njt_mint_permitted(env) == (False, "GITHUB_RUN_ATTEMPT is not a positive integer")
+
+
+@pytest.mark.parametrize(
+    "trigger,detail",
+    [
+        (
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "MONITOR_NJT_MINT": "false",
+            },
+            "skipped (a dispatch mints only with njt_mint ticked; each mint is one of the "
+            "account's 10 a day, shared with production)",
+        ),
+        (
+            {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "2"},
+            "skipped (attempt 2 is a re-run, and a re-run never mints; each mint is one of "
+            "the account's 10 a day, shared with production)",
+        ),
+        (
+            {},
+            "skipped (a run by hand mints only with MONITOR_NJT_MINT=true; each mint is one "
+            "of the account's 10 a day, shared with production)",
+        ),
+    ],
+)
+def test_a_refused_run_skips_both_njt_checks_in_the_rules_words(trigger, detail):
+    """THE SKIP NAMES THE REASON AND THE BUDGET, on both NJ Transit lines, as a WARN: a
+    run that was not allowed to spend a mint has checked nothing (never a PASS) by choice
+    (never a FAIL). These are the two lines the post-merge dispatch and its re-run print."""
+    results = cm.run_all(
+        FakeFetcher({}),
+        NO_SLEEP,
+        NJT_RT_NOW,
+        env={
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_SKIP_PRODUCTION": "1",
+            **trigger,
+        },
+    )
+    by_name = {r.name: r for r in results}
+    assert (by_name["njt-static"].status, by_name["njt-static"].detail) == (cm.WARN, detail)
+    assert (by_name["njt-realtime"].status, by_name["njt-realtime"].detail) == (cm.WARN, detail)
+
+
+def test_without_credentials_the_skip_still_names_the_credentials():
+    """The rule speaks only for a run that could have minted. With no credentials there
+    was nothing to refuse, and the line says what is missing, as it always has."""
+    results = cm.run_all(
+        FakeFetcher({}), NO_SLEEP, NJT_RT_NOW, env={"MONITOR_SKIP_PRODUCTION": "1"}
+    )
+    by_name = {r.name: r for r in results}
+    for name in ("njt-static", "njt-realtime"):
+        assert (by_name[name].status, by_name[name].detail) == (
+            cm.WARN,
+            "skipped (NJT_USERNAME/NJT_PASSWORD not set)",
+        )
+
+
+def test_a_refused_run_keeps_the_roster_of_22_checks():
+    """A refusal changes two lines' words and nothing else: the same 22 checks in the same
+    order as a run that minted, production included."""
+
+    def run(trigger):
+        production = _healthy_prod()
+
+        def fetch(url, headers=None, params=None, files=None):
+            if url == cm.njt_auth.NJT_TOKEN_URL:
+                return cm.FetchResult(200, _njt_token())
+            if url == cm.njt_static.NJT_STATIC_URL:
+                return cm.FetchResult(200, _njt_zip())
+            if url == cm.njt_feed.NJT_TU_URL:
+                return cm.FetchResult(200, _njt_tu(prefix="X"))
+            if url == cm.njt_feed.NJT_ALERTS_URL:
+                return cm.FetchResult(200, _rt_feed())
+            if url.startswith(_PROD_BASE):
+                return production(url, headers, params, files)
+            return cm.FetchResult(500, b"")
+
+        env = {
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_STATUS_URL": _PROD_BASE,
+            **trigger,
+        }
+        return [r.name for r in cm.run_all(fetch, NO_SLEEP, NJT_RT_NOW, env=env)]
+
+    minted = run({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "1"})
+    refused = run({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "2"})
+    assert len(minted) == 22
+    assert refused == minted
 
 
 def test_production_reports_a_dark_njt_layer():

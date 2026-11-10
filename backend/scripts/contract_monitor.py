@@ -57,7 +57,7 @@ import zipfile
 from datetime import datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable, Mapping, NamedTuple
 
 import httpx
 from google.protobuf.message import DecodeError
@@ -2023,6 +2023,88 @@ def _njt_credentials(username: str | None, password: str | None):
     )
 
 
+# The explicit yes a dispatch or a run by hand needs before it may mint. The workflow maps
+# its `njt_mint` dispatch input here (`${{ inputs.njt_mint }}`, "true" when ticked); a run
+# by hand sets it in the shell. Only the exact string "true" is a yes.
+NJT_MINT_VAR = "MONITOR_NJT_MINT"
+
+# An attempt number as GitHub writes it: ASCII digits only. int() alone would also take
+# " 2", "+2", "1_0" and non-ASCII digits, none of which GitHub sets.
+_ATTEMPT_RE = re.compile(r"[0-9]+")
+
+
+def njt_mint_permitted(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Whether this run may spend an NJ Transit mint, and why, from the run's env alone.
+
+    THE README'S BUDGET RULES, MADE CODE. On the Eastern day 2026-11-08 the account
+    reached nine of its ten mints (njt_auth.DAILY_MINT_LIMIT, shared with production)
+    because run 439 was dispatched and then re-run twice, and run 438 was re-run once.
+    Every one of those runs minted exactly as a scheduled run does. So the monitor mints
+    on its schedule, or on an explicit yes, and never on a re-run.
+
+    IT READS THREE VARIABLES. GITHUB_EVENT_NAME and GITHUB_RUN_ATTEMPT are default
+    variables GitHub sets in every step and a workflow cannot overwrite;
+    NJT_MINT_VAR is the explicit yes. In order:
+
+      - GITHUB_RUN_ATTEMPT, when present, must be a positive integer, and any attempt
+        above 1 is refused whatever the event or the yes. A re-run keeps the original
+        run's event (run 438's attempt 2 reads `schedule`), so without this arm a
+        re-run of a scheduled run would mint; a second read is a new dispatch, never
+        a re-run.
+      - no GITHUB_EVENT_NAME at all is a run by hand: permitted only on the yes.
+      - an event without an attempt number is refused: GitHub always sets both.
+      - `schedule`, attempt 1: permitted. This is the budget's four a day.
+      - `workflow_dispatch`, attempt 1: permitted only on the yes.
+      - anything else is refused.
+
+    NOTHING FROM THE ENV IS ECHOED but the attempt number, which is digits by the
+    pattern above: the reason is written to the job summary, which renders markdown.
+    """
+    attempt_raw = env.get("GITHUB_RUN_ATTEMPT")
+    event = env.get("GITHUB_EVENT_NAME")
+    said_yes = env.get(NJT_MINT_VAR) == "true"
+    if attempt_raw is not None:
+        try:
+            attempt = int(attempt_raw) if _ATTEMPT_RE.fullmatch(attempt_raw) else 0
+        except ValueError:  # more digits than int() will read
+            attempt = 0
+        if attempt < 1:
+            return False, "GITHUB_RUN_ATTEMPT is not a positive integer"
+        if attempt > 1:
+            return False, f"attempt {attempt} is a re-run, and a re-run never mints"
+    if event is None:
+        if said_yes:
+            return True, f"a run by hand with {NJT_MINT_VAR}=true"
+        return False, f"a run by hand mints only with {NJT_MINT_VAR}=true"
+    if attempt_raw is None:
+        return False, "GITHUB_RUN_ATTEMPT is not a positive integer"
+    if event == "schedule":
+        return True, "a scheduled run, its first attempt"
+    if event == "workflow_dispatch":
+        if said_yes:
+            return True, "a dispatch with njt_mint ticked"
+        return False, "a dispatch mints only with njt_mint ticked"
+    return False, (
+        "only a scheduled run, a dispatch with njt_mint ticked, or a run by hand with "
+        f"{NJT_MINT_VAR}=true mints"
+    )
+
+
+def _njt_mint_refused(name: str, reason: str) -> Result:
+    """The WARN-skip both NJ Transit checks report when the rule refuses this run.
+
+    A WARN, as the skip without credentials is: a run that was not allowed to spend a
+    mint has checked nothing, which is never a PASS, and it was a choice rather than an
+    outage, which is never a FAIL. The detail names the reason and the budget, so whoever
+    reads a skipped line knows what a second read costs before asking for one."""
+    return Result(
+        name,
+        WARN,
+        f"skipped ({reason}; each mint is one of the account's {njt_auth.DAILY_MINT_LIMIT} "
+        "a day, shared with production)",
+    )
+
+
 def check_njt_static(
     fetch: Fetcher,
     sleep: Callable[[float], None],
@@ -3818,24 +3900,31 @@ def run_all(
     # spending two mints a time out of the ten the account gets for the Eastern day
     # (njt_auth.DAILY_MINT_LIMIT), 6 of which are already committed.
     #
-    # BUILT EVEN WHEN CREDENTIALS ARE ABSENT, and it costs nothing: _NjtToken mints
-    # lazily on first `get`, and with no credentials both checks WARN-skip before
-    # reaching it. That is what keeps a fork or pull request context, where the
-    # secrets resolve to empty strings, from touching NJ Transit at all.
+    # AND ONLY WHEN THE RUN MAY MINT AT ALL (njt_mint_permitted), read before anything
+    # NJ Transit is built. A refused run builds no _NjtToken and calls neither check, so
+    # nothing below can reach getToken; both report the rule's reason as a WARN-skip.
+    # With no credentials the checks run and WARN-skip on their own before minting,
+    # which keeps a fork or pull request context, where the secrets resolve to empty
+    # strings, from touching NJ Transit whatever the rule says.
     njt_creds = _njt_credentials(env.get(njt_auth.USERNAME_VAR), env.get(njt_auth.PASSWORD_VAR))
+    mint_permitted, mint_reason = njt_mint_permitted(env)
+    mint_refused = njt_creds is not None and not mint_permitted
     njt_token = (
         _NjtToken(fetch, njt_auth.NJT_TOKEN_URL, njt_creds[0], njt_creds[1])
-        if njt_creds is not None
+        if njt_creds is not None and mint_permitted
         else None
     )
-    njt_res, njt = check_njt_static(
-        fetch,
-        sleep,
-        now,
-        env.get(njt_auth.USERNAME_VAR),
-        env.get(njt_auth.PASSWORD_VAR),
-        token=njt_token,
-    )
+    if mint_refused:
+        njt_res, njt = _njt_mint_refused("njt-static", mint_reason), None
+    else:
+        njt_res, njt = check_njt_static(
+            fetch,
+            sleep,
+            now,
+            env.get(njt_auth.USERNAME_VAR),
+            env.get(njt_auth.PASSWORD_VAR),
+            token=njt_token,
+        )
     results += [subway_res, railroad_res, path_res, ferry_res, njt_res]
 
     # THE SUBWAY UPSTREAM READ IS KEPT, not only judged (contract 6.2). The eight headers
@@ -3852,7 +3941,9 @@ def run_all(
     results.append(check_ferry_realtime(fetch, sleep, now, (ferry or {}).get("trips", {})))
     results.append(check_alerts_realtime(fetch, sleep, now))
     results.append(
-        check_njt_realtime(
+        _njt_mint_refused("njt-realtime", mint_reason)
+        if mint_refused
+        else check_njt_realtime(
             fetch,
             sleep,
             now,

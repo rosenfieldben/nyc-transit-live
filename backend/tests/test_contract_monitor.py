@@ -2102,6 +2102,11 @@ def test_production_non_json_is_fail():
 # no credentials is asserted to make no request at all.
 
 NJT_TOKEN = "https://njt.example/getToken"
+
+# A run the mint rule permits (njt_mint_permitted): a scheduled run's first attempt, as
+# GitHub sets it. Every run_all test that means to mint states it, because since the
+# rule a run with no event is a run by hand and mints only on an explicit yes.
+SCHEDULED_RUN = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "1"}
 NJT_DATA = "https://njt.example/getGTFS"
 
 # The probe's exact invalid-token response (2026-08-05). Written out here rather
@@ -2616,6 +2621,7 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
             "NJT_USERNAME": "rider",
             "NJT_PASSWORD": "secret",
             "MONITOR_SKIP_PRODUCTION": "1",
+            **SCHEDULED_RUN,
         },
     )
     mints = [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL]
@@ -2665,6 +2671,7 @@ def test_run_all_a_failed_mint_fails_both_njt_checks_with_the_same_reason():
             "NJT_USERNAME": "rider",
             "NJT_PASSWORD": "secret",
             "MONITOR_SKIP_PRODUCTION": "1",
+            **SCHEDULED_RUN,
         },
     )
     mints = [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL]
@@ -2761,6 +2768,7 @@ def _assert_monitor_keeps_its_own_token(shared):
             "NJT_USERNAME": "rider",
             "NJT_PASSWORD": "secret",
             "MONITOR_SKIP_PRODUCTION": "1",
+            **SCHEDULED_RUN,
         },
     )
     assert [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL], (

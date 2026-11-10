@@ -2605,6 +2605,32 @@ def test_njt_realtime_cross_check_counts_a_warning_of_another_kind():
     )
 
 
+def test_njt_realtime_cross_check_says_so_when_no_warning_is_a_pair():
+    """A line whose warnings are all of the decoder's other kinds still says how many it
+    could not name, so it never reads as the old count-only line, and a run that prints it
+    is not mistaken for one that has not printed pairs yet."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_njt_tu(count=2))
+    feed.entity[0].id = ""
+    feed.entity[0].trip_update.trip.trip_id = ""
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.detail == (
+        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): 1 not named"
+    )
+
+
+def test_njt_realtime_cross_check_reads_an_id_repr_writes_in_double_quotes():
+    """Python's repr quotes a string holding a single quote in double quotes, the other
+    half of the pattern the pairs are read back with."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_njt_tu(count=2))
+    feed.entity[0].id = "it's"
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.detail == (
+        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): it\\'s/3800 on trip T0"
+    )
+
+
 @pytest.mark.parametrize(
     "text,expected",
     [
@@ -2917,7 +2943,9 @@ def test_run_all_does_not_mint_at_all_without_credentials():
         fetch.forms.append(files)
         return cm.FetchResult(500, b"")
 
-    results = cm.run_all(permissive, NO_SLEEP, NJT_RT_NOW, env={"MONITOR_SKIP_PRODUCTION": "1"})
+    results = cm.run_all(
+        permissive, NO_SLEEP, NJT_RT_NOW, env={"MONITOR_SKIP_PRODUCTION": "1", **SCHEDULED_RUN}
+    )
     njt_calls = [url for url, _h, _p in fetch.calls if "njt" in url.lower()]
     assert njt_calls == [], f"no credentials must mean no NJ Transit traffic, got {njt_calls}"
     by_name = {r.name: r for r in results}
@@ -3081,10 +3109,20 @@ def test_a_refused_run_skips_both_njt_checks_in_the_rules_words(trigger, detail)
 
 def test_without_credentials_the_skip_still_names_the_credentials():
     """The rule speaks only for a run that could have minted. With no credentials there
-    was nothing to refuse, and the line says what is missing, as it always has."""
-    results = cm.run_all(
-        FakeFetcher({}), NO_SLEEP, NJT_RT_NOW, env={"MONITOR_SKIP_PRODUCTION": "1"}
-    )
+    was nothing to refuse, and the line says what is missing, as it always has: on a run
+    the rule permits, so the credentials arm is what skips it, and on one it refuses."""
+    for trigger in (SCHEDULED_RUN, {}):
+        _assert_the_credentials_skip(
+            cm.run_all(
+                FakeFetcher({}),
+                NO_SLEEP,
+                NJT_RT_NOW,
+                env={"MONITOR_SKIP_PRODUCTION": "1", **trigger},
+            )
+        )
+
+
+def _assert_the_credentials_skip(results):
     by_name = {r.name: r for r in results}
     for name in ("njt-static", "njt-realtime"):
         assert (by_name[name].status, by_name[name].detail) == (
@@ -4118,6 +4156,26 @@ def test_the_monitor_workflow_declares_the_environment_its_njt_secrets_live_in()
     )
 
 
+def test_the_monitor_workflow_asks_for_the_mint_as_an_unticked_dispatch_input():
+    """THE WORKFLOW HALF OF THE MINT RULE (njt_mint_permitted reads MONITOR_NJT_MINT, and
+    only the workflow decides what lands there). A default of true, a literal "true" in the
+    mapping, or a renamed input would make every dispatch mint or none of them, and no test
+    of the rule's own arms could see it. Read from the file, as the test above is."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/contract-monitor.yml").read_text()
+    )
+    # PyYAML reads the bare key `on` as the boolean True.
+    dispatch = workflow[True]["workflow_dispatch"]
+    njt_mint = dispatch["inputs"]["njt_mint"]
+    assert (njt_mint["type"], njt_mint["default"]) == ("boolean", False)
+    assert "one of the account's ten a day, shared with production" in njt_mint["description"]
+    env_block = workflow["jobs"]["monitor"]["steps"][-1]["env"]
+    assert env_block["MONITOR_NJT_MINT"] == "${{ inputs.njt_mint }}"
+    assert cm.NJT_MINT_VAR == "MONITOR_NJT_MINT"
+
+
 def test_the_check_warn_skips_on_the_empty_strings_a_missing_secret_resolves_to():
     """The other half of the pair above, at the code boundary.
 
@@ -4136,7 +4194,12 @@ def test_the_check_warn_skips_on_the_empty_strings_a_missing_secret_resolves_to(
         fetch,
         NO_SLEEP,
         1000.0,
-        env={"NJT_USERNAME": "", "NJT_PASSWORD": "", "MONITOR_SKIP_PRODUCTION": "1"},
+        env={
+            "NJT_USERNAME": "",
+            "NJT_PASSWORD": "",
+            "MONITOR_SKIP_PRODUCTION": "1",
+            **SCHEDULED_RUN,
+        },
     )
     njt = [r for r in results if r.name == "njt-static"]
     assert len(njt) == 1

@@ -501,7 +501,7 @@ and each is a way a conventional poller gets this wrong:
    | Contract monitor, a delayed run | +1 | GitHub starts a scheduled run late, sometimes by hours (runs 356 and 357 started at 05:00 and 12:01 UTC against the `17 */6 * * *` slots), so the 20:17 Eastern run can land after midnight and give the next Eastern day five monitor mints: with production's 4, nine of ten, leaving 1 |
    | Contract monitor, a dispatch | 0, or +1 with `njt_mint` ticked | A dispatch's first attempt mints only when its `njt_mint` input is ticked (`njt_mint_permitted`). Unticked, both NJ Transit checks skip, naming why, and every other check runs |
    | Contract monitor, a re-run | 0 | By code since `claude/monitor-mint-guard`: a re-run never mints, whatever its event or input, and both NJ Transit checks skip, naming why. Before that, a re-run spent a mint exactly as a dispatch does: on the Eastern day 2026-11-08 run 439, a dispatch, ran three times and run 438 was re-run once, so the monitor minted seven times and production twice, nine of ten |
-   | Cron drift, measured | 0 | The delay is the rule, not the exception: on 2026-11-01 and 2026-11-02 the scheduled monitor runs started 231 to 362 minutes after their slots, some slots were skipped, and the Step 0 route-group probe's first scheduled run started 4h54m after its merge. A slot is not a run time, so a run is read by its run number, and a missing one is never filled by a dispatch, which would spend a mint |
+   | Cron drift, measured | 0 | The delay is the rule, not the exception: on 2026-11-01 and 2026-11-02 the scheduled monitor runs started 231 to 362 minutes after their slots, some slots were skipped, and the Step 0 route-group probe's first scheduled run started 4h54m after its merge. A slot is not a run time, so a run is read by its run number, and a missing one is never filled by a dispatch, which would spend a mint with `njt_mint` ticked and read no NJ Transit without it |
    | Contract monitor, a deploy day | 0 | On a deploy day the monitor runs on its schedule only: no dispatch and no re-run. The deploy's cold start already spends a production mint, and the watch after it reads the scheduled runs by number |
 
    A deploy (cold token cache), a `workflow_dispatch` of the monitor with `njt_mint` ticked, a
@@ -1156,7 +1156,10 @@ Config:
   run by hand (`python scripts/contract_monitor.py` from `backend/`, with the
   credentials in the environment) mints only with `MONITOR_NJT_MINT=true`. A run that
   may not mint reports both NJ Transit checks as a `WARN` that names the reason and the
-  budget, and every other check runs as usual.
+  budget, and every other check runs as usual. So a re-run never re-checks NJ Transit: a
+  run that went red only on NJ Transit turns green on its re-run, both lines skipped, while
+  the first attempt's `FAIL` and its notification stand. To read NJ Transit again,
+  dispatch with `njt_mint` ticked.
 - `MTA_BUS_API_KEY` (a repository **secret**): when set, the monitor also checks
   the keyed bus feed. The key rides as a query parameter and every error string is
   scrubbed, so it never reaches the logs. When unset, the bus check is skipped

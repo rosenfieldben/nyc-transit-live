@@ -1473,13 +1473,14 @@ def check_njt_realtime(
         # something moved and not which side, so the decoder's own warnings are read back
         # for up to five pairs, each through _markdown_literal, the rest counted.
         statuses.append(WARN)
+        # The tail is printed whether or not a pair was named, so a line whose warnings
+        # are all of the decoder's other kinds never reads as the old count-only one.
         named, unnamed = _mismatch_pairs(warnings)
-        detail = f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745)"
-        if named:
-            detail += ": " + ", ".join(named)
-            if unnamed:
-                detail += f", {unnamed} more not named"
-        details.append(detail)
+        parts = named + ([f"{unnamed} {'more ' if named else ''}not named"] if unnamed else [])
+        details.append(
+            f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745): "
+            + ", ".join(parts)
+        )
 
     straddling = _njt_straddling_trips(feed, now, stops_table)
     if entities >= NJT_MIN_TRIPS_FOR_RATIO and in_service:
@@ -2136,6 +2137,11 @@ def njt_mint_permitted(env: Mapping[str, str]) -> tuple[bool, str]:
       - `schedule`, attempt 1: permitted. This is the budget's four a day.
       - `workflow_dispatch`, attempt 1: permitted only on the yes.
       - anything else is refused.
+
+    A RE-RUN THEREFORE NEVER RE-CHECKS NJ TRANSIT. Its two lines WARN-skip and main()
+    exits 0 on WARNs, so a run that went red only on NJ Transit reads green on its re-run,
+    while the first attempt's FAIL and its notification stand. Reading NJ Transit again is
+    a dispatch with njt_mint ticked, as the README's Config list for the monitor says.
 
     NOTHING FROM THE ENV IS ECHOED but the attempt number, which is digits by the
     pattern above: the reason is written to the job summary, which renders markdown.

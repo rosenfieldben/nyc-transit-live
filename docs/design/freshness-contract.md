@@ -32,8 +32,9 @@ read `No trains` on A and B and dated C without naming it. Contract monitor runs
 counted as the second tick by Ben's ruling of 2026-11-09, a recorded deviation from the
 two-scheduled-ticks rule) each ended `0 FAIL, 2 WARN, 22 checks total` on `590054a`, both
 board lines PASS with every contributor current, so the four-state check had nothing to
-distinguish; the first tick to meet an empty board is recorded on the ledger's A03 row.
-Amendment 1's decisions amended the body in place on 2026-11-01, each amended
+distinguish; the first night tick, run 441, where NQRW is expected at G08 and by every
+sign not seen, is recorded on the ledger's A03 row, and no tick has yet met an empty
+board. Amendment 1's decisions amended the body in place on 2026-11-01, each amended
 sentence marked `Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states
 the rule the build is to meet, not what the code does until that build lands; for A10's rules
 (Q6 and Q7) it has landed, on Step 1's branch, for Q1, Q2, Q9 and Q10 on Step 2's, and for

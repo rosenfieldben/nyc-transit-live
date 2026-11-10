@@ -21,8 +21,19 @@ its own as Step 1 was. **Amended 2026-11-08: Amendment 1 is BUILT.** Step 3, A03
 half and the operator's code, is built on `claude/a03-renderers-operator`, stacked on Step 2's
 branch and merged into it, so Steps 2 and 3 land on `main` together as one deploy, PR #139
 (the ruling of 2026-11-08 on that pull request's F1; A1.6's erratum says why). Day one:
-DAY_ONE_COUNTS (filled at the close-out, from the deploy and its first two scheduled monitor
-ticks). Amendment 1's decisions amended the body in place on 2026-11-01, each amended
+PR #139's merge (`590054a`, 2026-11-08 17:47:08 UTC, tree `aac69f3`) deployed once,
+finishing at 17:48:48 UTC, and its cold start promoted all six archives between 17:48:40
+and 17:48:54 UTC, each with `failed_downloads` 0 and no degraded member. `/healthz`
+passed with nothing degraded, the allowance read 2026-11-08 1 of 4, `njt_feeds` appeared
+on `/api/status`, and the served page rendered fresh empty service and boards A, B and C
+at 219 as the A03 witness prints them under its empty alert store, where `11e0dc5`'s page
+read `No trains` on A and B and dated C without naming it. Contract monitor runs 440
+(scheduled, created 22:13:22 UTC) and 439 (a `workflow_dispatch` created 18:35:11 UTC,
+counted as the second tick by Ben's ruling of 2026-11-09, a recorded deviation from the
+two-scheduled-ticks rule) each ended `0 FAIL, 2 WARN, 22 checks total` on `590054a`, both
+board lines PASS with every contributor current, so the four-state check had nothing to
+distinguish; the first tick to meet an empty board is recorded on the ledger's A03 row.
+Amendment 1's decisions amended the body in place on 2026-11-01, each amended
 sentence marked `Amended 2026-11-01` (at 2.1, `ERRATUM, 2026-11-01`), so such a sentence states
 the rule the build is to meet, not what the code does until that build lands; for A10's rules
 (Q6 and Q7) it has landed, on Step 1's branch, for Q1, Q2, Q9 and Q10 on Step 2's, and for

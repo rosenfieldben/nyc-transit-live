@@ -4,6 +4,8 @@
 // which the real backend served) and stubs the basemap
 // tiles, so nothing leaves the machine. A frozen clock (page.clock) makes the
 // arrival countdowns and the empty-feed staleness window deterministic; no sleeps.
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 const { test, expect } = require("@playwright/test");
 const fx = require("./fixtures/api");
 const { installMocks, json, emptyFeedAt } = require("./mock");
@@ -168,8 +170,11 @@ test("3. failed poll: a 502 keeps last-known markers and surfaces the error", as
   await page.clock.runFor(15_000);
 
   // The error is surfaced in the status line (error styling), and the last-known
-  // bus markers stay on the map rather than vanishing on a transient failure.
-  await expect(status).toContainText("buses: Upstream MTA bus feed error (HTTP 502)");
+  // bus markers stay on the map rather than vanishing on a transient failure. As the
+  // source and the status, never the 502's detail, which is the upstream's text (H6's
+  // residue, failedResponseWords; test 37 holds every vehicle envelope to it).
+  await expect(status).toContainText("buses: not reporting (HTTP 502)");
+  expect(await status.textContent()).not.toContain("Upstream MTA bus feed error");
   await expect(status).toHaveClass(/error/);
   await expect(busMarkers(page)).toHaveCount(2);
   // The feeds that still succeeded are unaffected.
@@ -891,7 +896,8 @@ test("22. Ferry poll split: an empty 200 clears boats, a 502 keeps last-known", 
     json(route, { detail: "Upstream NYC Ferry feed error (HTTP 502)" }, 502);
   await page.clock.runFor(15_000);
   await expect(ferryMarkers(page)).toHaveCount(3); // failure retains last-known
-  await expect(status).toContainText("ferries: Upstream NYC Ferry feed error (HTTP 502)");
+  // The source and the status, never the 502's detail (H6's residue; test 37).
+  await expect(status).toContainText("ferries: not reporting (HTTP 502)");
   await expect(status).toHaveClass(/error/);
 
   // A successful EMPTY poll (the boats went home) clears them IMMEDIATELY: the one
@@ -2406,6 +2412,69 @@ test("36. an NJT marker born from retained data is dim on its first frame, and a
   await page.clock.runFor(15_000);
   await expect(popup(page)).toContainText("3 min early");
   expect(await popup(page).textContent()).not.toContain("late");
+});
+
+/* 37. H6's RESIDUE, THE RIDER HALF, RENDERED (the 2026-10-12 record's live list; ruled 2026-11-08 by
+   Claude, "fix on the page, the status line giving the source and the status, never the detail").
+   Each of the five vehicle envelopes answers the page's first poll with the 502 the backend serves
+   after a failed first poll, status and detail as backend/tests/test_q10_first_poll_boards.py
+   recorded them from H6's stub (one marker in the upstream's reason phrase, one in its body) to
+   fixtures/h6_envelope_502s.json. refreshSource printed that detail as the source's error, so the
+   line read "trains: All subway feeds failed: 1-7+S: Server error '503 Q10-REASON-PHRASE-MARKER'
+   ..." to a rider. Now it reads each source's label, the app's word for the state and the status
+   (failedResponseWords), and neither marker is anywhere in the document: not printed, not in an
+   attribute, not in the page's live region.
+
+   THE CONTROL IS THAT THE PAGE RECEIVED THEM: every one of the five responses is read as the page
+   got it and carries its marker, so their absence from the document is the page's doing and not a
+   harness that served nothing. NJ Transit's not-configured 503, whose words source.quiet still
+   reads, is test 35's. */
+test("37. H6's residue: a vehicle envelope's 502 reaches the status line as its source and status, never its text", async ({
+  page,
+}) => {
+  const served = JSON.parse(readFileSync(join(__dirname, "fixtures", "h6_envelope_502s.json"), "utf8"));
+  const KEYS = {
+    "/api/subways": "subways",
+    "/api/railroads": "railroads",
+    "/api/path": "path",
+    "/api/ferry": "ferry",
+    "/api/njt-trains": "njt",
+  };
+  const MARKERS = ["Q10-REASON-PHRASE-MARKER", "Q10-RESPONSE-BODY-MARKER"];
+  expect(Object.keys(served).sort()).toEqual(Object.keys(KEYS).sort());
+  const received = Object.keys(KEYS).map((url) =>
+    page.waitForResponse((response) => new URL(response.url()).pathname === url),
+  );
+  await boot(page, (ctx) => {
+    for (const [url, key] of Object.entries(KEYS)) {
+      ctx.overrides[key] = (route) => json(route, { detail: served[url].detail }, served[url].status);
+    }
+  });
+  for (const response of await Promise.all(received)) {
+    expect(response.status()).toBe(502);
+    const { detail } = await response.json();
+    expect(MARKERS.some((m) => detail.includes(m)), `${response.url()}: the page received a marker`).toBe(true);
+  }
+  const status = page.locator("#status");
+  await expect(status).toHaveClass(/error/);
+  await expect(status).toHaveText(
+    "trains: not reporting (HTTP 502); railroad: not reporting (HTTP 502); PATH: not reporting (HTTP 502); " +
+      "ferries: not reporting (HTTP 502); NJ Transit: not reporting (HTTP 502)",
+  );
+  // And on the next poll, the same: the line is the source and the status every time it is built.
+  await page.clock.runFor(15_000);
+  await expect(status).toHaveText(/^trains: not reporting \(HTTP 502\); railroad: not reporting \(HTTP 502\);/);
+  const everywhere = await page.evaluate(() => ({
+    html: document.documentElement.outerHTML,
+    spoken: document.getElementById("page-announce").textContent,
+  }));
+  for (const marker of MARKERS) {
+    expect(everywhere.html, `${marker} reached the document`).not.toContain(marker);
+    expect(everywhere.spoken, `${marker} reached the live region`).not.toContain(marker);
+  }
+  for (const word of ["All subway feeds failed", "Upstream", "Server error", "<feed url>"]) {
+    expect(everywhere.html, `the detail's own words reached the document: ${word}`).not.toContain(word);
+  }
 });
 
 test("C2h. subway content ten minutes old behind a fresh poll: ACE alone dims and is named (6.2)", async ({

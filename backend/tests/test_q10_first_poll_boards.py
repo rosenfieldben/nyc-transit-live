@@ -41,6 +41,9 @@ pytestmark = pytest.mark.anyio
 REASON = "Q10-REASON-PHRASE-MARKER"
 BODY = "Q10-RESPONSE-BODY-MARKER"
 GOLDEN = Path(__file__).parents[2] / "tests" / "e2e" / "fixtures" / "q10_first_poll_boards.json"
+# H6's residue: each vehicle envelope's 502, as served, for the browser half
+# (tests/e2e/smoke.spec.js) to answer the real page's refreshSource with.
+ENVELOPES = Path(__file__).parents[2] / "tests" / "e2e" / "fixtures" / "h6_envelope_502s.json"
 REGENERATE_VAR = "Q10_BOARDS_REGENERATE"
 # The never-decoded block every family's first failure writes (pollers._system_freshness).
 NEVER_DECODED = {
@@ -220,6 +223,39 @@ async def test_the_upstreams_text_stays_on_the_operators_surface(fresh):
         f"the first-failure boards no longer match {GOLDEN.name}, which the browser half "
         f"renders. If the change is intentional, regenerate with {REGENERATE_VAR}=1 and "
         "review the diff; otherwise the backend has drifted."
+    )
+
+
+async def test_each_vehicle_envelope_answers_its_502_with_the_upstreams_text(fresh):
+    """H6's RESIDUE, the backend half (ruled 2026-11-08: fix on the page). Q10 left the five
+    vehicle envelopes as they were, so each still answers a failed first poll with the
+    recorded 502, and its detail carries the marker H6 measured: the reason phrase on the
+    subway, the railroads, PATH and the ferry, the body on NJ Transit. That is the text the
+    page's status line printed (frontend/map.js, refreshSource). Pinned, status and detail as
+    served, to the fixture tests/e2e/smoke.spec.js answers the real page's polls with, where
+    the status line must read "{label}: not reporting (HTTP 502)" and no rider surface may
+    carry either marker: the rider half, rendered."""
+    served = await _first_failure()
+    record = {}
+    for family, (_, _, vehicles_path, marker) in FAMILIES.items():
+        response = served[family]["vehicles"]
+        assert response.status_code == 502, (family, response.text)
+        detail = response.json()["detail"]
+        assert marker in detail, (family, detail)
+        record[vehicles_path] = {"status": response.status_code, "detail": detail}
+    assert sorted(record) == [
+        "/api/ferry",
+        "/api/njt-trains",
+        "/api/path",
+        "/api/railroads",
+        "/api/subways",
+    ]
+    if os.environ.get(REGENERATE_VAR) == "1":
+        ENVELOPES.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    assert record == json.loads(ENVELOPES.read_text()), (
+        f"the vehicle envelopes' 502s no longer match {ENVELOPES.name}, which the browser half "
+        f"serves. If the change is intentional, regenerate with {REGENERATE_VAR}=1 and review "
+        "the diff; otherwise the backend has drifted."
     )
 
 

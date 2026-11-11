@@ -96,6 +96,8 @@ const {
   njtGlideTrain,
   njtOrderedArrivals,
   isNotConfigured,
+  failedResponseWords,
+  UPSTREAM_DETAIL_STATUSES,
   describeIdentity,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
@@ -4284,6 +4286,35 @@ test("a deployment that does not run NJ Transit is not an error on the status li
   assert.equal(isNotConfigured("timed out"), false);
   assert.equal(isNotConfigured(null), false);
   assert.equal(isNotConfigured(undefined), false);
+});
+
+test("H6's residue: a vehicle envelope's 502 reads as the state and the status, never its detail", () => {
+  // The status line's words for a non-OK vehicle envelope (failedResponseWords). A 502's detail is
+  // the upstream's text, here as the backend served it from H6's stub (the recorded 502 of
+  // /api/path, tests/e2e/fixtures/h6_envelope_502s.json): none of it reaches the rider. The same
+  // for a 502 whose detail is our own words, and for one with no detail at all (a proxy's HTML).
+  const upstream =
+    "Upstream PATH bridge feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>";
+  assert.equal(failedResponseWords(502, upstream), "not reporting (HTTP 502)");
+  assert.equal(failedResponseWords(502, "Upstream PATH bridge feed returned undecodable data"), "not reporting (HTTP 502)");
+  assert.equal(failedResponseWords(502, undefined), "not reporting (HTTP 502)");
+  assert.deepEqual([...UPSTREAM_DETAIL_STATUSES], [502]);
+  // EVERY OTHER STATUS A VEHICLE ENVELOPE ANSWERS CARRIES THE APP'S OWN WORDS (the enumeration on
+  // the 2026-10-12 record), and keeps them: the warming and static-loading 503s, NJ Transit's
+  // not-configured 503 (which source.quiet then silences, test 35 in smoke.spec.js), the refresh
+  // deadline's 504 and an unclassified failure's 500, which names a type and never a message.
+  for (const [status, detail] of [
+    [503, "Feed cache is warming up; try again in a few seconds."],
+    [503, "Static PATH GTFS is still loading; it will retry automatically. Try again shortly."],
+    [503, "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); no realtime poll is attempted."],
+    [504, "Upstream did not complete within the 45s refresh deadline; keeping last-known data."],
+    [500, "Internal error refreshing path (KeyError)"],
+  ]) {
+    assert.equal(failedResponseWords(status, detail), detail, `${status}`);
+  }
+  // No detail, or one that is not a sentence (a validation error's list): the status alone.
+  assert.equal(failedResponseWords(500, undefined), "HTTP 500");
+  assert.equal(failedResponseWords(422, [{ loc: ["query"], msg: "field required" }]), "HTTP 422");
 });
 
 test("the live region calls NJ Transit by name, never by its payload key", () => {

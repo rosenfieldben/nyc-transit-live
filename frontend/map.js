@@ -91,7 +91,12 @@ async function refreshSource(source) {
     const res = await fetch(source.url, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(body?.detail ?? `HTTP ${res.status}`);
+      // THE RIDER'S WORDS AND THE SERVED DETAIL, APART (H6's residue, failedResponseWords): the
+      // error's message is what the status line prints, never a 502's detail, and the detail rides
+      // beside it for source.quiet alone, which matches NJ Transit's not-configured 503 on its words.
+      const failure = new Error(failedResponseWords(res.status, body?.detail));
+      failure.detail = body?.detail;
+      throw failure;
     }
     const body = await res.json();
     // fetchedAt, feedTimestamp (the server-side staleness signal), servedAt (this
@@ -161,7 +166,9 @@ async function refreshSource(source) {
     // fault (see the njt row). It still counts zero and still draws nothing; what
     // it does not do is turn the rider's status line red and quote a sentence
     // written for an operator.
-    source.error = source.quiet && source.quiet(message) ? null : message;
+    // `quiet` reads the SERVED detail and nothing else (a timeout or a refused connection has
+    // none), never the rider's words built from it, which for a 502 no longer carry it.
+    source.error = source.quiet && source.quiet(err.detail) ? null : message;
   } finally {
     // Cleared here (not per-return) because the success path and both empty
     // branches return early out of the try: finally is the one place that always

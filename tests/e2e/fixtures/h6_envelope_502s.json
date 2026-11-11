@@ -1,0 +1,22 @@
+{
+  "/api/ferry": {
+    "detail": "Upstream NYC Ferry feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>",
+    "status": 502
+  },
+  "/api/njt-trains": {
+    "detail": "Upstream NJ Transit feed error: NJ Transit returned HTTP 503: Q10-RESPONSE-BODY-MARKER",
+    "status": 502
+  },
+  "/api/path": {
+    "detail": "Upstream PATH bridge feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>",
+    "status": 502
+  },
+  "/api/railroads": {
+    "detail": "All railroad feeds failed: LIRR: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> MNR: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>",
+    "status": 502
+  },
+  "/api/subways": {
+    "detail": "All subway feeds failed: 1-7+S: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> ACE: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> BDFM: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> G: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> JZ: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> NQRW: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> L: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url> SIR: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>\nFor more information check: <feed url>",
+    "status": 502
+  }
+}

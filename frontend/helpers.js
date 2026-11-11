@@ -738,6 +738,31 @@ function statusNoteText(problems = []) {
   return (problems ?? []).filter(Boolean).join("; ");
 }
 
+/* H6's RESIDUE: WHAT THE STATUS LINE SAYS OF A VEHICLE ENVELOPE THAT ANSWERED NON-OK (the 2026-10-12
+   record's live list; ruled 2026-11-08 by Claude, "fix on the page, the status line giving the
+   source and the status, never the detail"). A vehicle envelope answers its poller's recorded
+   failure until its cache first fills (backend/cache.py, _serve_cached), and a 502's detail is the
+   UPSTREAM's text: its reason phrase or its body, with only URLs scrubbed. refreshSource printed
+   that detail as the source's error, so a sentence an upstream chose reached the rider's status
+   line. Measured with markers in a stub's reason phrase and body (backend/tests/
+   test_q10_first_poll_boards.py, the vehicle envelopes' 502s).
+
+   So for a status whose detail can carry an upstream's bytes, the line reads OUR word for the state
+   and the status, "trains: not reporting (HTTP 502)", and no byte of the detail. "not reporting"
+   and not "feed unavailable", which the brief proposed: it is design 3.2's word for "a system that
+   has never decoded", and an envelope answers this only while its cache has never filled, so it is
+   the state the status line's blind clause and a never-decoded board already name in those words
+   (staleness(), boardLine). Every other status keeps the detail it served, which the enumeration
+   on the record found to be the app's own words, and a response with no detail reads "HTTP {n}"
+   as before. THE SERVED DETAIL STILL REACHES source.quiet (map.js carries it beside these words),
+   so NJ Transit's not-configured 503 stays quiet. One rule, one helper. */
+const UPSTREAM_DETAIL_STATUSES = new Set([502]);
+
+function failedResponseWords(status, detail) {
+  if (UPSTREAM_DETAIL_STATUSES.has(status)) return `not reporting (HTTP ${status})`;
+  return typeof detail === "string" ? detail : `HTTP ${status}`;
+}
+
 /* ----- MR1: the theme's two decisions ---------------------------------------------------
    The only two parts of theming that are decisions rather than plumbing, lifted out so they
    are testable under `node --test` and so systems/shared.js has nothing to get wrong.
@@ -6304,7 +6329,7 @@ if (typeof module !== "undefined" && module.exports) {
     njtRouteTables, njtTrainPopupHtml, njtDelayText, njtTrainName,
     njtStationName,
     njtArrivalDisplay, njtArrivalsHtml, njtRowLabel, njtAtItsStation, njtGlideTrain,
-    njtOrderedArrivals, isNotConfigured,
+    njtOrderedArrivals, isNotConfigured, failedResponseWords, UPSTREAM_DETAIL_STATUSES,
     // A1: the accessible station surface.
     countdownParts, spokenCountdown, STATION_RESULT_CAP, SUBWAY_BUCKET_ORDER,
     foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,

@@ -1133,6 +1133,26 @@ test("P5f. Amendment 1's never-decoded boards, one popup per family", async ({ p
   expect(world.surfaces["subway station"].spoken).toMatch(/1, 2 and 3 trains not reporting/);
 });
 
+/* P5g: F8's POPULATED BOARD WITH A STALE GROUP AND NO ROW OF IT (the ruling of 2026-11-08, A1.3
+   amended). Times Sq with the N, Q, R and W it is really served by, the 1-7+S group's rows on the
+   board and NQRW answering with content 45 minutes old and no row here (fixtures.agedGroupBoard).
+   The rider reads "N, Q, R and W trains as of 45m ago" on the board's line, above rows that are
+   current. Pinned here so the new words are in a golden rather than a waiver, which is what P5b
+   reads. */
+test("P5g. F8's populated board naming a stale group with no row, its popup", async ({ page }) => {
+  await boot(page, (c) => {
+    c.overrides.subwayStops = (route) => json(route, fx.agedGroupStops());
+    c.overrides.subwayArrivals = (route) => json(route, fx.agedGroupBoard());
+  });
+  const world = await captureWorld(page, ["subway station"]);
+  pin("popupText/f8", world.surfaces);
+  // Outside pin(), so regeneration cannot swallow it: the line names the group by its routes here,
+  // with its content's age, and the board still lists the current rows beneath it.
+  const spoken = world.surfaces["subway station"].spoken;
+  expect(spoken).toMatch(/N, Q, R and W trains as of 45m ago/);
+  expect(spoken).not.toMatch(/No trains.*No trains/);
+});
+
 /* THE COVERAGE TEST, and it is the hardest claim in the stage: that every rider-visible
    string in a popup is pinned.
 

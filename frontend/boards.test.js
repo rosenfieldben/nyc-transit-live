@@ -1324,3 +1324,49 @@ test("F8 the clause appearing is announced once, its age counting up is not, a s
   assert.equal(sandbox.announcementWorthy(shaped(at45), shaped(at46)), false);
   assert.equal(sandbox.announcementWorthy(shaped(at45), shaped(both)), true);
 });
+
+test("F8 only the stale groups with no row are named, and only their age counts", () => {
+  // A mixed population (the adversarial round of claude/rider-text-residue, its F5): BDFM stale
+  // 2700 s with no row, NQRW stale 3600 s WITH its Q row on the board. The line names B alone, at
+  // BDFM's 45m: NQRW's row carries its own age, so neither its routes nor its 60m join the clause.
+  const rowQ = { route_id: "Q", trip_id: "pq", arrival: T + 300, observed_at: T - 3600, provenance: "reported" };
+  const NQRW = probeBlock({ fetched_at: T, feed_timestamp: T - 3600, ok: true });
+  assert.deepEqual(probeLine({ BDFM: AGED_BDFM, NQRW }, [PROBE_ROW, rowQ]), {
+    words: "B trains as of 45m ago",
+    kind: "aged:B trains",
+    slot: null,
+  });
+});
+
+test("F8 a line names routes in the station's order, whatever order the groups arrive in", () => {
+  // The envelope lists its groups in its own order (the backend sorts them, ACE before BDFM); the
+  // rider hears the station's (the adversarial round of claude/rider-text-residue, its F4). NQRW
+  // arriving before BDFM still reads "B and Q", as the station lists them.
+  const NQRW = probeBlock({ fetched_at: T, feed_timestamp: T - 2700, ok: true });
+  const { sandbox } = loadFrontend();
+  const body = { ...probeBody({}), systems: { "1-7+S": PROBE_GROUP, NQRW, BDFM: AGED_BDFM } };
+  const board = sandbox.boardFreshness("subway", body, T, PROBE.routes);
+  assert.equal(sandbox.boardLine(board, [PROBE_ROW]).words, "B and Q trains as of 45m ago");
+  // And the dark clause, which reads the same helper: at a station whose routes are B, D and E, with
+  // ACE and BDFM never decoded and ACE listed first, "B, D and E", not "E, B and D".
+  const never = probeBlock({ fetched_at: null, feed_timestamp: null, ok: false });
+  const bde = sandbox.boardFreshness(
+    "subway",
+    { served_at: T, systems: { "1-7+S": PROBE_GROUP, ACE: never, BDFM: never } },
+    T,
+    ["B", "D", "E", "2"],
+  );
+  assert.equal(sandbox.boardLine(bde, [PROBE_ROW]).words, "B, D and E trains not reporting");
+});
+
+test("F8 a board with no systems map names nothing above rows that are its own", () => {
+  // An older backend's subway board carries no systems map, so ingestSystems stands one system in
+  // for it, named "subway", which no route joins to through the table. It is the board's one system
+  // and every row is its, so its old content is the rows' to date, never a clause over them (the
+  // adversarial round of claude/rider-text-residue, its F3). The same body empty still dates itself.
+  const { sandbox } = loadFrontend();
+  const old = { fetched_at: T, feed_timestamp: T - 600, served_at: T, directions: { Northbound: [PROBE_ROW] } };
+  const board = sandbox.boardFreshness("subway", old, T, PROBE.routes);
+  assert.deepEqual({ ...sandbox.boardLine(board, [PROBE_ROW]) }, { words: null, kind: "", slot: null });
+  assert.deepEqual({ ...sandbox.boardLine(board, []) }, { words: "as of 10m ago", kind: "aged", slot: null });
+});

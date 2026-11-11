@@ -738,29 +738,39 @@ function statusNoteText(problems = []) {
   return (problems ?? []).filter(Boolean).join("; ");
 }
 
-/* H6's RESIDUE: WHAT THE STATUS LINE SAYS OF A VEHICLE ENVELOPE THAT ANSWERED NON-OK (the 2026-10-12
-   record's live list; ruled 2026-11-08 by Claude, "fix on the page, the status line giving the
-   source and the status, never the detail"). A vehicle envelope answers its poller's recorded
-   failure until its cache first fills (backend/cache.py, _serve_cached), and a 502's detail is the
-   UPSTREAM's text: its reason phrase or its body, with only URLs scrubbed. refreshSource printed
-   that detail as the source's error, so a sentence an upstream chose reached the rider's status
-   line. Measured with markers in a stub's reason phrase and body (backend/tests/
+/* H6's RESIDUE: WHAT THE STATUS LINE SAYS OF A VEHICLE SOURCE'S RESPONSE IT CANNOT PRINT (the
+   2026-10-12 record's live list; ruled 2026-11-08 by Claude, "fix on the page, the status line
+   giving the source and the status, never the detail"). A vehicle envelope answers its poller's
+   recorded failure until its cache first fills (backend/cache.py, _serve_cached), and a 502's
+   detail is the UPSTREAM's text: its reason phrase or its body, with only URLs scrubbed.
+   refreshSource printed that detail as the source's error, so a sentence an upstream chose reached
+   the rider's status line. Measured with markers in a stub's reason phrase and body (backend/tests/
    test_q10_first_poll_boards.py, the vehicle envelopes' 502s).
 
-   So for a status whose detail can carry an upstream's bytes, the line reads OUR word for the state
-   and the status, "trains: not reporting (HTTP 502)", and no byte of the detail. "not reporting"
-   and not "feed unavailable", which the brief proposed: it is design 3.2's word for "a system that
-   has never decoded", and an envelope answers this only while its cache has never filled, so it is
-   the state the status line's blind clause and a never-decoded board already name in those words
-   (staleness(), boardLine). Every other status keeps the detail it served, which the enumeration
-   on the record found to be the app's own words, and a response with no detail reads "HTTP {n}"
-   as before. THE SERVED DETAIL STILL REACHES source.quiet (map.js carries it beside these words),
-   so NJ Transit's not-configured 503 stays quiet. One rule, one helper. */
+   So a response the app cannot vouch for reads the brief's words, the state and the status,
+   "trains: feed unavailable (HTTP 502)", and no byte of what it carried. That is a 502, whose
+   detail can carry an upstream's bytes (the enumeration on the record: every other status a
+   vehicle envelope answers is the app's own words), and any response with no readable string
+   detail: a proxy's HTML page, Starlette's plain-text 500, a 200 whose body is not JSON (whose
+   parse error quotes the body's first bytes). Every other response prints the detail it served.
+
+   NOT "not reporting", which is design 3.2's word for a system that has never decoded. An envelope
+   answers its recorded error only while ITS PROCESS has never filled the cache, and the page
+   outlives a process: across a restart, or behind a hosting edge's 502, the page still draws the
+   source's last markers and staleness() dates them, so "not reporting" would sit beside "as of
+   {age} ago" for the same source (the adversarial round of claude/rider-text-residue, its F2).
+
+   `detail` is what source.quiet may read (map.js): the served detail where the words ARE that
+   detail, and null otherwise, so NJ Transit's not-configured 503 stays quiet while no upstream's
+   words can quiet a 502 (the same round, its F1). One rule, one helper. */
 const UPSTREAM_DETAIL_STATUSES = new Set([502]);
 
-function failedResponseWords(status, detail) {
-  if (UPSTREAM_DETAIL_STATUSES.has(status)) return `not reporting (HTTP ${status})`;
-  return typeof detail === "string" ? detail : `HTTP ${status}`;
+function failedResponse(status, body) {
+  const detail = body != null && typeof body.detail === "string" ? body.detail : null;
+  if (UPSTREAM_DETAIL_STATUSES.has(status) || detail == null) {
+    return { words: `feed unavailable (HTTP ${status})`, detail: null };
+  }
+  return { words: detail, detail };
 }
 
 /* ----- MR1: the theme's two decisions ---------------------------------------------------
@@ -2700,9 +2710,12 @@ function andList(items) {
 // Whether a contributor has a row on this board. One system's board: any row is its. A
 // subway board is a JOIN, because a row names its route and not its feed group: a row is
 // this group's when the route-to-group table puts its route here, or the group's own block
-// says it serves that route (a diverted route).
+// says it serves that route (a diverted route). EXCEPT THE STAND-IN that ingestSystems builds
+// for a board with no systems map (an older backend), named for the board's kind rather than for
+// a group: it is the board's one system, so every row is its, and a populated board never names
+// it (the adversarial round of claude/rider-text-residue, its F3).
 function contributorHasRows(board, contributor, rows) {
-  if (board.kind !== "subway") return rows.length > 0;
+  if (board.kind !== "subway" || contributor.name === board.kind) return rows.length > 0;
   const served = Array.isArray(contributor.routes) ? contributor.routes : [];
   return rows.some(
     (row) => row && (SUBWAY_ROUTE_GROUPS[row.route_id] === contributor.name || served.includes(row.route_id)),
@@ -2711,18 +2724,17 @@ function contributorHasRows(board, contributor, rows) {
 
 // The rider's word for contributors a board's line names, dark (Q3) or, since F8's ruling, aged
 // with no row, never a feed key: on a subway board the routes they serve at this station, read
-// from the station's own routes through the table, in the station's order ("2 and 5 trains"),
-// and "Subway" where one of them names no route here; on a railroad board the railroad's rider
-// word (railroadSystemLabel); on the others the system's popup word ("PATH", "NYC Ferry", "NJ
-// Transit").
+// from the station's own routes through the table, in the STATION's order whatever order the
+// envelope lists the groups in ("B, D and E trains", where the groups arrive ACE first; the
+// adversarial round of claude/rider-text-residue, its F4), and "Subway" where one of them names
+// no route here; on a railroad board the railroad's rider word (railroadSystemLabel); on the
+// others the system's popup word ("PATH", "NYC Ferry", "NJ Transit").
 function contributorWords(board, named) {
   if (board.kind === "subway") {
-    const routes = [];
-    for (const contributor of named) {
-      const here = board.stationRoutes.filter((route) => SUBWAY_ROUTE_GROUPS[route] === contributor.name);
-      if (!here.length) return POPUP_SYSTEM_WORDS.subway;
-      for (const route of here) if (!routes.includes(route)) routes.push(route);
-    }
+    const groups = new Set(named.map((contributor) => contributor.name));
+    const servesHere = (group) => board.stationRoutes.some((route) => SUBWAY_ROUTE_GROUPS[route] === group);
+    if (![...groups].every(servesHere)) return POPUP_SYSTEM_WORDS.subway;
+    const routes = [...new Set(board.stationRoutes.filter((route) => groups.has(SUBWAY_ROUTE_GROUPS[route])))];
     return `${andList(routes)} trains`;
   }
   if (board.kind === "railroad") return railroadSystemLabel(named[0] ? named[0].name : board.system);
@@ -6329,7 +6341,7 @@ if (typeof module !== "undefined" && module.exports) {
     njtRouteTables, njtTrainPopupHtml, njtDelayText, njtTrainName,
     njtStationName,
     njtArrivalDisplay, njtArrivalsHtml, njtRowLabel, njtAtItsStation, njtGlideTrain,
-    njtOrderedArrivals, isNotConfigured, failedResponseWords, UPSTREAM_DETAIL_STATUSES,
+    njtOrderedArrivals, isNotConfigured, failedResponse, UPSTREAM_DETAIL_STATUSES,
     // A1: the accessible station surface.
     countdownParts, spokenCountdown, STATION_RESULT_CAP, SUBWAY_BUCKET_ORDER,
     foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,

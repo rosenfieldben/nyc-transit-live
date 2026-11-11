@@ -233,7 +233,7 @@ async def test_each_vehicle_envelope_answers_its_502_with_the_upstreams_text(fre
     subway, the railroads, PATH and the ferry, the body on NJ Transit. That is the text the
     page's status line printed (frontend/map.js, refreshSource). Pinned, status and detail as
     served, to the fixture tests/e2e/smoke.spec.js answers the real page's polls with, where
-    the status line must read "{label}: not reporting (HTTP 502)" and no rider surface may
+    the status line must read "{label}: feed unavailable (HTTP 502)" and no rider surface may
     carry either marker: the rider half, rendered."""
     served = await _first_failure()
     record = {}

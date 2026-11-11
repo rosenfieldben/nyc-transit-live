@@ -660,8 +660,9 @@ today:
 | `scheduled position, no GPS` | `helpers.js:2367` (the same answer's `.spoken`) | the same fact in an accessible name |
 | ~~`scheduled (no GPS)`~~ | *removed 2026-11-08; no reader since MR5, see the note at the end* | the compact form, once the railroad popup's. **Amended 2026-11-01 (Amendment 1's Q8):** removed from the contract and the code in the build. **Removed 2026-11-08** by Step 3 of that build: `positionQualifier` returns `words` and `spoken` only, and the string no longer ships |
 | `as of {age} ago` | `helpers.js:2211` (a row's qualifier), `:2237` (a board's line), `:2056-2057` (the status line); `As of {age} ago` at `:677` (the feed strip and a vehicle popup's footer) | how old the thing just named is |
-| `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded. **Amended 2026-11-01 (Amendment 1's Q11):** from the build also, on a board and on the status line past the cap, a failing system with nothing of it shown (the second table's added rows). **Amended 2026-11-10 (H6's residue, ruled 2026-11-08):** and on the status line, with the status, for a vehicle envelope that answers HTTP 502, `{label}: not reporting (HTTP 502)` (`failedResponseWords`), which an envelope answers only while its cache has never filled; never the 502's detail, which is the upstream's text |
+| `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded. **Amended 2026-11-01 (Amendment 1's Q11):** from the build also, on a board and on the status line past the cap, a failing system with nothing of it shown (the second table's added rows) |
 | `feed empty, showing last known` | `helpers.js:3486`, `:3492` | a bounded empty run |
+| `feed unavailable (HTTP {status})` | `helpers.js` (`failedResponse`), on the status line after the source's label: `trains: feed unavailable (HTTP 502)` | **Amended 2026-11-10 (H6's residue, ruled 2026-11-08):** a vehicle source's response the page cannot print: a 502, whose detail can be an upstream's text, or one with no readable detail (a proxy's page, a plain-text 500, a 200 that is not JSON). Never a byte of the response. Not `{system} not reporting`: the page outlives the process whose cache never filled, so across a restart it still draws the source's last markers and the line dates them |
 | `scheduled service (no live tracking)` | `helpers.js:3796` (the AirTrain station popup's sub-line) | AirTrain, which has no feed |
 
 **RE-ANCHORED BY MR5, AND TWO OF THESE ROWS SAID SOMETHING FALSE AS WELL AS POINTING SOMEWHERE
@@ -2903,6 +2904,9 @@ does, so the row above cites each where it is stated.
 ruled by Claude on the 2026-10-12 record's live list, both built on `claude/rider-text-residue`).
 A1.3 gains its third rule: a stale expected contributor with no row on a board with rows reads
 `{routes} trains as of {age} ago`, and 3.2's second table gains the row. The status line reads
-a vehicle envelope's 502 as `{label}: not reporting (HTTP 502)`, never its detail, where the
-brief's example said `feed unavailable`: `not reporting` is 3.2's word for a system that has
-never decoded, the only state in which an envelope answers it, and 3.2's first table says so.
+a vehicle source's 502, and any response with no readable detail, as `{label}: feed unavailable
+(HTTP {status})`, never a byte of the response, and 3.2's first table gains the row. `not
+reporting` was considered and rejected: an envelope answers its recorded error only while its
+process has never filled the cache, but the page outlives the process, so across a restart the
+page still draws the source's last markers and `as of {age} ago` would follow it on the same
+line (the adversarial round of `claude/rider-text-residue`, its F2).

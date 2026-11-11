@@ -96,7 +96,7 @@ const {
   njtGlideTrain,
   njtOrderedArrivals,
   isNotConfigured,
-  failedResponseWords,
+  failedResponse,
   UPSTREAM_DETAIL_STATUSES,
   describeIdentity,
   ROUTE_MAX_SLICE,
@@ -4288,21 +4288,34 @@ test("a deployment that does not run NJ Transit is not an error on the status li
   assert.equal(isNotConfigured(undefined), false);
 });
 
-test("H6's residue: a vehicle envelope's 502 reads as the state and the status, never its detail", () => {
-  // The status line's words for a non-OK vehicle envelope (failedResponseWords). A 502's detail is
-  // the upstream's text, here as the backend served it from H6's stub (the recorded 502 of
-  // /api/path, tests/e2e/fixtures/h6_envelope_502s.json): none of it reaches the rider. The same
-  // for a 502 whose detail is our own words, and for one with no detail at all (a proxy's HTML).
+test("H6's residue: a vehicle source's 502 reads as the state and the status, never its detail", () => {
+  // failedResponse: the status line's words for a response refreshSource cannot use, and the detail
+  // source.quiet may read. A 502's detail is the upstream's text, here as the backend served it from
+  // H6's stub (the recorded 502 of /api/path, tests/e2e/fixtures/h6_envelope_502s.json): none of it
+  // reaches the rider, and none of it reaches quiet.
   const upstream =
     "Upstream PATH bridge feed error: Server error '503 Q10-REASON-PHRASE-MARKER' for url '<feed url>";
-  assert.equal(failedResponseWords(502, upstream), "not reporting (HTTP 502)");
-  assert.equal(failedResponseWords(502, "Upstream PATH bridge feed returned undecodable data"), "not reporting (HTTP 502)");
-  assert.equal(failedResponseWords(502, undefined), "not reporting (HTTP 502)");
+  const unavailable = (status) => ({ words: `feed unavailable (HTTP ${status})`, detail: null });
+  assert.deepEqual(failedResponse(502, { detail: upstream }), { words: "feed unavailable (HTTP 502)", detail: null });
+  // The same for a 502 whose detail is our own words: the page cannot tell them apart.
+  assert.deepEqual(failedResponse(502, { detail: "Upstream PATH bridge feed returned undecodable data" }), unavailable(502));
+  // AN UPSTREAM'S WORDS CANNOT QUIET THE LINE (the adversarial round's F1): a 502 whose body happens
+  // to say "is not configured" hands quiet nothing, so NJ Transit's line stays raised.
+  const notConfiguredBody = "Upstream NJ Transit feed error: NJ Transit returned HTTP 503: Endpoint is not configured";
+  assert.deepEqual(failedResponse(502, { detail: notConfiguredBody }), unavailable(502));
+  assert.equal(isNotConfigured(failedResponse(502, { detail: notConfiguredBody }).detail), false);
   assert.deepEqual([...UPSTREAM_DETAIL_STATUSES], [502]);
-  // EVERY OTHER STATUS A VEHICLE ENVELOPE ANSWERS CARRIES THE APP'S OWN WORDS (the enumeration on
-  // the 2026-10-12 record), and keeps them: the warming and static-loading 503s, NJ Transit's
-  // not-configured 503 (which source.quiet then silences, test 35 in smoke.spec.js), the refresh
-  // deadline's 504 and an unclassified failure's 500, which names a type and never a message.
+  // NO READABLE STRING DETAIL, the same words: a proxy's HTML 502 or Starlette's plain-text 500 (no
+  // JSON at all), a 200 whose body is not JSON (its parse error would quote the body), and a detail
+  // that is not a sentence (a validation error's list).
+  assert.deepEqual(failedResponse(502, null), unavailable(502));
+  assert.deepEqual(failedResponse(500, null), unavailable(500));
+  assert.deepEqual(failedResponse(200, null), unavailable(200));
+  assert.deepEqual(failedResponse(422, { detail: [{ loc: ["query"], msg: "field required" }] }), unavailable(422));
+  // EVERY OTHER STATUS A VEHICLE ENVELOPE ANSWERS CARRIES THE APP'S OWN WORDS (the enumeration on the
+  // 2026-10-12 record), and keeps them, and quiet reads them: the warming and static-loading 503s,
+  // NJ Transit's not-configured 503 (which quiet then silences, test 35 in smoke.spec.js), the
+  // refresh deadline's 504 and an unclassified failure's 500, which names a type and never a message.
   for (const [status, detail] of [
     [503, "Feed cache is warming up; try again in a few seconds."],
     [503, "Static PATH GTFS is still loading; it will retry automatically. Try again shortly."],
@@ -4310,11 +4323,8 @@ test("H6's residue: a vehicle envelope's 502 reads as the state and the status, 
     [504, "Upstream did not complete within the 45s refresh deadline; keeping last-known data."],
     [500, "Internal error refreshing path (KeyError)"],
   ]) {
-    assert.equal(failedResponseWords(status, detail), detail, `${status}`);
+    assert.deepEqual(failedResponse(status, { detail }), { words: detail, detail }, `${status}`);
   }
-  // No detail, or one that is not a sentence (a validation error's list): the status alone.
-  assert.equal(failedResponseWords(500, undefined), "HTTP 500");
-  assert.equal(failedResponseWords(422, [{ loc: ["query"], msg: "field required" }]), "HTTP 422");
 });
 
 test("the live region calls NJ Transit by name, never by its payload key", () => {

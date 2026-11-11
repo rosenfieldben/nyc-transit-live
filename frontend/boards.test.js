@@ -306,12 +306,25 @@ function boards(S) {
 // panel's detail area, and what the panel's live region said on selection. `body`
 // replaces the fixture's board where given, and `error` stands in the panel's
 // failed-fetch path (what a non-200's `detail` became), with no body and no popup.
-function render(name, { body, error = null } = {}) {
+// `station` puts a subway board at another station (its id, name and routes) on both
+// surfaces, the way the loader would register it: the F8 probe needs a station two groups
+// serve, and the harness's Times Sq is served by one.
+function render(name, { body, error = null, station = null } = {}) {
   const h = loadFrontend();
   const board = boards(h.sandbox)[name];
   const served = error === null ? (body ?? board.body) : null;
-  const popup = served === null ? "" : board.popup(served);
-  h.sandbox.__entry = board.entry;
+  const popup =
+    served === null ? "" : station ? h.sandbox.subwayArrivalsHtml(station, served) : board.popup(served);
+  h.sandbox.__entry = station
+    ? {
+        ...board.entry,
+        key: `subway|${station.id}`,
+        id: station.id,
+        name: station.name,
+        routes: station.routes,
+        arrivalsUrl: `/api/subway-arrivals/${station.id}`,
+      }
+    : board.entry;
   h.sandbox.__body = served;
   h.sandbox.__error = error;
   h.run(
@@ -1157,4 +1170,157 @@ test("A03 every other family's failed board names its system after the grace", (
     render("njt", { body: njtBody }).spoken,
     "New York Penn Station, NJ Transit. as of 10m ago. No trains.",
   );
+});
+
+/* F8, THE RULING OF 2026-11-08 (A1.3 amended): ON A BOARD WITH ROWS, A GROUP THAT IS STALE AND HAS NO
+   ROW HERE IS NAMED, "{routes} trains as of {age} ago". A1.3 dated a stale contributor on an EMPTY
+   board only, and named a dark one on any board, so at a station two groups serve, a group answering
+   every poll with content 45 minutes old whose predictions here had all departed was not mentioned
+   while the other group's row was on the board: its rows were gone, so no row's qualifier dated it,
+   and the 2 train read as the whole board (the adversarial round of Step 3, its F8, recorded on the
+   2026-10-12 ledger's live list). THE LEDGER'S PROBE, COMMITTED: routes 2, 3, B and Q; the 1-7+S
+   group fresh with one row, the 2 train; BDFM ok, its poll current and its content 2700 s old, with
+   no row. A world rather than a stop: no station is served by exactly these four routes.
+
+   THE LEDGER'S NOTE SAID THE SAME BDFM BLOCK FAILING WOULD READ "B and Q trains not reporting", and
+   it reads "B trains not reporting": Q is NQRW's (SUBWAY_ROUTE_GROUPS), so BDFM serves only the B
+   here. The ruling's example, "B and Q trains as of 45m ago", is what the board says when NQRW is
+   stale with no row as well, which the second test below pins. */
+const PROBE = { id: "F8", name: "Probe St", routes: ["2", "3", "B", "Q"] };
+const PROBE_KICKER = kicker(
+  "Subway",
+  "[mark 2 17x17 var(--paper),#c0392b,#ffffff][mark 3 17x17 var(--paper),#c0392b,#ffffff]" +
+    "[mark B 17x17 var(--paper),#d68910,#1a1a1a]" +
+    '<span class="pmore" aria-hidden="true">+1</span>' +
+    spokenRoutes(2, 3, "B", "Q"),
+);
+const PROBE_ROW = { route_id: "2", trip_id: "p2", arrival: T + 120, observed_at: T - 5, provenance: "reported" };
+const probeBlock = (b) => ({ retained_since: null, routes: [], ...b });
+const PROBE_GROUP = probeBlock({ fetched_at: T, feed_timestamp: T - 5, ok: true, routes: ["2"] });
+const probeBody = (systems, rows = [PROBE_ROW]) => ({
+  fetched_at: T,
+  feed_timestamp: T - 5,
+  station_id: "F8",
+  station_name: "Probe St",
+  directions: { Northbound: rows, Southbound: [] },
+  served_at: T,
+  systems: { "1-7+S": PROBE_GROUP, ...systems },
+});
+const probeLine = (systems, rows = [PROBE_ROW]) => {
+  const { sandbox } = loadFrontend();
+  const board = sandbox.boardFreshness("subway", probeBody(systems, rows), T, PROBE.routes);
+  return { ...sandbox.boardLine(board, rows) };
+};
+const PROBE_ROWS_POPUP =
+  `${dir("Northbound")}<div class="arr"><span><span class="arr-badge" ${RED}>2</span></span>\n<span></span>\n` +
+  `<span class="n">2 min</span></div>\n${dir("Southbound")}<div class="arr-none">No trains</div>\n`;
+const PROBE_ROW_SPOKEN = "Northbound: 2 train in 2 minutes, 8:02 AM arrival";
+const AGED_BDFM = probeBlock({ fetched_at: T, feed_timestamp: T - 2700, ok: true });
+
+test("F8 the ledger's probe: a stale group with no row on a populated board is named, on every surface", () => {
+  const out = render("subway", { body: probeBody({ BDFM: AGED_BDFM }), station: PROBE });
+  assert.equal(
+    out.popup,
+    `${PROBE_KICKER}${title("Probe St")}<div class="popup-stale">B trains as of 45m ago</div>\n${PROBE_ROWS_POPUP}`,
+  );
+  assert.deepEqual(out.panel, [
+    "h3 Probe St (Subway)",
+    "p.station-detail-stale B trains as of 45m ago",
+    "h4 Northbound",
+    "ul.station-arrivals",
+    "  li 2 train in 2 minutes, 8:02 AM arrival",
+  ]);
+  assert.equal(out.spoken, `Probe St, Subway. B trains as of 45m ago. ${PROBE_ROW_SPOKEN}`);
+  assert.deepEqual(probeLine({ BDFM: AGED_BDFM }), { words: "B trains as of 45m ago", kind: "aged:B trains", slot: null });
+
+  // THE FRESH BOARD IS BYTE-IDENTICAL: the same group current, still with no row here, says nothing,
+  // and the board reads exactly as the board with no BDFM block at all.
+  const fresh = render("subway", { body: probeBody({ BDFM: probeBlock({ fetched_at: T, feed_timestamp: T - 5, ok: true }) }), station: PROBE });
+  assert.equal(fresh.popup, `${PROBE_KICKER}${title("Probe St")}${PROBE_ROWS_POPUP}`);
+  assert.deepEqual(fresh.panel, ["h3 Probe St (Subway)", "h4 Northbound", "ul.station-arrivals", "  li 2 train in 2 minutes, 8:02 AM arrival"]);
+  assert.equal(fresh.spoken, `Probe St, Subway. ${PROBE_ROW_SPOKEN}`);
+  const without = render("subway", { body: probeBody({}), station: PROBE });
+  assert.deepEqual([without.popup, without.panel, without.spoken], [fresh.popup, fresh.panel, fresh.spoken]);
+});
+
+test("F8 two stale groups with no row are one clause, by the routes they serve here and the worse age", () => {
+  // BDFM's content 2700 s old and NQRW's 2400 s: one population, one clause, the worst age answering
+  // (45m, not 40m), the routes in the station's order. The ruling's own example.
+  const NQRW = probeBlock({ fetched_at: T, feed_timestamp: T - 2400, ok: true });
+  assert.deepEqual(probeLine({ BDFM: AGED_BDFM, NQRW }), {
+    words: "B and Q trains as of 45m ago",
+    kind: "aged:B and Q trains",
+    slot: null,
+  });
+  const out = render("subway", { body: probeBody({ BDFM: AGED_BDFM, NQRW }), station: PROBE });
+  assert.equal(out.spoken, `Probe St, Subway. B and Q trains as of 45m ago. ${PROBE_ROW_SPOKEN}`);
+  assert.equal(out.panel[1], "p.station-detail-stale B and Q trains as of 45m ago");
+});
+
+test("F8 the band's two sides, on either clock: 89 s says nothing, 90 s names the group", () => {
+  // The band test the empty board's clause reads (contributorAged): the WORSE of the poll's age and
+  // the content's, against FEED_STALE_AFTER_S, 90 s, the boundary inclusive.
+  const content = (age) => probeBlock({ fetched_at: T, feed_timestamp: T - age, ok: true });
+  const poll = (age) => probeBlock({ fetched_at: T - age, feed_timestamp: T - 5, ok: true });
+  assert.deepEqual(
+    [content(89), content(90), poll(89), poll(90)].map((BDFM) => probeLine({ BDFM }).words),
+    [null, "B trains as of 90s ago", null, "B trains as of 90s ago"],
+  );
+});
+
+test("F8 a stale group beside a dark one: one clause each, the stale clause first", () => {
+  // BDFM stale with no row, NQRW never decoded with no row, 1-7+S's row on the board.
+  const NQRW = probeBlock({ fetched_at: null, feed_timestamp: null, ok: false });
+  assert.deepEqual(probeLine({ BDFM: AGED_BDFM, NQRW }), {
+    words: "B trains as of 45m ago; Q trains not reporting",
+    kind: "aged:B trains+dark:Q trains",
+    slot: null,
+  });
+  const out = render("subway", { body: probeBody({ BDFM: AGED_BDFM, NQRW }), station: PROBE });
+  assert.equal(out.spoken, `Probe St, Subway. B trains as of 45m ago; Q trains not reporting. ${PROBE_ROW_SPOKEN}`);
+});
+
+test("F8 a stale group WITH a row here is unchanged: its row carries the age, the line says nothing", () => {
+  const rowB = { route_id: "B", trip_id: "pb", arrival: T + 240, observed_at: T - 2700, provenance: "reported" };
+  const rows = [PROBE_ROW, rowB];
+  assert.deepEqual(probeLine({ BDFM: AGED_BDFM }, rows), { words: null, kind: "", slot: null });
+  const out = render("subway", { body: probeBody({ BDFM: AGED_BDFM }, rows), station: PROBE });
+  assert.deepEqual(out.panel, [
+    "h3 Probe St (Subway)",
+    "h4 Northbound",
+    "ul.station-arrivals",
+    "  li 2 train in 2 minutes, 8:02 AM arrival",
+    "  li B train in 4 minutes, 8:04 AM arrival, as of 45m ago",
+  ]);
+});
+
+test("F8 a group failing inside the grace keeps its age on a populated board, then reads not reporting", () => {
+  // The same band test as the empty board's (contributorAged), so a stale group whose next poll
+  // fails is not dropped from the line for the 90 s before it goes dark: 20 s into the failure it
+  // is still dated by its content (2720 s, 45m), and from 90 s it reads "not reporting".
+  const failing = (ago) => probeBlock({ fetched_at: T - ago, feed_timestamp: T - 2700 - ago, ok: false });
+  assert.deepEqual(
+    [failing(20), failing(89), failing(90)].map((BDFM) => [probeLine({ BDFM }).words, probeLine({ BDFM }).kind]),
+    [
+      ["B trains as of 45m ago", "aged:B trains"],
+      ["B trains as of 46m ago", "aged:B trains"],
+      ["B trains not reporting", "dark:B trains"],
+    ],
+  );
+});
+
+test("F8 the clause appearing is announced once, its age counting up is not, a second group is", () => {
+  const { sandbox } = loadFrontend();
+  const shaped = (l) => ({ systemLine: l.words, systemLineKind: l.kind, slot: "No trains", buckets: [] });
+  const fresh = probeLine({ BDFM: probeBlock({ fetched_at: T, feed_timestamp: T - 5, ok: true }) });
+  const at45 = probeLine({ BDFM: AGED_BDFM });
+  const at46 = probeLine({ BDFM: probeBlock({ fetched_at: T, feed_timestamp: T - 2760, ok: true }) });
+  const both = probeLine({ BDFM: AGED_BDFM, NQRW: probeBlock({ fetched_at: T, feed_timestamp: T - 2700, ok: true }) });
+  assert.deepEqual(
+    [fresh.words, at45.words, at46.words, both.words],
+    [null, "B trains as of 45m ago", "B trains as of 46m ago", "B and Q trains as of 45m ago"],
+  );
+  assert.equal(sandbox.announcementWorthy(shaped(fresh), shaped(at45)), true);
+  assert.equal(sandbox.announcementWorthy(shaped(at45), shaped(at46)), false);
+  assert.equal(sandbox.announcementWorthy(shaped(at45), shaped(both)), true);
 });

@@ -2490,6 +2490,15 @@ function contributorDark(contributor) {
   return contributor.state === "never" || (contributor.state === "failed" && staleAge(contributor.age));
 }
 
+// Whether a contributor that is NOT dark is past the rider band by the worse of its poll age and
+// its content age (contributorState's `worst`, Q4): a stale one, and a failed one inside Q11's
+// grace, which keeps its age rather than reading as current (the adversarial round of Step 3, its
+// F1). THE ONE BAND TEST both of the board's aged clauses read: the empty board's, and, since the
+// ruling of 2026-11-08 on F8, a populated board's for a contributor with no row there (boardLine).
+function contributorAged(contributor) {
+  return !contributorDark(contributor) && staleAge(contributor.worst);
+}
+
 // A board's freshness, read through the door once per render: the served instant, the
 // age of its worst system's last poll (what a retained row with no clock of its own is as
 // old as), whether its predictions are age-gated at all, and EACH CONTRIBUTOR'S STATE
@@ -2564,15 +2573,20 @@ function arrivalQualifier(row, board) {
 // age and a line repeating it would say everything twice:
 //
 //   * an EMPTY board's contributors that are not dark and whose worse clock is past the band
-//     (contributorState's `worst`): the stale ones, and a failed one inside Q11's grace,
+//     (contributorAged): the stale ones, and a failed one inside Q11's grace,
 //     whose "No trains" is only as current as the worse of their poll and their content
 //     (Amendment 1, Q4): "as of {age} ago", the worst age answering;
 //   * rows whose provider does not date them (Metro-North's), which have no age at all;
+//   * ON A BOARD WITH ROWS, AN AGED CONTRIBUTOR WITH NO ROW HERE (the ruling of 2026-11-08 on
+//     F8, A1.3 amended): by the same band test, named by the routes it serves at the station
+//     with the worst age among them, "B trains as of 45m ago". Its rows are gone, so no row's
+//     qualifier can date it, and without the clause the other contributors' rows read as the
+//     whole board. An aged contributor WITH a row says nothing here: the row carries its age;
 //   * A DARK CONTRIBUTOR WITH NO ROW HERE, whether or not other contributors' rows are
 //     (A1.3's accepted proposal, Q11): "{system} not reporting", for a contributor that has
 //     never decoded at once, and for one that decoded and is failing from 90 s after its
-//     last decode. One clause per population, never merged, stale first: the status line's
-//     order (staleness()).
+//     last decode. One clause per population, never merged, the aged clause before the dark
+//     one: the status line's order (staleness()).
 //
 // For undated rows the line gives the age of the board's last poll once that is stale,
 // and adds "{system} prediction age unavailable", the prediction form of 3.2's per-system
@@ -2588,20 +2602,21 @@ function arrivalQualifier(row, board) {
 // (no systems map: an older backend) keeps its slot.
 //
 // Returns {words, kind, slot}: `words` the line or null; `kind` what the line IS ("aged",
-// "dark:{who}", "slot:{who}", joined with "+"), which the live region compares the way it
-// compares a row's qualifier kind, so a line that changes kind is news and one that only
-// counts up is not (announcementWorthy). WHO IS DARK IS PART OF THE KIND, the words a rider
+// "aged:{who}", "dark:{who}", "slot:{who}", joined with "+"), which the live region compares
+// the way it compares a row's qualifier kind, so a line that changes kind is news and one that
+// only counts up is not (announcementWorthy). WHO IS DARK IS PART OF THE KIND, the words a rider
 // hears for them, which carry no age: a second group going dark, or one recovering while
 // another fails, changes what the board says about service and is news; an age counting up
-// changes no kind (the adversarial round of Step 3, its F2). `slot` the empty slot's words,
-// or null for "No trains".
+// changes no kind (the adversarial round of Step 3, its F2). WHO IS AGED WITH NO ROW is part of
+// it for the same reason, so a populated board's line appearing is announced once and its age
+// counting up is not. `slot` the empty slot's words, or null for "No trains".
 function boardLine(board, rows) {
   const all = rows || [];
   const contributors = board.contributors || [];
   const clauses = [];
   const kinds = [];
   if (!all.length) {
-    const aged = contributors.filter((c) => !contributorDark(c) && staleAge(c.worst));
+    const aged = contributors.filter(contributorAged);
     if (aged.length) {
       clauses.push(`as of ${humanizeAge(Math.max(...aged.map((c) => c.worst)))} ago`);
       kinds.push("aged");
@@ -2616,15 +2631,21 @@ function boardLine(board, rows) {
       );
       kinds.push("aged");
     }
+    const aged = contributors.filter((c) => contributorAged(c) && !contributorHasRows(board, c, all));
+    if (aged.length) {
+      const who = contributorWords(board, aged);
+      clauses.push(`${who} as of ${humanizeAge(Math.max(...aged.map((c) => c.worst)))} ago`);
+      kinds.push(`aged:${who}`);
+    }
   }
   const slotTaken = !all.length && contributors.length > 0 && contributors.every(contributorDark);
   const dark = contributors.filter((c) => contributorDark(c) && !contributorHasRows(board, c, all));
   if (dark.length && !slotTaken) {
-    const who = darkWords(board, dark);
+    const who = contributorWords(board, dark);
     clauses.push(`${who} not reporting`);
     kinds.push(`dark:${who}`);
   }
-  const slot = slotTaken ? darkWords(board, contributors) : null;
+  const slot = slotTaken ? contributorWords(board, contributors) : null;
   if (slot) kinds.push(`slot:${slot}`);
   return {
     words: clauses.length ? clauses.join("; ") : null,
@@ -2663,22 +2684,23 @@ function contributorHasRows(board, contributor, rows) {
   );
 }
 
-// The rider's word for dark contributors (Q3), never a feed key: on a subway board the
-// routes they serve at this station, read from the station's own routes through the table,
-// in the station's order ("2 and 5 trains"), and "Subway" where one of them names no route
-// here; on a railroad board the railroad's rider word (railroadSystemLabel); on the others
-// the system's popup word ("PATH", "NYC Ferry", "NJ Transit").
-function darkWords(board, dark) {
+// The rider's word for contributors a board's line names, dark (Q3) or, since F8's ruling, aged
+// with no row, never a feed key: on a subway board the routes they serve at this station, read
+// from the station's own routes through the table, in the station's order ("2 and 5 trains"),
+// and "Subway" where one of them names no route here; on a railroad board the railroad's rider
+// word (railroadSystemLabel); on the others the system's popup word ("PATH", "NYC Ferry", "NJ
+// Transit").
+function contributorWords(board, named) {
   if (board.kind === "subway") {
     const routes = [];
-    for (const contributor of dark) {
+    for (const contributor of named) {
       const here = board.stationRoutes.filter((route) => SUBWAY_ROUTE_GROUPS[route] === contributor.name);
       if (!here.length) return POPUP_SYSTEM_WORDS.subway;
       for (const route of here) if (!routes.includes(route)) routes.push(route);
     }
     return `${andList(routes)} trains`;
   }
-  if (board.kind === "railroad") return railroadSystemLabel(dark[0] ? dark[0].name : board.system);
+  if (board.kind === "railroad") return railroadSystemLabel(named[0] ? named[0].name : board.system);
   return POPUP_SYSTEM_WORDS[board.kind] ?? board.kind;
 }
 
@@ -6243,7 +6265,7 @@ if (typeof module !== "undefined" && module.exports) {
     UNDATED_SYSTEMS, boardSystem, servedAge, boardFreshness, arrivalQualifier,
     boardSystemLine, boardLineHtml, qualifierHtml,
     SUBWAY_ROUTE_GROUPS, contributorState, contributorDark, boardLine, boardSlotWords, andList,
-    contributorHasRows, darkWords, drawnCount,
+    contributorHasRows, contributorWords, contributorAged, drawnCount,
     // 6.3: a vehicle's position, qualified by its own observation, and its rendering.
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,

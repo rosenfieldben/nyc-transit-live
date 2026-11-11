@@ -789,6 +789,18 @@ const STATES = [
         "N, Q, R and W trains as of 45m ago",
       );
       await expectState(page, ["one popup open", "popup finished opening"], "the F8 board's state");
+      /* AND THE KICKER'S "+4" IS CLEAR OF THE CLOSE BUTTON. This world is the first scanned popup
+         whose kicker overflows (Times Sq's seven routes draw three marks and "+4"), and the count
+         sat under Leaflet's close button until `.pk` reserved the button's 8px: CI's axe declined
+         its background as "overlapped by another element", while the same scan here on macOS did
+         not report it. So the geometry is asserted as boxes, which every platform measures alike. */
+      await expect(page.locator(".leaflet-popup-content .pmore")).toHaveText("+4");
+      const clear = await page.evaluate(() => {
+        const more = document.querySelector(".leaflet-popup-content .pmore").getBoundingClientRect();
+        const close = document.querySelector(".leaflet-popup-close-button").getBoundingClientRect();
+        return more.right <= close.left || more.top >= close.bottom;
+      });
+      expect(clear, "the kicker's overflow count must not sit under the popup's close button").toBe(true);
     },
     targets: ["leaflet-popup", "popup-stale"],
     themes: ["light", "dark"],

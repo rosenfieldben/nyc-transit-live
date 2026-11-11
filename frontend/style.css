@@ -1957,12 +1957,20 @@ svg.rail-stn {
    loaded the webfont still gets the right metrics. */
 
 /* The kicker: the surface's system word on the left, the small marks it carries on the right.
-   Muted 10px caps, measured at 5.38 on the light surface and 7.01 on the dark. */
+   Muted 10px caps, measured at 5.38 on the light surface and 7.01 on the dark.
+
+   CLEAR OF THE CLOSE BUTTON, which Leaflet draws as a 24px box in the popup's top right corner over
+   the content's 16px margin, so the kicker's last 8px sat under it. Every popup's right-hand slot
+   ends there, and a station with more than three routes ends it with its "+N" count, which the
+   button covered (found by the a11y scan of F8's board on claude/rider-text-residue: axe declined
+   the count's background, "overlapped by another element", and elementsFromPoint put the button on
+   top of it at 1280, 375 and 320). The padding is the button's 24px less that 16px margin. */
 .pk {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  padding-right: 8px;
   font: 600 10px/1.3 var(--chrome-font);
   letter-spacing: 0.1em;
   text-transform: uppercase;

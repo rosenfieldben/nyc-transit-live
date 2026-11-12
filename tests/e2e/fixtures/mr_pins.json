@@ -2158,6 +2158,13 @@
     "spoken": "LIRR Babylon Branch Train 7566 Live · {n}s"
    }
   },
+  "f8": {
+   "subway station": {
+    "seen": "Subway 1 2 3 +4 Times Sq-42 St N, Q, R and W trains as of 45m ago Northbound 1 1 min 2 5 min Southbound 1 3 min",
+    "spoken": "Subway 1, 2, 3, N, Q, R, W Times Sq-42 St N, Q, R and W trains as of 45m ago Northbound 1 1 min 2 5 min Southbound 1 3 min",
+    "labels": []
+   }
+  },
   "stock": {
    "subway train": {
     "seen": "Subway 1 1 train Next stop Times Sq-42 St Direction Northbound Position scheduled position (no GPS) Trip sub-1",

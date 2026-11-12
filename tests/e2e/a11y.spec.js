@@ -68,8 +68,17 @@ const agencyAlert = (n) => ({
 // analyze() never resolves and the spec dies on the test timeout rather than on a
 // violation. setFixedTime pins Date.now (which keeps the app's skew calibration at zero
 // and its ages deterministic) while leaving timers running.
-async function open(page, { alerts = 0, stationAlerts = false, staleRailroad = false, darkBoards = false } = {}) {
+async function open(
+  page,
+  { alerts = 0, stationAlerts = false, staleRailroad = false, darkBoards = false, agedGroup = false } = {},
+) {
   const ctx = await installMocks(page);
+  // F8's populated board (fixtures.agedGroupBoard): Times Sq with its N, Q, R and W, the 1-7+S
+  // group's rows on the board and NQRW stale with no row, so its popup's line names the group.
+  if (agedGroup) {
+    ctx.overrides.subwayStops = (route) => json(route, fx.agedGroupStops());
+    ctx.overrides.subwayArrivals = (route) => json(route, fx.agedGroupBoard());
+  }
   // Amendment 1's never-decoded boards (fixtures.darkBoards): every station board in the
   // state the backend serves after a failed first poll, so its popup reads "not reporting".
   if (darkBoards) {
@@ -757,6 +766,45 @@ const STATES = [
     targets: ["leaflet-popup", "arr-none"],
     themes: ["light", "dark"],
   },
+  /* F8 (THE RULING OF 2026-11-08, A1.3 AMENDED): A POPULATED BOARD'S POPUP CARRYING THE LINE THAT
+     NAMES A STALE GROUP WITH NO ROW, at every width and in both themes, as the never-decoded board
+     is scanned. "N, Q, R and W trains as of 45m ago" is new text in the popup's line above current
+     rows, so its contrast and its reach are measured where a rider reads it. The state proves the
+     words are on screen before the scan, so it cannot quietly scan an ordinary board. */
+  {
+    key: "popup open on a board naming a stale group with no row",
+    alerts: 0,
+    agedGroup: true,
+    viewports: [DESKTOP, PHONE, NARROW],
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      await page.evaluate(() => {
+        const row = stationRegistry.find((r) => r.key === "subway|127");
+        if (!row) throw new Error("the fixture no longer has Times Sq in the station registry");
+        row.marker.openPopup();
+      });
+      await expect(page.locator(".leaflet-popup-content .popup-stale").first()).toHaveText(
+        "N, Q, R and W trains as of 45m ago",
+      );
+      await expectState(page, ["one popup open", "popup finished opening"], "the F8 board's state");
+      /* AND THE KICKER'S "+4" IS CLEAR OF THE CLOSE BUTTON. This world is the first scanned popup
+         whose kicker overflows (Times Sq's seven routes draw three marks and "+4"), and the count
+         sat under Leaflet's close button until `.pk` reserved the button's 8px: CI's axe declined
+         its background as "overlapped by another element", while the same scan here on macOS did
+         not report it. So the geometry is asserted as boxes, which every platform measures alike. */
+      await expect(page.locator(".leaflet-popup-content .pmore")).toHaveText("+4");
+      const clear = await page.evaluate(() => {
+        const more = document.querySelector(".leaflet-popup-content .pmore").getBoundingClientRect();
+        const close = document.querySelector(".leaflet-popup-close-button").getBoundingClientRect();
+        return more.right <= close.left || more.top >= close.bottom;
+      });
+      expect(clear, "the kicker's overflow count must not sit under the popup's close button").toBe(true);
+    },
+    targets: ["leaflet-popup", "popup-stale"],
+    themes: ["light", "dark"],
+  },
   /* FOLLOW-UP 1: THE BUS BAND, SCANNED FROM BOTH SIDES AND AT THE DOOR. Below City zoom every bus
      marker is display:none and also aria-hidden with its pointer-events off; at City all of that
      comes back. Three states, each at every width this suite uses and in both themes: the LANDING,
@@ -956,6 +1004,7 @@ for (const state of STATES) {
           stationAlerts: state.stationAlerts,
           staleRailroad: state.staleRailroad,
           darkBoards: state.darkBoards,
+          agedGroup: state.agedGroup,
         });
         if (theme !== "light") await setTheme(page, theme);
         await state.reach(page);

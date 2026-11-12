@@ -935,7 +935,26 @@ const darkBoards = () => ({
   ferry: darkBoard(ferryArrivals(), { routes: {} }, { ferry: NEVER_DECODED }),
 });
 
+/* F8's WORLD (the ruling of 2026-11-08, A1.3 amended): Times Sq with the N, Q, R and W it is
+   really served by beside the stock world's 1, 2 and 3, its board populated by the 1-7+S group's
+   rows, and NQRW answering every poll with content 2700 s old and no row here. The rider reads
+   "N, Q, R and W trains as of 45m ago" on the board's line. pins.spec.js P5g pins that popup, which
+   is what puts the new words in a golden, and a11y.spec.js scans it open. The stops payload is the
+   stock one with Times Sq's routes widened, so the station registry still counts fourteen. */
+const AGED_GROUP_ROUTES = ["1", "2", "3", "N", "Q", "R", "W"];
+const agedGroupStops = () =>
+  subwayStops().map((stop) => (stop.id === "127" ? { ...stop, routes: AGED_GROUP_ROUTES } : stop));
+const agedGroupBoard = () => {
+  const board = subwayArrivals();
+  return {
+    ...board,
+    systems: { ...board.systems, NQRW: systemBlock(FROZEN_S, { feedTimestamp: FROZEN_S - 2700, routes: [] }) },
+  };
+};
+
 module.exports = {
+  agedGroupBoard,
+  agedGroupStops,
   darkBoards,
   FROZEN_MS,
   FROZEN_S,

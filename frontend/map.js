@@ -89,11 +89,24 @@ async function refreshSource(source) {
     // A timeout aborts the request and rejects into the catch below like any other
     // failed poll: last-known markers stay, the R1 staleness surfaces do the rest.
     const res = await fetch(source.url, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.detail ?? `HTTP ${res.status}`);
+    // ONE READ OF THE BODY, whatever the status. A body that is not JSON reads as null rather than
+    // throwing its SyntaxError, whose message quotes the body's first bytes (a proxy's or a portal's
+    // page) onto the status line; a timeout or a dropped connection mid-body still throws, and the
+    // catch below words it as it always has.
+    const body = await res.json().catch((err) => {
+      if (err && err.name === "SyntaxError") return null;
+      throw err;
+    });
+    if (!res.ok || body == null) {
+      // THE RIDER'S WORDS AND WHAT `quiet` MAY READ, APART (H6's residue, failedResponse): the
+      // error's message is what the status line prints, never a 502's detail nor an unreadable
+      // body, and `detail` is the served detail only where those words ARE it, for source.quiet
+      // alone, which matches NJ Transit's not-configured 503 on its words.
+      const failed = failedResponse(res.status, body);
+      const failure = new Error(failed.words);
+      failure.detail = failed.detail;
+      throw failure;
     }
-    const body = await res.json();
     // fetchedAt, feedTimestamp (the server-side staleness signal), servedAt (this
     // response's build time, R1) and the per-system freshness blocks (C2), or one
     // synthesized system for a single-feed source, so everything downstream reads one
@@ -161,7 +174,9 @@ async function refreshSource(source) {
     // fault (see the njt row). It still counts zero and still draws nothing; what
     // it does not do is turn the rider's status line red and quote a sentence
     // written for an operator.
-    source.error = source.quiet && source.quiet(message) ? null : message;
+    // `quiet` reads the served detail failedResponse vouches for and nothing else: never a 502's,
+    // which an upstream chose, and none at all for a timeout or a refused connection.
+    source.error = source.quiet && source.quiet(err.detail) ? null : message;
   } finally {
     // Cleared here (not per-return) because the success path and both empty
     // branches return early out of the try: finally is the one place that always

@@ -662,6 +662,7 @@ today:
 | `as of {age} ago` | `helpers.js:2211` (a row's qualifier), `:2237` (a board's line), `:2056-2057` (the status line); `As of {age} ago` at `:677` (the feed strip and a vehicle popup's footer) | how old the thing just named is |
 | `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded. **Amended 2026-11-01 (Amendment 1's Q11):** from the build also, on a board and on the status line past the cap, a failing system with nothing of it shown (the second table's added rows) |
 | `feed empty, showing last known` | `helpers.js:3486`, `:3492` | a bounded empty run |
+| `feed unavailable (HTTP {status})` | `helpers.js` (`failedResponse`), on the status line after the source's label: `trains: feed unavailable (HTTP 502)` | **Amended 2026-11-10 (H6's residue, ruled 2026-11-08):** a vehicle source's response the page cannot print: a 502, whose detail can be an upstream's text, or one with no readable detail (a proxy's page, a plain-text 500, a 200 that is not JSON). Never a byte of the response. Not `{system} not reporting`: the page outlives the process whose cache never filled, so across a restart it still draws the source's last markers and the line dates them |
 | `scheduled service (no live tracking)` | `helpers.js:3796` (the AirTrain station popup's sub-line) | AirTrain, which has no feed |
 
 **RE-ANCHORED BY MR5, AND TWO OF THESE ROWS SAID SOMETHING FALSE AS WELL AS POINTING SOMEWHERE
@@ -679,7 +680,8 @@ pass of its own rather than a note.
 board's form of the per-system clause (the `{system} prediction age unavailable` row, **Amended 2026-11-01**
 from "the last row"), recorded under 6.2 as an amendment rather than a decision. **Amended 2026-11-01 (Amendment 1):** the last four rows are
 A1.3's, three of shipped strings and one NEW form, `{routes} trains not reporting`, and the
-question numbers in them are Amendment 1's.
+question numbers in them are Amendment 1's. **Amended 2026-11-10:** and a fifth after them,
+F8's `{routes} trains as of {age} ago`, A1.3's third rule.
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
@@ -698,6 +700,7 @@ question numbers in them are Amendment 1's.
 | An empty board, an expected contributor stale | `as of {age} ago` | **Amended 2026-11-01.** The board's line as shipped, its age the worse of poll and content (Q4). |
 | A board, an expected contributor failing with no row on it | `{system} not reporting` | **Amended 2026-11-01.** The shipped status-line clause on a board. On the status line it means never decoded and, once the cap has taken a system's vehicles, failing with nothing drawn (Q11); on a board it means "failing, and nothing of it is here", which covers never decoded and failed alike, because a board with no row of the contributor has nothing to date. A failed contributor reads it from 90 s after its last decode, a never-decoded one at once (Q11). Where every expected contributor on an empty board is in this state, it takes the `No trains` slot rather than the line (Q3). |
 | A board, a failing subway group, named | **`{routes} trains not reporting`** | **Amended 2026-11-01.** NEW (Q1, Q3): the subway's `{system}` on a board, its routes named from Q1's table. A group key is a feed's name ("1-7+S") and the panel speaks the line, so 6.2's reason for "Metro-North" over "MNR" applies. It joins the panel's shipped route noun ("5 train", `arrivalSentence`, `frontend/helpers.js:5423-5441`) to 3.2's `not reporting`: "2 and 5 trains not reporting" at Prospect Av. Where the routes cannot be named, the board's own system word, `Subway` (`POPUP_SYSTEM_WORDS`, `frontend/helpers.js:986-993`), never the key. |
+| A board with rows, an expected contributor stale with no row on it | **`{routes} trains as of {age} ago`** | **Amended 2026-11-10 (F8, ruled 2026-11-08 by Claude: extend).** NEW: the row above's routes joined to 3.2's `as of {age} ago`, the age the worse of the contributor's poll and content (Q4), by the band test the empty board's line uses. "B trains as of 45m ago" on a board whose other rows are current. Said on the board's line, before any `not reporting` clause; a stale contributor with a row, or a fresh one, adds nothing. |
 
 **The rule, stated once for all surfaces:** a marker, a popup, a panel row or a board row
 MUST carry its word when any of the following holds. (a) Its provenance is not `reported`.
@@ -2074,13 +2077,14 @@ than in nothing"), and each takes a word from 3.2:
 | State | What the served board carries that makes it this state | What the rider reads: popup, panel, spoken | 3.2 word |
 | --- | --- | --- | --- |
 | **Fresh and empty** | every expected contributor's block reads `ok: true`, with `fetched_at`, and `feed_timestamp` where its provider dates content, within `OBS_FRESH_S` of `served_at` | `No trains` (`No boats` on a ferry board) and no line; spoken "Prospect Av, Subway. No trains." | `No trains`, `No boats`: shipped, and added to 3.2 below |
-| **Stale** | an expected contributor reads `ok: true` and its `feed_timestamp` (the content) or its `fetched_at` (the poll) is older than `OBS_FRESH_S` | the board's line `as of {age} ago` above `No trains`, the age the worse of the two (Q4); spoken "Prospect Av, Subway. as of 10m ago. No trains." | `as of {age} ago`, 3.2's first table; the board's form is `helpers.js:2469` |
+| **Stale** | an expected contributor reads `ok: true` and its `feed_timestamp` (the content) or its `fetched_at` (the poll) is older than `OBS_FRESH_S` | the board's line `as of {age} ago` above `No trains`, the age the worse of the two (Q4); spoken "Prospect Av, Subway. as of 10m ago. No trains." **Amended 2026-11-10 (F8, ruled 2026-11-08):** on a board WITH rows, a stale contributor with no row there is named on the line by its routes at the station, `{routes} trains as of {age} ago` ("B trains as of 45m ago"), where it was not mentioned | `as of {age} ago`, 3.2's first table; the board's form is `helpers.js:2469`. **Amended 2026-11-10:** on a populated board, `{routes} trains as of {age} ago`, 3.2's second table |
 | **Failed** | an expected contributor reads `ok: false` and its `fetched_at` is a number: it decoded in this process and is failing now | **Amended 2026-11-01 (Q3, Q11):** the board's line reads `{system} not reporting` once its last decode is `OBS_FRESH_S` old, the grace the status line gives a failed system; where every expected contributor on an empty board is failed past that grace or never decoded, the `No trains` slot reads it instead of the line | **Amended 2026-11-01 (Q11):** `{system} not reporting`, the row added below |
 | **Never decoded** | an expected contributor reads `ok: false` with `fetched_at: null` (Q2), both: a substitute block can have a null clock with `ok: true` | as failed, from the first poll, as the status line says `not reporting` at once | `{system} not reporting`, 3.2's first table: "a system that has never decoded" |
 
 **Two rules make the table a contract rather than four cases.** **Amended 2026-11-01:** both were this
 amendment's proposals rather than questions, A1.5 lists them with the others, and both are
-accepted as proposed.
+accepted as proposed. **Amended 2026-11-10:** a third, the first rule's stale counterpart, by
+the ruling of 2026-11-08 on F8, follows them.
 
 - **A failing expected contributor with no row on the board is said whether or not other
   contributors' rows are there**, at once if it has never decoded and once its last decode is
@@ -2100,6 +2104,25 @@ accepted as proposed.
   separately (`helpers.js:2287-2290`): the stale population's `as of {age} ago`, then the
   failing population's clause. A system in one state announced with
   another's age is the defect the status line's own split was made to prevent.
+- **Amended 2026-11-10 (F8, ruled 2026-11-08 by Claude: extend): a STALE expected contributor
+  with no row on the board is said whether or not other contributors' rows are there**, as the
+  dark one in the first rule is. A1.3 as first written dated a stale contributor on an EMPTY
+  board only, so at a station two groups serve, a group answering every poll with content 45
+  minutes old whose predictions there had all departed was not mentioned while the other
+  group's rows were on the board: its rows were gone, so no row's qualifier dated it, and the
+  other group's rows read as the whole board (the adversarial round of Step 3, its F8; the
+  2026-10-12 record's live list). The test is the one the empty board's line already uses
+  (`contributorAged`): not dark, and the worse of its poll age and its content age past
+  `OBS_FRESH_S`, which keeps a failed contributor inside the 90 s grace dated rather than
+  dropping it from the line until it goes dark. "No row" is the first rule's join. It is
+  named by the routes it serves at the station, the dark clause's words with the empty board's
+  age, `{routes} trains as of {age} ago` ("B trains as of 45m ago"; "B and Q trains as of 45m
+  ago" when NQRW is stale with no row as well), the worst age of the population answering,
+  in the rider band's grammar (`humanizeAge`). One clause for the stale population and one for
+  the dark, the stale clause first, by the second rule. A stale contributor WITH a row here says
+  nothing more, because its rows carry their own `as of {age} ago`; a fresh one says nothing,
+  and a fresh board reads byte for byte as before. The line's KIND names who is stale, so the
+  clause appearing is announced once and its age counting up is not.
 
 **The membership rule for a station board's `systems` map changes from "contributors with
 rows indexed here" to "expected contributors".** **Amended 2026-11-01 (Q1):** for the subway that is the
@@ -2166,7 +2189,7 @@ contributor whose content cannot be dated (Metro-North by policy, or a headerles
 generation under Q6's `None`, **Amended 2026-11-01**) leaves an empty board aged by its poll, with 3.2's undated clause riding
 the line as it does today.
 
-**Amended 2026-11-01: added to 3.2's second table**, in these words, three rows of shipped strings and one NEW form:
+**Amended 2026-11-01: added to 3.2's second table**, in these words, three rows of shipped strings and one NEW form. **Amended 2026-11-10:** and F8's NEW form after them, the last row:
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
@@ -2174,6 +2197,7 @@ the line as it does today.
 | An empty board, an expected contributor stale | `as of {age} ago` | **Amended 2026-11-01.** The board's line as shipped, its age the worse of poll and content (Q4). |
 | A board, an expected contributor failing with no row on it | `{system} not reporting` | **Amended 2026-11-01.** The shipped status-line clause on a board. On the status line it means never decoded and, once the cap has taken a system's vehicles, failing with nothing drawn (Q11); on a board it means "failing, and nothing of it is here", which covers never decoded and failed alike, because a board with no row of the contributor has nothing to date. A failed contributor reads it from 90 s after its last decode, a never-decoded one at once (Q11). Where every expected contributor on an empty board is in this state, it takes the `No trains` slot rather than the line (Q3). |
 | A board, a failing subway group, named | **`{routes} trains not reporting`** | **Amended 2026-11-01.** NEW (Q1, Q3): the subway's `{system}` on a board, its routes named from Q1's table. A group key is a feed's name ("1-7+S") and the panel speaks the line, so 6.2's reason for "Metro-North" over "MNR" applies. It joins the panel's shipped route noun ("5 train", `arrivalSentence`, `frontend/helpers.js:5423-5441`) to 3.2's `not reporting`: "2 and 5 trains not reporting" at Prospect Av. Where the routes cannot be named, the board's own system word, `Subway` (`POPUP_SYSTEM_WORDS`, `frontend/helpers.js:986-993`), never the key. |
+| A board with rows, an expected contributor stale with no row on it | **`{routes} trains as of {age} ago`** | **Amended 2026-11-10 (F8, ruled 2026-11-08 by Claude: extend).** NEW: the row above's routes joined to 3.2's `as of {age} ago`, the age the worse of the contributor's poll and content (Q4), by the band test the empty board's line uses. "B trains as of 45m ago" on a board whose other rows are current. Said on the board's line, before any `not reporting` clause; a stale contributor with a row, or a fresh one, adds nothing. |
 
 ### A1.4 What changes where
 
@@ -2875,3 +2899,14 @@ is 90 s old, as it does for the line, and a never-decoded one counts at once. An
 step in A1.6, so it lands in Step 3 with the rest of the frontend's changes. The operator's Q4
 row cited A1.2 point 5 for both bounds; point 5 does not mention Metro-North and Q4's own text
 does, so the row above cites each where it is stated.
+
+**Decided 2026-11-08, built 2026-11-10: F8, extend, and H6's residue, fix on the page** (both
+ruled by Claude on the 2026-10-12 record's live list, both built on `claude/rider-text-residue`).
+A1.3 gains its third rule: a stale expected contributor with no row on a board with rows reads
+`{routes} trains as of {age} ago`, and 3.2's second table gains the row. The status line reads
+a vehicle source's 502, and any response with no readable detail, as `{label}: feed unavailable
+(HTTP {status})`, never a byte of the response, and 3.2's first table gains the row. `not
+reporting` was considered and rejected: an envelope answers its recorded error only while its
+process has never filled the cache, but the page outlives the process, so across a restart the
+page still draws the source's last markers and `as of {age} ago` would follow it on the same
+line (the adversarial round of `claude/rider-text-residue`, its F2).

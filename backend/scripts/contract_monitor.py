@@ -1331,12 +1331,15 @@ def _identity_clauses(report: njt_feed.IdentityReport) -> list[str]:
             f"{len(mismatches)} entity.id/trip_short_name mismatches of {report.checked} checked "
             "(probe: 0 of 745): " + ", ".join(parts)
         )
-    if report.joined >= NJT_MIN_TRIPS_FOR_RATIO and not njt_feed.can_judge_schedule(report.checked):
-        # A publication that dropped trip_short_name, or a feed that dropped its ids, would
-        # join everything and check nothing, which reads as agreement to every count above.
+    if report.joined >= NJT_MIN_TRIPS_FOR_RATIO and not njt_feed.mostly_checked(
+        report.joined, report.checked
+    ):
+        # A publication that dropped its train numbers, or a feed that dropped its ids, would
+        # join everything and contradict nothing, which reads as agreement to every count
+        # above.
         clauses.append(
-            f"only {report.checked} of {report.joined} joined trips carry a number on both sides, "
-            "so nothing can be checked"
+            f"only {report.checked} of {report.joined} joined trips carry a number on both sides "
+            "to check"
         )
     nameless = len(report.of_kind(njt_feed.NO_IDENTITY))
     if nameless:
@@ -2295,6 +2298,29 @@ def check_njt_static(
     the service-date band above. Returns the parsed tables so a future NJT realtime
     check can join against them.
     """
+    return _njt_static(
+        fetch, sleep, now, username, password, token=token, token_url=token_url, url=url, tz=tz
+    )[:2]
+
+
+def _njt_static(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    now: float,
+    username: str | None,
+    password: str | None,
+    *,
+    token: _NjtToken | None = None,
+    token_url: str | None = None,
+    url: str | None = None,
+    tz=None,
+) -> tuple[Result, dict | None, bool]:
+    """check_njt_static's two, plus whether the APP'S GATE refused the publication.
+
+    THE THIRD IS FOR production:njt-schedule, which must not ask for a redeploy onto an
+    archive the app would not load. It is not "did this check FAIL": the identity check and
+    the count floors are the monitor's own and fail on publications the app serves.
+    """
     creds = _njt_credentials(username, password)
     if creds is None:
         return (
@@ -2304,6 +2330,7 @@ def check_njt_static(
                 f"skipped ({njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} not set)",
             ),
             None,
+            False,
         )
     username, password = creds
     tz = tz if tz is not None else feeds.NYC_TZ
@@ -2313,11 +2340,11 @@ def check_njt_static(
     minter = token if token is not None else _NjtToken(fetch, mint_url, username, password)
     minted_token, mint_detail = minter.get()
     if minted_token is None:
-        return Result("njt-static", FAIL, mint_detail), None
+        return Result("njt-static", FAIL, mint_detail), None, False
 
     res, detail = _fetch_retrying(fetch, data_url, sleep, files={"token": minted_token})
     if res is None:
-        return Result("njt-static", FAIL, f"unreachable ({detail})"), None
+        return Result("njt-static", FAIL, f"unreachable ({detail})"), None, False
     # A 200 is not proof of authorization here: the probe's invalid-token response
     # IS an HTTP 500, so _fetch_retrying would have reported it as an ordinary
     # unreachable above. Reaching this line means the token was accepted.
@@ -2341,7 +2368,8 @@ def check_njt_static(
                 latest, span_read = None, False
         parsed = _parse_zip_bytes(njt_static._parse_zip, res.content, "gtfs_njt.zip")
     except _UNREADABLE as exc:
-        return Result("njt-static", FAIL, _unparseable(exc, refusal, "NJ Transit")), None
+        unparseable = _unparseable(exc, refusal, "NJ Transit")
+        return Result("njt-static", FAIL, unparseable), None, refusal is not None
 
     statuses: list[str] = []
     details: list[str] = []
@@ -2462,8 +2490,10 @@ def check_njt_static(
                 f"{', '.join(identity_found)}, {service_detail}",
             ),
             parsed,
+            False,
         )
-    return Result("njt-static", _worst(statuses), "; ".join(details)), parsed
+    result = Result("njt-static", _worst(statuses), "; ".join(details))
+    return result, parsed, refusal is not None
 
 
 def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
@@ -2951,6 +2981,7 @@ def check_production(
     fail_s: float = PRODUCTION_FEED_FAIL_S,
     upstream_subway_headers: dict[str, float | None] | None = None,
     upstream_njt_identity: njt_feed.IdentityReport | None = None,
+    upstream_njt_refused: bool = False,
 ) -> list[Result]:
     """The live deployment via MONITOR_STATUS_URL (either form, see
     _resolve_status_url). Returns a line each for: reachability (FAIL on
@@ -2970,7 +3001,8 @@ def check_production(
     the per-group headers check_subway_realtime read this run as
     `upstream_subway_headers`. Without them that line cannot judge and says so. The NJ
     Transit schedule line is handed this run's own decode the same way, as
-    `upstream_njt_identity`, and for the same reason.
+    `upstream_njt_identity`, and for the same reason, with whether the app's gate refused
+    the archive it was decoded against.
 
     THE /healthz AND served_at LINES ARE F1. Before them this section read one
     endpoint once, which let it tell that production was DEAD but never that it was
@@ -3156,7 +3188,9 @@ def check_production(
     results.append(_check_production_railroad_positions(data))
     # Another field of that payload, judged beside this run's own decode, so it costs no
     # fetch either.
-    results.append(_check_production_njt_schedule(data, upstream_njt_identity))
+    results.append(
+        _check_production_njt_schedule(data, upstream_njt_identity, upstream_njt_refused)
+    )
     # F1. Both of these probe the deployment AGAIN, after every judgement above has
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
@@ -3483,7 +3517,9 @@ def _is_count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | None) -> Result:
+def _check_production_njt_schedule(
+    data: dict, fresh: njt_feed.IdentityReport | None, refused: bool = False
+) -> Result:
     """Is the NJ Transit schedule the deployment holds the one its trains are running?
 
     THE BLIND SPOT THIS CLOSES. A process loads NJ Transit's schedule once, and NJ Transit
@@ -3508,21 +3544,27 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
         odds with itself, and reading it as clean would be what said redeploy.
       * production over it and nothing to set beside it: WARN, since it cannot say which.
         That is a run with no credentials or that may not mint, a feed or an archive that
-        would not read, a decode that checked too few trips, and an archive njt-static
-        FAILED. The last matters most: the decode may be clean against a publication the
-        app would refuse, and a redeploy onto it would serve no NJ Transit at all.
-      * production checked too few trips to judge: PASS, saying so, since a quiet night is
-        not news. WARN when this run checked a full feed's worth in the same minutes, which
-        is a schedule missing the trips rather than contradicting them.
+        would not read, and a decode that checked too few trips or too small a part of what
+        it joined.
+      * production over it, this run's decode clean, and the archive one the APP'S GATE
+        refuses: WARN, and not "redeploy". A cold start onto it would serve no NJ Transit,
+        which is worse than trains read their own words. njt-static FAILs the run.
+      * production too thin to judge (fewer than five checked, or too few mismatches to
+        be over it and too large a share to be in step): PASS, saying so, since a quiet
+        night is not news. WARN when this run checked a full feed's worth in the same
+        minutes, which is a schedule without the trips, the 2026-11-03 shape.
+      * production joining a full feed and able to check less than half of it: WARN, since
+        a held schedule without its train numbers contradicts nothing whatever it says.
 
     NO HOLD OF ITS OWN. The app waits ten minutes before its /healthz code, because it has
     nothing to compare against and upstream's two surfaces do not move at one instant; this
     line has the comparison, so one reading is enough.
 
     NEVER A FAIL FOR A PAYLOAD IT CANNOT READ. A release older than the split, a failed
-    poll's nulls and counts that cannot be counts are each a WARN that says so, and the two
-    counts the verdict needs are the only ones it needs: production:feeds is the line that
-    fails on a feed that has stopped.
+    poll's nulls and counts that cannot be counts are each a WARN that says so:
+    production:feeds is the line that fails on a feed that has stopped. The two counts the
+    verdict is read from are the only ones that can hide it; one of the other three being
+    unreadable turns a PASS into a WARN and leaves every other answer alone.
     """
     name = "production:njt-schedule"
     if data.get("njt_static") == "not-configured":
@@ -3541,16 +3583,26 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
         )
     if not (_is_count(checked) and _is_count(mismatches) and mismatches <= checked):
         return Result(name, WARN, "njt_feeds' checked and number_mismatches are not two counts")
+    others = [health.get(key) for key in _NJT_OTHER_COUNTS]
     joined, nameless, repeated = (
-        str(health[key]) if _is_count(health.get(key)) else "an unreadable number"
-        for key in _NJT_OTHER_COUNTS
+        str(n) if _is_count(n) else "an unreadable number" for n in others
     )
+    in_step = PASS if all(_is_count(n) for n in others) else WARN
     summary = (
         f"{mismatches} of {checked} checked trips contradict the schedule's train number "
         f"({joined} joined, {nameless} with no identity, {repeated} repeated)"
     )
-    can_compare = fresh is not None and njt_feed.can_judge_schedule(fresh.checked)
-    if not njt_feed.can_judge_schedule(checked):
+    if (
+        _is_count(others[0])
+        and others[0] >= NJT_MIN_TRIPS_FOR_RATIO
+        and not njt_feed.mostly_checked(others[0], checked)
+    ):
+        return Result(name, WARN, f"{summary}: too little of what joined can be checked to judge")
+    if not njt_feed.schedule_behind(mismatches, checked):
+        if njt_feed.can_judge_schedule(checked) and not njt_feed.schedule_disagrees(
+            mismatches, checked
+        ):
+            return Result(name, in_step, summary)
         if fresh is not None and fresh.checked >= NJT_MIN_TRIPS_FOR_RATIO:
             return Result(
                 name,
@@ -3558,15 +3610,16 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
                 f"{summary}: too few to judge, beside {fresh.checked} this run checked against "
                 "the schedule it downloaded, so production's schedule may not have these trips",
             )
-        return Result(name, PASS, f"{summary}: too few to judge")
-    if not njt_feed.schedule_behind(mismatches, checked):
-        return Result(name, PASS, summary)
-    if fresh is None or not can_compare:
-        why = (
-            "it made no decode against a schedule a deploy would load"
-            if fresh is None
-            else f"its own decode checked {fresh.checked}"
-        )
+        return Result(name, in_step, f"{summary}: too few to judge")
+    if fresh is None:
+        why = "it made no decode against a schedule"
+    elif not njt_feed.can_judge_schedule(fresh.checked) or not njt_feed.mostly_checked(
+        fresh.joined, fresh.checked
+    ):
+        why = f"its own decode checked {fresh.checked} of {fresh.joined} joined"
+    else:
+        why = None
+    if fresh is None or why is not None:
         return Result(
             name,
             WARN,
@@ -3583,6 +3636,14 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
             WARN,
             "NJ Transit's realtime feed disagrees with its own schedule, so a redeploy would "
             f"load one that disagrees too: {summary}; {beside}",
+        )
+    if refused:
+        return Result(
+            name,
+            WARN,
+            "production's schedule is behind NJ Transit's publication, and the app's gate "
+            "refuses that publication (njt-static), so a redeploy would serve no NJ Transit: "
+            f"wait for one it accepts ({summary}; {beside})",
         )
     return Result(
         name,
@@ -4193,10 +4254,11 @@ def run_all(
         if njt_creds is not None and mint_permitted
         else None
     )
+    njt_archive_refused = False
     if mint_refused:
         njt_res, njt = _njt_mint_refused("njt-static", mint_reason), None
     else:
-        njt_res, njt = check_njt_static(
+        njt_res, njt, njt_archive_refused = _njt_static(
             fetch,
             sleep,
             now,
@@ -4221,9 +4283,9 @@ def run_all(
     results.append(check_alerts_realtime(fetch, sleep, now))
     # THE NJ TRANSIT DECODE IS KEPT, not only judged, for the reason the subway headers
     # are: production:njt-schedule sets production's counts beside it. A refused run has
-    # none, and nor has one whose njt-static FAILED, whatever the decode said: a schedule
-    # the app would refuse is not one a redeploy would load, so it is no ground to ask for
-    # one. The check says it has nothing to compare.
+    # none, and that check says it has nothing to compare. Whether the app's gate refused
+    # the archive it was decoded against goes with it, because a redeploy onto one the app
+    # refuses would serve no NJ Transit at all.
     njt_identity: njt_feed.IdentityReport | None = None
     if mint_refused:
         njt_realtime = _njt_mint_refused("njt-realtime", mint_reason)
@@ -4237,8 +4299,6 @@ def run_all(
             env.get(njt_auth.PASSWORD_VAR),
             token=njt_token,
         )
-        if njt_res.status == FAIL:
-            njt_identity = None
     results.append(njt_realtime)
     results.append(check_bus_realtime(fetch, sleep, now, env.get("MTA_BUS_API_KEY")))
 
@@ -4253,6 +4313,7 @@ def run_all(
         skip=bool(env.get("MONITOR_SKIP_PRODUCTION")),
         upstream_subway_headers=subway_headers,
         upstream_njt_identity=njt_identity,
+        upstream_njt_refused=njt_archive_refused,
     )
     return results
 

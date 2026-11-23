@@ -282,9 +282,10 @@ async def lifespan(app: FastAPI):
     # ids collide with MTA, PATH and ferry ids.
     app.state.njt_arrivals = {}
     app.state.njt_feed_health = None
-    # The unbroken run of NJ Transit decodes whose train numbers contradict the schedule
-    # (feeds.njt.BehindRun), None while the latest decode does not. What /healthz raises
-    # njt-schedule-behind from; a failed poll leaves it alone.
+    # The run of NJ Transit decodes whose train numbers contradict the schedule
+    # (feeds.njt.BehindRun), None from the start and once a decode has said otherwise. What
+    # /healthz raises njt-schedule-behind from; a failed poll, and a decode with too few
+    # trains to say, leave it alone.
     app.state.njt_behind_run = None
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the

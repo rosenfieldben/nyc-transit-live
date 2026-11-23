@@ -613,6 +613,13 @@ def can_judge_schedule(checked: int) -> bool:
     return checked >= SCHEDULE_BEHIND_MIN_MISMATCHES
 
 
+def mostly_checked(joined: int, checked: int) -> bool:
+    """Whether at least half of what joined could be checked. A publication that dropped
+    most of its train numbers joins everything and contradicts little, which reads as
+    agreement to every other count."""
+    return checked * 2 >= joined
+
+
 def schedule_disagrees(number_mismatches: int, checked: int) -> bool:
     """The share alone: one in four or more of the checked trips contradict the schedule."""
     return number_mismatches * SCHEDULE_BEHIND_ONE_IN >= checked
@@ -630,8 +637,9 @@ def schedule_behind(number_mismatches: int, checked: int) -> bool:
 
 
 class BehindRun(NamedTuple):
-    """An unbroken run of decodes that schedule_behind held for: its first and its
-    latest, as the poller's clock read them."""
+    """The first and the latest decode that schedule_behind held for with no decode in
+    between that said otherwise, as the poller's clock read them. Failed polls and decodes
+    that could not say may stand between the two."""
 
     since: float
     latest: float
@@ -640,17 +648,20 @@ class BehindRun(NamedTuple):
 def behind_run(run: BehindRun | None, report: IdentityReport, now: float) -> BehindRun | None:
     """The run after one more successful decode, or None when this decode ends it.
 
-    ONLY A DECODE THAT CAN JUDGE SPEAKS. A failed poll calls nothing here, and a decode
-    with too few checked trips (an empty overnight body, four trains at 02:00) returns the
-    run as it found it, so neither ends a run nor lengthens one. The hold is therefore
-    measured between two decodes that both saw it, a feed that went dark after one bad
-    decode never ages into the code by itself, and a raised code stays raised through a
-    quiet night until a decode with trains enough to say otherwise does."""
-    if not can_judge_schedule(report.checked):
-        return run
-    if not schedule_behind(len(report.of_kind(NUMBER_MISMATCH)), report.checked):
+    A DECODE ENDS A RUN ONLY BY SAYING OTHERWISE, which takes trips enough to judge by and
+    fewer than one in four of them contradicting the schedule. A failed poll calls nothing
+    here, and a decode that cannot say (an empty overnight body, four trains at 02:00, four
+    of five contradicting, which is drift too thin to raise and no evidence against it)
+    returns the run as it found it, so neither ends one nor lengthens one. The hold is
+    therefore measured between two decodes that both saw it, a feed that went dark after
+    one bad decode never ages into the code by itself, and a raised code stays raised
+    through a quiet night until a decode says otherwise."""
+    mismatches = len(report.of_kind(NUMBER_MISMATCH))
+    if schedule_behind(mismatches, report.checked):
+        return BehindRun(run.since if run is not None else now, now)
+    if can_judge_schedule(report.checked) and not schedule_disagrees(mismatches, report.checked):
         return None
-    return BehindRun(run.since if run is not None else now, now)
+    return run
 
 
 def behind_past_hold(run: BehindRun | None) -> bool:
@@ -672,7 +683,7 @@ def _own_last_stop(tu, stops: dict[str, dict]) -> dict | None:
         _ordered_calls applies), and feed order otherwise.
 
     NONE RATHER THAN AN EARLIER STOP when the last one is not in the schedule's stops,
-    or names no stop at all: the last stop the schedule HAPPENS to know is not where the
+    or any call names no stop at all: the last stop the schedule HAPPENS to know is not where the
     train is going, and naming it would be exactly the kind of wrong this rule exists to
     end.
 
@@ -680,7 +691,9 @@ def _own_last_stop(tu, stops: dict[str, dict]) -> dict | None:
     Where NJ Transit renumbers its STOPS too, as it did on 2026-11-03, the name is another
     station's, like every station name and place this process is serving."""
     going_to = [stu for stu in tu.stop_time_update if stu.schedule_relationship != _STOP_SR.SKIPPED]
-    if not going_to:
+    # A call that names no stop leaves the update unable to say where it ends: nothing puts
+    # that call before or after the others.
+    if not going_to or not all(stu.stop_id for stu in going_to):
         return None
     if all(stu.HasField("stop_sequence") for stu in going_to):
         # A STABLE sort, so of two calls with one sequence the later listed is the later

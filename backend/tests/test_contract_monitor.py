@@ -2640,22 +2640,28 @@ def test_njt_realtime_cross_check_says_so_when_no_warning_is_a_pair():
 
 
 @pytest.mark.parametrize(
-    "count,detail",
+    "joined,checked,detail",
     [
-        (20, "only 0 of 20 joined trips carry a number on both sides, so nothing can be checked"),
-        (19, "19 trip updates, both feeds decodable (in service)"),
+        (20, 0, "only 0 of 20 joined trips carry a number on both sides to check"),
+        (20, 9, "only 9 of 20 joined trips carry a number on both sides to check"),
+        (20, 10, "20 trip updates, both feeds decodable (in service)"),
+        (19, 0, "19 trip updates, both feeds decodable (in service)"),
     ],
 )
-def test_njt_realtime_says_when_a_full_feed_could_not_be_checked(count, detail):
-    """A publication without trip_short_name joins every trip and contradicts none, which
-    reads as agreement to every count (the branch's review, F1). Twenty joined trips and
-    nothing to check them by is the WARN; a thin feed is not asked."""
-    numberless = {trip: {**row, "short_name": None} for trip, row in NJT_RT_TRIPS.items()}
+def test_njt_realtime_says_when_a_full_feed_could_not_be_checked(joined, checked, detail):
+    """A publication without its train numbers joins every trip and contradicts none, which
+    reads as agreement to every count (the first round's F1). Twenty joined trips and less
+    than half of them checkable is the WARN; a thin feed is not asked."""
+    trips = {
+        trip: row if n < checked else {**row, "short_name": None}
+        for n, (trip, row) in enumerate(NJT_RT_TRIPS.items())
+    }
     result = _check_njt_rt(
-        _njt_rt_fetch(**{NJT_TU: _njt_tu(count=count)}),
-        parsed={"stops": NJT_RT_STOPS, "trips": numberless},
+        _njt_rt_fetch(**{NJT_TU: _njt_tu(count=joined)}),
+        parsed={"stops": NJT_RT_STOPS, "trips": trips},
     )
-    assert (result.status, result.detail) == (cm.WARN if count == 20 else cm.PASS, detail)
+    warns = detail.startswith("only")
+    assert (result.status, result.detail) == (cm.WARN if warns else cm.PASS, detail)
 
 
 def test_njt_realtime_cross_check_reads_an_id_repr_writes_in_double_quotes():
@@ -3278,11 +3284,14 @@ def test_production_and_this_run_both_dirty_is_upstream_disagreeing_with_itself(
 @pytest.mark.parametrize(
     "fresh,why",
     [
-        (None, "it made no decode against a schedule a deploy would load"),
-        (_fresh(0), "its own decode checked 0"),
-        (_fresh(4), "its own decode checked 4"),
+        (None, "it made no decode against a schedule"),
+        (_fresh(0), "its own decode checked 0 of 3 joined"),
+        (_fresh(4), "its own decode checked 4 of 7 joined"),
+        # Most of what it joined could not be checked, so what could says little (the second
+        # round's F8).
+        (cm.njt_feed.IdentityReport(60, 5, []), "its own decode checked 5 of 60 joined"),
     ],
-    ids=["none", "empty", "four"],
+    ids=["none", "empty", "four", "mostly-unchecked"],
 )
 def test_production_behind_with_nothing_to_set_beside_it_warns(fresh, why):
     """It cannot say which side moved, and says that, and why it cannot."""
@@ -3297,7 +3306,7 @@ def test_production_behind_with_nothing_to_set_beside_it_warns(fresh, why):
 
 @pytest.mark.parametrize(
     "checked,mismatches,behind",
-    [(20, 5, True), (21, 5, False), (5, 4, False), (40, 9, False), (40, 10, True)],
+    [(20, 5, True), (21, 5, False), (17, 4, False), (40, 9, False), (40, 10, True)],
 )
 def test_production_is_behind_at_the_apps_own_threshold(checked, mismatches, behind):
     """Five, and a quarter: the numbers the app's /healthz code uses, each side of both."""
@@ -3340,6 +3349,11 @@ def test_the_other_kinds_say_nothing_of_either_schedule():
     "fresh,checked,mismatches,status,tail",
     [
         (_fresh(51), 4, 4, "WARN", "beside 51 this run checked"),
+        # A quarter or more contradicted without the five to be over the threshold by: not
+        # in step, and not enough to say behind (the second round's F2).
+        (_fresh(51), 5, 4, "WARN", "beside 51 this run checked"),
+        (_fresh(51), 16, 4, "WARN", "beside 51 this run checked"),
+        (_fresh(19), 16, 4, "PASS", None),
         (_fresh(51), 0, 0, "WARN", "beside 51 this run checked"),
         (_fresh(20), 0, 0, "WARN", "beside 20 this run checked"),
         (_fresh(19), 4, 4, "PASS", None),
@@ -3393,6 +3407,21 @@ def test_a_count_too_large_for_a_float_is_judged_and_aborts_nothing():
     assert line.status == cm.PASS
 
 
+@pytest.mark.parametrize(
+    "joined,checked,status",
+    [(126, 0, "WARN"), (126, 62, "WARN"), (126, 63, "PASS"), (20, 9, "WARN"), (19, 5, "PASS")],
+)
+def test_a_held_schedule_without_its_train_numbers_is_not_read_as_agreement(
+    joined, checked, status
+):
+    """It joins a full feed and can check less than half of it, so it contradicts nothing
+    whatever it says (the second round's F4). Beside any decode of this run's, or none."""
+    for fresh in (_fresh(51), None):
+        line = _schedule_line(fresh, njt_feeds=_njt_feeds(checked, 0, joined=joined))
+        assert line.status == status
+        assert ("too little of what joined" in line.detail) is (status == "WARN")
+
+
 @pytest.mark.parametrize("key", ["joined", "no_identity", "repeated_identity"])
 @pytest.mark.parametrize("value", ["absent", None, "x", -1])
 def test_a_count_the_verdict_does_not_need_never_hides_it(key, value):
@@ -3406,6 +3435,12 @@ def test_a_count_the_verdict_does_not_need_never_hides_it(key, value):
     line = _schedule_line(_fresh(51), njt_feeds=counts)
     assert line.status == cm.FAIL
     assert "an unreadable number" in line.detail
+    # And it turns a PASS into a WARN, in step or too thin to say (the second round's F5).
+    for checked in (48, 4):
+        line = _schedule_line(
+            None, njt_feeds={**counts, "checked": checked, "number_mismatches": 0}
+        )
+        assert line.status == cm.WARN, line
 
 
 def test_the_counts_this_reads_are_the_counts_the_app_publishes():
@@ -3459,7 +3494,7 @@ _NJT_THIRTY_TRIPS = (
 )
 
 
-_NJT_REFUSED = "it made no decode against a schedule a deploy would load"
+_NJT_NO_DECODE = "(it made no decode against a schedule)"
 
 
 @pytest.mark.parametrize(
@@ -3470,11 +3505,14 @@ _NJT_REFUSED = "it made no decode against a schedule a deploy would load"
         # By night as by day: the decode is as good a witness at 03:00.
         ("overnight", "FAIL", "; 0 of 30 against the schedule this run downloaded)"),
         # A re-run may not mint, so there is no decode at all.
-        ("re-run", "WARN", _NJT_REFUSED),
-        # The archive would not parse, or parsed and the app's gate refuses it: the second
-        # decodes cleanly, and a redeploy onto it would serve no NJ Transit (F3).
-        ("unreadable", "WARN", _NJT_REFUSED),
-        ("refused", "WARN", _NJT_REFUSED),
+        ("re-run", "WARN", _NJT_NO_DECODE),
+        ("unreadable", "WARN", _NJT_NO_DECODE),
+        # The archive parsed and the app's gate refuses it: the decode against it is clean,
+        # and a redeploy onto it would serve no NJ Transit (the first round's F3).
+        ("refused", "WARN", "gate refuses that publication (njt-static)"),
+        # njt-static FAILs on a check of the monitor's own over a publication the app loads,
+        # so a redeploy is still the answer (the second round's F3).
+        ("monitor-only FAIL", "FAIL", "; 0 of 30 against the schedule this run downloaded)"),
     ],
 )
 def test_run_all_hands_its_own_decode_to_the_schedule_check(case, status, tail):
@@ -3486,6 +3524,12 @@ def test_run_all_hands_its_own_decode_to_the_schedule_check(case, status, tail):
     archive = {
         "unreadable": b"not a zip",
         "refused": _njt_zip(**{"trips.txt": _NJT_THIRTY_TRIPS}, last_service="20260101"),
+        "monitor-only FAIL": _njt_zip(
+            **{
+                "trips.txt": _NJT_THIRTY_TRIPS,
+                "stops.txt": _NJT_STOPS + _NJT_IDENTITY.replace("109,NY,", "109,NYP,"),
+            }
+        ),
     }.get(case, _njt_zip(**{"trips.txt": _NJT_THIRTY_TRIPS}))
     now = NJT_RT_CLOSED if case == "overnight" else NJT_RT_NOW
     calls = []
@@ -3520,7 +3564,8 @@ def test_run_all_hands_its_own_decode_to_the_schedule_check(case, status, tail):
     (line,) = [r for r in results if r.name == "production:njt-schedule"]
     assert (line.status, tail in line.detail) == (status, True), line
     (static,) = [r for r in results if r.name == "njt-static"]
-    assert (static.status == cm.FAIL) is (case in ("unreadable", "refused")), static
+    failed = case in ("unreadable", "refused", "monitor-only FAIL")
+    assert (static.status == cm.FAIL) is failed, static
     spent = 0 if case == "re-run" else 1
     assert calls.count(cm.njt_auth.NJT_TOKEN_URL) == spent
     assert calls.count(cm.njt_feed.NJT_TU_URL) == spent

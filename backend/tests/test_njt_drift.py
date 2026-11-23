@@ -340,8 +340,11 @@ def test_who_is_refuted_and_who_is_not(entity_id, trip_id, expected, mark):
         # The last stop is one this schedule does not know, so no stop is named, and the
         # last one it HAPPENS to know is not where the train is going.
         ((("1", 1), ("2", 2), ("99", 3)), "Northeast Corridor 7856"),
-        # Nor when the last call names no stop at all.
+        # Nor when a call names no stop at all, wherever it is listed: nothing says whether
+        # the train calls there before the others or after.
         ((("1", 1), ("2", 2), ("", 3)), "Northeast Corridor 7856"),
+        ((("3", 3), ("", None), ("1", 1), ("2", 2)), "Northeast Corridor 7856"),
+        ((("1", 1), ("3", 3), ("", None, NO_DATA), ("2", 2)), "Northeast Corridor 7856"),
         # Of two calls under one sequence the later listed is the later call, as it is to
         # _ordered_calls: explicit zeros throughout, and a tie at the end.
         ((("1", 0), ("2", 0), ("3", 0)), "New York Penn Station"),
@@ -514,6 +517,14 @@ def test_the_share_alone(mismatches, checked, disagrees):
     assert njt.schedule_disagrees(mismatches, checked) is disagrees
 
 
+@pytest.mark.parametrize(
+    "joined,checked,mostly",
+    [(0, 0, True), (20, 10, True), (20, 9, False), (126, 0, False), (51, 51, True)],
+)
+def test_half_of_what_joined_is_enough_to_have_checked_it(joined, checked, mostly):
+    assert njt.mostly_checked(joined, checked) is mostly
+
+
 def test_the_numbers_are_the_briefs():
     assert (
         njt.SCHEDULE_BEHIND_MIN_MISMATCHES,
@@ -530,10 +541,16 @@ def test_a_run_is_started_lengthened_and_ended_only_by_a_decode_that_can_judge()
     assert njt.behind_run(run, behind, 1020.0) == (1000.0, 1020.0)
     assert njt.behind_run(run, in_step, 1020.0) is None
     assert njt.behind_run(None, in_step, 1020.0) is None
-    # Four trips, whatever they say, and an empty body: as if they had not been.
-    for thin in (_report(4, mismatches=4), _report(4), _report(0)):
-        assert njt.behind_run(run, thin, 1020.0) == (1000.0, 1000.0)
-        assert njt.behind_run(None, thin, 1020.0) is None
+    # Four trips, whatever they say, and an empty body: as if they had not been. So is a
+    # share that contradicts the schedule without the five to raise it by, which is no
+    # evidence that the schedule is in step (the second round's F1).
+    thin = [_report(4, mismatches=4), _report(4), _report(0)]
+    thin += [_report(n, mismatches=m) for n, m in ((5, 4), (5, 2), (6, 3), (8, 4), (16, 4))]
+    for report in thin:
+        assert njt.behind_run(run, report, 1020.0) == (1000.0, 1000.0)
+        assert njt.behind_run(None, report, 1020.0) is None
+    assert njt.behind_run(run, _report(5, mismatches=1), 1020.0) is None
+    assert njt.behind_run(run, _report(17, mismatches=4), 1020.0) is None
     assert [
         njt.behind_past_hold(r)
         for r in (None, njt.BehindRun(1000.0, 1599.0), njt.BehindRun(1000.0, 1600.0))

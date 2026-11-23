@@ -957,13 +957,15 @@ fail, because what it asks for is a table row in the next deploy. It holds for t
 the process, since only a deploy can add the row, and it never gates.
 
 The other is read off the NJ Transit trains themselves. `njt-schedule-behind` says that on
-every decode for ten minutes at least five trains, and at least a quarter of those that
-could be checked, have carried a number other than the one the schedule gives their
-trip. Riders are shown the trains' own words meanwhile, and a redeploy is what loads the
+decodes at least ten minutes apart, with none between that said otherwise, at least five
+trains and at least a quarter of those that could be checked carried a number other than
+the one the schedule gives their trip. Riders are shown the trains' own words meanwhile, and a redeploy is what loads the
 current schedule, so it never gates: the probe that could refuse a build is answered by
 the process that has just loaded it. A failed poll neither starts, lengthens nor clears
-it, and nor does a decode with fewer than five trips to check, so it stands through an
-outage and a quiet night until a decode with trains enough says otherwise. `/api/status`'s
+it, and nor does a decode too thin to say (fewer than five trips to check, or fewer than
+five contradictions making up a quarter or more), so it stands through an outage and a
+quiet night until a decode with five or more to check and under a quarter contradicted
+says otherwise. `/api/status`'s
 `njt_feeds` carries the counts behind it for the last decode, each kind its own: `joined`,
 `checked` (joined, with a train number on both sides to compare), `number_mismatches`,
 `no_identity` and `repeated_identity` (they were one number, `cross_check_failures`, until
@@ -1297,11 +1299,13 @@ Production over it and this run clean is a `FAIL`, "production's schedule is beh
 Transit's publication: redeploy". This run not clean either is a `WARN`: NJ Transit's
 realtime feed and its own schedule endpoint disagree, as run 445 caught them doing on
 2026-11-10, and a redeploy would load a schedule that disagrees too. Production over it on
-a run with nothing to set beside it is a `WARN` that says so, and that includes a run whose
-`njt-static` `FAIL`ed: a schedule the app would refuse is no reason to redeploy onto it. A
-production decode with fewer than five trips to check is a `PASS` that says it is too few
-to judge, and a `WARN` beside twenty or more this run checked, which is a schedule without
-the trips. Counts it cannot read are a `WARN`. On every other arm it prints the counts.
+a run with nothing to set beside it is a `WARN` that says so. So is production over it when
+the app's own gate refuses the publication the run downloaded (`njt-static` `FAIL`s on
+that, and a redeploy onto it would serve no NJ Transit). A production decode too thin to
+judge is a `PASS` that says so, and a `WARN` beside twenty or more trips this run checked,
+which is a schedule without them; one that joined twenty or more and could check less than
+half of them is a `WARN`. Counts the verdict needs and cannot read are a `WARN`, and an
+unreadable other count turns a `PASS` into one. Every arm that has counts prints them.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

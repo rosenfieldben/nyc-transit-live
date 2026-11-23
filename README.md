@@ -1282,6 +1282,18 @@ payload rather than the railroads: a release older than contract 6.3 serves no s
 deployment that has not yet completed a railroad poll serves an empty map, and a block
 whose counts cannot be read is reported while the systems that can be read still print.
 
+`production:njt-schedule` asks whether the NJ Transit schedule the deployment holds is the
+one its trains run to, which nothing here could before 2026-11-22: `njt-static` and
+`njt-realtime` read the schedule the run downloads, which is always new. It puts the app's
+own threshold (five, and a quarter of the joined trips) to production's counts and then to
+this run's own decode of the same feed, which it already made, so it costs no request and
+no mint. Production over it and this run under it is a `FAIL`, "production's schedule is
+behind NJ Transit's publication: redeploy". Both over it is a `WARN`: NJ Transit's
+realtime feed and its own schedule endpoint disagree, as run 445 caught them doing on
+2026-11-10, and a redeploy would load a schedule that disagrees too. Production over it on
+a run with nothing to set beside it is a `WARN` that says so, and so are counts it cannot
+read. On every other arm it prints the counts.
+
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and
 riders are genuinely seeing nothing for it. The alerts poll's own age is checked

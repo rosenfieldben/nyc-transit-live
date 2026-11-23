@@ -2939,6 +2939,7 @@ def check_production(
     stale_s: float = PRODUCTION_FEED_STALE_S,
     fail_s: float = PRODUCTION_FEED_FAIL_S,
     upstream_subway_headers: dict[str, float | None] | None = None,
+    upstream_njt_identity: njt_feed.IdentityReport | None = None,
 ) -> list[Result]:
     """The live deployment via MONITOR_STATUS_URL (either form, see
     _resolve_status_url). Returns a line each for: reachability (FAIL on
@@ -2946,7 +2947,8 @@ def check_production(
     per-feed poll freshness (PASS/WARN/FAIL on the bands above), alert-system
     degradation (WARN, escalating to FAIL past the retention horizon), the
     /healthz degraded classification, whether served_at is being built rather
-    than replayed, whether NJ Transit route geometry is served, and two lines about
+    than replayed, whether the NJ Transit schedule it holds is the one its trains run
+    to, whether NJ Transit route geometry is served, and two lines about
     one subway arrivals board (PRODUCTION_BOARD_STATION): whether its served content
     clock is present and within the header check's bands, and whether its
     contributors stay distinguishable when one of them is aged.
@@ -2955,7 +2957,9 @@ def check_production(
     shown: every other line reads an operator surface. The second needs to know which
     feed groups are really aged, which only the upstream can say, so run_all hands in
     the per-group headers check_subway_realtime read this run as
-    `upstream_subway_headers`. Without them that line cannot judge and says so.
+    `upstream_subway_headers`. Without them that line cannot judge and says so. The NJ
+    Transit schedule line is handed this run's own decode the same way, as
+    `upstream_njt_identity`, and for the same reason.
 
     THE /healthz AND served_at LINES ARE F1. Before them this section read one
     endpoint once, which let it tell that production was DEAD but never that it was
@@ -3139,6 +3143,9 @@ def check_production(
     # no fetch, so it cannot lengthen the request sequence
     # test_production_accepts_both_url_forms pins.
     results.append(_check_production_railroad_positions(data))
+    # Another field of that payload, judged beside this run's own decode, so it costs no
+    # fetch either.
+    results.append(_check_production_njt_schedule(data, upstream_njt_identity))
     # F1. Both of these probe the deployment AGAIN, after every judgement above has
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
@@ -3451,6 +3458,91 @@ def _check_production_railroad_positions(data: dict) -> Result:
     if unprintable or unusable:
         return Result(name, WARN, summary)
     return Result(name, PASS, summary)
+
+
+# The counts /api/status publishes for NJ Transit's last decode (models.NjtFeedHealth).
+# MIRRORED as literals for the reason PRODUCTION_HEALTH_CODES is: what this reads off the
+# wire is its own statement, and a count the app stopped publishing must be missed here.
+_NJT_IDENTITY_COUNTS = ("joined", "number_mismatches", "no_identity", "repeated_identity")
+
+
+def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | None) -> Result:
+    """Is the NJ Transit schedule the deployment holds the one its trains are running?
+
+    THE BLIND SPOT THIS CLOSES. A process loads NJ Transit's schedule once, and NJ Transit
+    renumbers its trips in each publication. From 2026-11-12 to 2026-11-22 production held
+    one that had been replaced at least three times, and on 11-22 it served every joined
+    train under another train's destination and number, while all 23 of this monitor's
+    scheduled runs between (448 to 470) ended with 0 FAIL: njt-static and njt-realtime
+    read the schedule the run downloads, which is always new, and production's own count
+    was on /api/status where nothing read it.
+
+    ONE THRESHOLD, THE APP'S (feeds.njt.schedule_behind), asked of production's counts and
+    then of this run's own decode of the same feed against a schedule minutes old. The two
+    answers together say what neither does alone:
+
+      * production over it, this run's decode under it: production's schedule is behind
+        NJ Transit's publication, and a redeploy loads the current one. FAIL.
+      * both over it: NJ Transit's realtime feed and its own schedule endpoint disagree
+        (run 445's shape). Riders are read the trains' own words meanwhile, and a redeploy
+        would load a schedule that disagrees too. WARN.
+      * production over it and this run with nothing to set beside it (no credentials, a
+        run that may not mint, a feed or an archive that would not read, or too few joined
+        trips to call a decode clean): it cannot say which. WARN.
+
+    NO HOLD OF ITS OWN. The app waits ten minutes before its /healthz code, because it has
+    nothing to compare against and upstream's two surfaces do not move at one instant; this
+    line has the comparison, so one reading is enough.
+
+    NEVER A FAIL FOR A PAYLOAD IT CANNOT READ. A release older than the split, a failed
+    poll's nulls and a malformed count are each a WARN that says so: production:feeds is
+    the line that fails on a feed that has stopped.
+    """
+    name = "production:njt-schedule"
+    if data.get("njt_static") == "not-configured":
+        return Result(name, PASS, "njt_static is not-configured, so no trip joins a schedule")
+    health = data.get("njt_feeds")
+    if not isinstance(health, dict):
+        return Result(name, WARN, "/api/status served no njt_feeds, so there is no decode to judge")
+    if any(key not in health for key in _NJT_IDENTITY_COUNTS):
+        return Result(name, WARN, "njt_feeds carries no identity counts by kind (an older release)")
+    counts = [health[key] for key in _NJT_IDENTITY_COUNTS]
+    if all(count is None for count in counts):
+        return Result(
+            name, WARN, "production's last NJ Transit poll failed, so there is no decode to judge"
+        )
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts):
+        return Result(name, WARN, "njt_feeds' identity counts are not four counts")
+    joined, mismatches, nameless, repeated = counts
+    summary = (
+        f"{mismatches} of {joined} joined trips contradict the schedule's train number, "
+        f"{nameless} with no identity, {repeated} repeated"
+    )
+    if not njt_feed.schedule_behind(mismatches, joined):
+        return Result(name, PASS, summary)
+    if fresh is None or fresh.joined < njt_feed.SCHEDULE_BEHIND_MIN_MISMATCHES:
+        return Result(
+            name,
+            WARN,
+            f"{summary}; this run has no decode of its own to set beside it, so it cannot say "
+            "whether production's schedule is behind or NJ Transit disagrees with itself",
+        )
+    own = fresh.counts()
+    beside = (
+        f"{own['number_mismatches']} of {own['joined']} against the schedule this run downloaded"
+    )
+    if njt_feed.schedule_behind(own["number_mismatches"], own["joined"]):
+        return Result(
+            name,
+            WARN,
+            f"NJ Transit's realtime feed disagrees with its own schedule, so a redeploy would "
+            f"load one that disagrees too: {summary}; {beside}",
+        )
+    return Result(
+        name,
+        FAIL,
+        f"production's schedule is behind NJ Transit's publication: redeploy ({summary}; {beside})",
+    )
 
 
 # Route ids safe to print. The detail string below is written to the run log AND to
@@ -4081,10 +4173,14 @@ def run_all(
     results.append(check_path_realtime(fetch, sleep, now, (path or {}).get("stops", {})))
     results.append(check_ferry_realtime(fetch, sleep, now, (ferry or {}).get("trips", {})))
     results.append(check_alerts_realtime(fetch, sleep, now))
-    results.append(
-        _njt_mint_refused("njt-realtime", mint_reason)
-        if mint_refused
-        else check_njt_realtime(
+    # THE NJ TRANSIT DECODE IS KEPT, not only judged, for the reason the subway headers
+    # are: production:njt-schedule sets production's counts beside it. A refused run has
+    # none, and that check says it has nothing to compare.
+    njt_identity: njt_feed.IdentityReport | None = None
+    if mint_refused:
+        njt_realtime = _njt_mint_refused("njt-realtime", mint_reason)
+    else:
+        njt_realtime, njt_identity = _njt_realtime(
             fetch,
             sleep,
             now,
@@ -4093,7 +4189,7 @@ def run_all(
             env.get(njt_auth.PASSWORD_VAR),
             token=njt_token,
         )
-    )
+    results.append(njt_realtime)
     results.append(check_bus_realtime(fetch, sleep, now, env.get("MTA_BUS_API_KEY")))
 
     # MONITOR_SKIP_PRODUCTION is read as "set to anything non-empty", the usual
@@ -4106,6 +4202,7 @@ def run_all(
         env.get("MONITOR_STATUS_URL"),
         skip=bool(env.get("MONITOR_SKIP_PRODUCTION")),
         upstream_subway_headers=subway_headers,
+        upstream_njt_identity=njt_identity,
     )
     return results
 

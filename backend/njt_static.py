@@ -928,7 +928,9 @@ def build_njt_trip_index(trips: dict[str, dict]) -> dict[str, dict]:
     100% on 2026-08-05 (633 survivor observations for trip_id persistence, 745/745
     for entity.id == train number == trip_short_name). No matcher is needed or
     wanted here; PATH's synthesized identity exists because its bridge feed churns
-    ids, and NJ Transit's does not.
+    ids, and NJ Transit's does not from poll to poll. ACROSS PUBLICATIONS IT DOES: each
+    one numbers its trips 1..N afresh, so this index is the feed's only until NJ Transit
+    republishes, and short_name is what shows when it is not (feeds.njt._identity).
     """
     return {
         trip_id: {
@@ -1139,6 +1141,21 @@ def _wanted_shapes(trips: dict[str, dict]) -> set[str]:
     return {shape_id for trip in trips.values() if (shape_id := trip.get("shape_id"))}
 
 
+def line_name(route: dict | None) -> str | None:
+    """A route's rider-facing name: its long name, else its short one. The rule
+    /api/njt-routes serves `name` by, and the one a train that can be told by nothing
+    else is named with (feeds.njt._destination)."""
+    route = route or {}
+    return route.get("long_name") or route.get("short_name")
+
+
+def build_njt_line_names(routes: dict[str, dict]) -> dict[str, str]:
+    """Pure: route_id -> its rider-facing name, for every route that has one. Every route
+    in routes.txt, not only the ones with geometry: a train on a line that draws nothing
+    still has a name."""
+    return {route_id: name for route_id, info in routes.items() if (name := line_name(info))}
+
+
 def build_njt_route_shapes(
     trips: dict[str, dict], shapes: dict[str, list], routes: dict[str, dict] | None = None
 ) -> list[dict]:
@@ -1199,7 +1216,7 @@ def build_njt_route_shapes(
         built.append(
             {
                 "route": route_id,
-                "name": info.get("long_name") or info.get("short_name"),
+                "name": line_name(info),
                 # The short name ON ITS OWN, which `name` above cannot carry: that field is
                 # long-name-else-short-name and the long name is present on all twelve routes,
                 # so it is never the short one. The map's branch code is this.

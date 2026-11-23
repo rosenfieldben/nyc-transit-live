@@ -5610,6 +5610,8 @@ async def test_njt_static_warmup_loading_to_ready(monkeypatch):
     # And the derived indexes 15b and the panel era read.
     assert app.state.njt_station_routes == {"112": ["1"], "109": ["1"]}
     assert app.state.njt_trips["T1"]["short_name"] == "3800"
+    # The names a train with no stop to name is told by (feeds.njt._destination).
+    assert app.state.njt_lines == {"1": "Northeast Corridor"}
     assert [call["trip_id"] for call in app.state.njt_stop_schedule["112"]] == ["T1"]
     # 15c's route lines are built here too, from the same already-parsed tables.
     # NJT_STATIC_DATA carries no shapes at all, which is a real publication shape

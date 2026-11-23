@@ -1118,9 +1118,10 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         return
     _note_first_attempt(entry)
     try:
-        trains, arrivals, feed_timestamp, warnings = await main.fetch_njt_trains(
+        trains, arrivals, feed_timestamp, identity = await main.fetch_njt_trains(
             getattr(app.state, "njt_stops", None) or {},
             getattr(app.state, "njt_trips", None) or {},
+            getattr(app.state, "njt_lines", None) or {},
         )
     except njt_auth.NjtNotConfigured as exc:
         # Unreachable behind the status guard above, and handled anyway so the
@@ -1186,17 +1187,22 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # HTTP 200 with a non-protobuf body (an error page, a proxy's HTML).
         fail(502, "Upstream NJ Transit feed returned undecodable data")
         return
-    njt_feed.log_cross_check(warnings)
+    njt_feed.log_cross_check(identity)
     app.state.njt_feed_health = {
         "total": 1,
         "ok": 1,
         "failed": [],
-        # The entity.id / trip_short_name cross-check count, which the probe
-        # measured at 745/745 agreement. Surfaced on /api/status rather than only
-        # logged, so a drift that starts is visible without reading logs.
-        "cross_check_failures": len(warnings),
+        # What the decode found about its trains' identities, each kind its own count
+        # (feeds.njt.IdentityReport). Surfaced on /api/status rather than only logged, so
+        # a drift that starts is visible without reading logs.
+        **identity.counts(),
     }
     now = time.time()
+    # The run njt-schedule-behind is raised from. A failed poll never reaches here, so
+    # only a decode can start, lengthen or end it (feeds.njt.behind_run says why).
+    app.state.njt_behind_run = njt_feed.behind_run(
+        getattr(app.state, "njt_behind_run", None), identity, now
+    )
     entry.update(
         data=trains,
         fetched_at=now,

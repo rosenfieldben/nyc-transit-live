@@ -28,6 +28,7 @@ from models import (
     HEALTH_GATING_CODES,
     HEALTH_NJT_MINT_ALLOWANCE,
     HEALTH_NJT_MINT_QUOTA,
+    HEALTH_NJT_SCHEDULE_BEHIND,
     HEALTH_NO_FEED_FRESH,
     HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_SUBWAY_GROUPS_DOWN,
@@ -294,6 +295,7 @@ def _health_codes(
     njt_mint_allowance: bool = False,
     subway_lines_degraded: bool = False,
     subway_route_unmapped: bool = False,
+    njt_schedule_behind: bool = False,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
 
@@ -429,6 +431,14 @@ def _health_codes(
     # observations-qualified is.
     if subway_route_unmapped:
         codes.append(HEALTH_SUBWAY_ROUTE_UNMAPPED)
+
+    # THE NJ TRANSIT SCHEDULE THIS PROCESS HOLDS IS NOT THE ONE ITS TRAINS RUN TO, AND NOT
+    # A REASON TO 503 (the 2026-11-22 incident). The trains themselves say so, by their
+    # own numbers, on every decode for ten minutes; models.HEALTH_NJT_SCHEDULE_BEHIND says
+    # what a rider is shown meanwhile, what clears it and why it never gates. LAST, and
+    # defaulted, for the reason observations-qualified is.
+    if njt_schedule_behind:
+        codes.append(HEALTH_NJT_SCHEDULE_BEHIND)
     return codes
 
 
@@ -813,6 +823,7 @@ async def healthz(request: Request) -> JSONResponse:
             and not _draws_a_line(getattr(app.state, "subway_routes", None) or [])
         ),
         subway_route_unmapped=bool(_unmapped_subway_routes(app.state)),
+        njt_schedule_behind=njt_feed.behind_past_hold(getattr(app.state, "njt_behind_run", None)),
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

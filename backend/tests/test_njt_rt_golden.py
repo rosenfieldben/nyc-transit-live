@@ -210,13 +210,14 @@ def test_golden_the_decode_is_stable():
     parsed = njt_static._parse_zip(buffer)
 
     expected = _expected()
-    trains, arrivals, feed_ts, warnings = njt.decode_njt_trip_updates(
+    trains, arrivals, feed_ts, identity = njt.decode_njt_trip_updates(
         TU.read_bytes(),
         parsed["stops"],
         njt_static.build_njt_trip_index(parsed["trips"]),
         expected["now"],
+        njt_static.build_njt_line_names(parsed["routes"]),
     )
-    assert warnings == expected["warnings"]
+    assert [warning.text for warning in identity.warnings] == expected["warnings"]
     assert feed_ts == expected["feed_timestamp"]
     assert trains == expected["trains"]
     assert arrivals == expected["arrivals"]

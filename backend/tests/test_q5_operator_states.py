@@ -28,6 +28,7 @@ from test_f03_boards import NOW
 import main as app_module
 import njt_auth
 import pollers
+from feeds import njt as njt_feed
 
 pytestmark = pytest.mark.anyio
 
@@ -100,7 +101,7 @@ async def test_a_single_system_family_that_never_decoded_is_named_past_the_band(
         fetch, refresh, health = "fetch_ferry_data", pollers._refresh_ferry, "ferry_feeds"
     else:
 
-        async def down(stops, trips):
+        async def down(stops, trips, lines):
             raise njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)")
 
         fetch, refresh, health = "fetch_njt_trains", pollers._refresh_njt, "njt_feeds"
@@ -136,14 +137,17 @@ async def test_nj_transit_not_configured_is_never_named_and_reports_no_poll(worl
 async def test_nj_transit_feed_health_is_served(world, monkeypatch):
     """H5, CLOSED. app.state.njt_feed_health was written on every NJ Transit poll and
     served nowhere, while two comments said /api/status carried it. It does now, as
-    njt_feeds beside path_feeds and ferry_feeds: the cross-check count on a decode, and
-    the failed system on a failed poll."""
+    njt_feeds beside path_feeds and ferry_feeds: the identity counts on a decode, each
+    kind its own since the 2026-11-22 incident, and the failed system on a failed poll."""
     assert (await _read("/api/status"))["njt_feeds"] is None
 
-    async def healthy(stops, trips):
-        return [], {}, q9.OBSERVED, ["one disagreement", "and another"]
+    async def healthy(stops, trips, lines):
+        kinds = [njt_feed.NUMBER_MISMATCH] * 4 + [njt_feed.NO_IDENTITY] * 2
+        kinds += [njt_feed.REPEATED_IDENTITY]
+        warnings = [njt_feed.IdentityWarning(kind, "a warning") for kind in kinds]
+        return [], {}, q9.OBSERVED, njt_feed.IdentityReport(31, 30, warnings)
 
-    async def down(stops, trips):
+    async def down(stops, trips, lines):
         raise njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)")
 
     monkeypatch.setattr(app_module, "fetch_njt_trains", healthy)
@@ -152,7 +156,11 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         "total": 1,
         "ok": 1,
         "failed": [],
-        "cross_check_failures": 2,
+        "joined": 31,
+        "checked": 30,
+        "number_mismatches": 4,
+        "no_identity": 2,
+        "repeated_identity": 1,
     }
     monkeypatch.setattr(app_module, "fetch_njt_trains", down)
     world[0] = T + 20
@@ -161,7 +169,11 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         "total": 1,
         "ok": 0,
         "failed": ["njt"],
-        "cross_check_failures": None,
+        "joined": None,
+        "checked": None,
+        "number_mismatches": None,
+        "no_identity": None,
+        "repeated_identity": None,
     }
 
 

@@ -1,0 +1,163 @@
+{
+ "about": "Production's NJ Transit identity on 2026-11-22, before and after a redeploy, reduced from read-only GETs of /api/status, /api/njt-trains and /api/njt-arrivals and set beside NJ Transit's public rail_data.zip (no credentials, no mint). The public file carries no trip_short_name; its block_id is the train number, which every unjoined trip's entity.id here agrees with. test_njt_drift_incident.py re-derives every count the records quote.",
+ "publication": {
+  "source": "https://www.njtransit.com/rail_data.zip",
+  "last_modified": "2026-11-20T21:31:55Z",
+  "bytes": 3316038,
+  "sha256": "99ec46b5279860edada2b23a8c7a33e6c660a3464b34ab9ade5c8b4d4099c211",
+  "routes": 17,
+  "stops": 228,
+  "trips": 3355,
+  "rail_trips": 1441,
+  "rail_trips_headsigned_by_their_last_stop": 1441,
+  "service": ["20261118", "20270516"]
+ },
+ "stale_publication": {
+  "source": "web.archive.org capture 20261022002243 of the same file",
+  "service": ["20260915", "20270313"],
+  "rail_trips": 3796,
+  "note": "a stand-in: the schedule production held (2026-11-12) is not public"
+ },
+ "before": {
+  "njt_promoted_at": "2026-11-12T06:36:34Z",
+  "polls": ["time", "cross_check_failures", "trains", "synthesized"],
+  "series": [
+   ["2026-11-22T23:12:12Z", 40, 37, 5],
+   ["2026-11-22T23:12:42Z", 40, 37, 5],
+   ["2026-11-22T23:13:12Z", 40, 40, 6],
+   ["2026-11-22T23:13:42Z", 40, 40, 6],
+   ["2026-11-22T23:14:12Z", 40, 39, 6],
+   ["2026-11-22T23:14:42Z", 40, 39, 6],
+   ["2026-11-22T23:15:13Z", 39, 37, 6],
+   ["2026-11-22T23:15:43Z", 39, 36, 6],
+   ["2026-11-22T23:16:13Z", 39, 37, 6],
+   ["2026-11-22T23:16:43Z", 39, 37, 6],
+   ["2026-11-22T23:17:13Z", 39, 37, 6],
+   ["2026-11-22T23:17:44Z", 39, 37, 6],
+   ["2026-11-22T23:18:14Z", 39, 38, 6],
+   ["2026-11-22T23:18:44Z", 37, 38, 6],
+   ["2026-11-22T23:19:14Z", 37, 37, 6],
+   ["2026-11-22T23:19:44Z", 37, 36, 5],
+   ["2026-11-22T23:20:14Z", 38, 36, 5],
+   ["2026-11-22T23:20:45Z", 38, 36, 5],
+   ["2026-11-22T23:21:15Z", 38, 37, 6],
+   ["2026-11-22T23:21:45Z", 38, 37, 6],
+   ["2026-11-22T23:22:15Z", 37, 37, 6],
+   ["2026-11-22T23:22:45Z", 37, 37, 6],
+   ["2026-11-22T23:23:16Z", 37, 38, 6],
+   ["2026-11-22T23:23:46Z", 37, 38, 6],
+   ["2026-11-22T23:24:16Z", 37, 38, 6],
+   ["2026-11-22T23:24:46Z", 37, 37, 6],
+   ["2026-11-22T23:25:16Z", 37, 36, 6],
+   ["2026-11-22T23:25:46Z", 37, 36, 6],
+   ["2026-11-22T23:26:17Z", 37, 36, 6],
+   ["2026-11-22T23:26:47Z", 37, 35, 5]
+  ],
+  "sweep": {
+   "generation": [1795389833.1008592],
+   "boards": 165,
+   "rows": 335,
+   "trips": 44
+  },
+  "trips": [
+   {"trip_id": "9", "route_id": "1", "line": "Atlantic City Rail Line", "route_matches": true, "served_number": "4670", "served_destination": "30th St. PHL.", "joined": true, "number": "4682", "destination": "30TH ST. PHL.", "last_stop": "30TH ST. PHL.", "last_call_on_the_boards": "terminal", "stale_by_number": [["30TH ST. PHL.", "ATLC"]]},
+   {"trip_id": "34", "route_id": "1", "line": "Atlantic City Rail Line", "route_matches": true, "served_number": "4624", "served_destination": "30th St. PHL.", "joined": true, "number": "4683", "destination": "ATLANTIC CITY", "last_stop": "ATLANTIC CITY", "last_call_on_the_boards": null, "stale_by_number": [["ATLANTIC CITY", "ATLC"]]},
+   {"trip_id": "35", "route_id": "1", "line": "Atlantic City Rail Line", "route_matches": true, "served_number": "4620", "served_destination": "30th St. PHL.", "joined": true, "number": "4685", "destination": "ATLANTIC CITY", "last_stop": "ATLANTIC CITY", "last_call_on_the_boards": "terminal", "stale_by_number": [["ATLANTIC CITY", "ATLC"]]},
+   {"trip_id": "120", "route_id": "3", "line": "Montclair-Boonton Line", "route_matches": true, "served_number": "1061", "served_destination": "Mount Olive", "joined": true, "number": "0535", "destination": "BAY STREET", "last_stop": "BAY STREET", "last_call_on_the_boards": "terminal", "stale_by_number": [["BAY STREET", "BNTNM"]]},
+   {"trip_id": "1139", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1874", "served_destination": "5 1874", "joined": false, "number": "1874", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "terminal", "stale_by_number": [["HOBOKEN", "MNBN"]]},
+   {"trip_id": "1140", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1876", "served_destination": "5 1876", "joined": false, "number": "1876", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "terminal", "stale_by_number": [["HOBOKEN", "MNBN"]]},
+   {"trip_id": "1155", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1724", "served_destination": "5 1724", "joined": false, "number": "1724", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "terminal", "stale_by_number": [["HOBOKEN", "MNBN"]]},
+   {"trip_id": "1156", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1726", "served_destination": "5 1726", "joined": false, "number": "1726", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "terminal", "stale_by_number": [["HOBOKEN", "MNBN"]]},
+   {"trip_id": "1223", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1877", "served_destination": "5 1877", "joined": false, "number": "1877", "destination": "WALDWICK", "last_stop": "WALDWICK", "last_call_on_the_boards": null, "stale_by_number": [["WALDWICK", "MNBN"]]},
+   {"trip_id": "1224", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1879", "served_destination": "5 1879", "joined": false, "number": "1879", "destination": "WALDWICK", "last_stop": "WALDWICK", "last_call_on_the_boards": "terminal", "stale_by_number": [["WALDWICK", "MNBN"]]},
+   {"trip_id": "1240", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1727", "served_destination": "5 1727", "joined": false, "number": "1727", "destination": "SUFFERN", "last_stop": "SUFFERN", "last_call_on_the_boards": "terminal", "stale_by_number": [["SUFFERN", "MNBN"]]},
+   {"trip_id": "1241", "route_id": "5", "line": "Main/Bergen County Line", "route_matches": true, "served_number": "1729", "served_destination": "5 1729", "joined": false, "number": "1729", "destination": "SUFFERN", "last_stop": "SUFFERN", "last_call_on_the_boards": "terminal", "stale_by_number": [["SUFFERN", "MNBN"]]},
+   {"trip_id": "1292", "route_id": "6", "line": "Port Jervis Line", "route_matches": true, "served_number": "1784", "served_destination": "Hoboken", "joined": true, "number": "0080", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "past-the-cap", "stale_by_number": [["HOBOKEN", "MNBNP"]]},
+   {"trip_id": "1317", "route_id": "6", "line": "Port Jervis Line", "route_matches": true, "served_number": "1254", "served_destination": "Hoboken", "joined": true, "number": "0077", "destination": "PORT JERVIS", "last_stop": "PORT JERVIS", "last_call_on_the_boards": null, "stale_by_number": [["PORT JERVIS", "MNBNP"]]},
+   {"trip_id": "1318", "route_id": "6", "line": "Port Jervis Line", "route_matches": true, "served_number": "1728", "served_destination": "Hoboken", "joined": true, "number": "0079", "destination": "PORT JERVIS", "last_stop": "PORT JERVIS", "last_call_on_the_boards": "terminal", "stale_by_number": [["PORT JERVIS", "MNBNP"]]},
+   {"trip_id": "1357", "route_id": "7", "line": "Morris & Essex Line", "route_matches": true, "served_number": "1146", "served_destination": "Hoboken", "joined": true, "number": "6934", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "past-the-cap", "stale_by_number": [["NEW YORK PENN STATION", "MNE"]]},
+   {"trip_id": "1362", "route_id": "7", "line": "Morris & Essex Line", "route_matches": true, "served_number": "1210", "served_destination": "Hoboken", "joined": true, "number": "6932", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "MNE"]]},
+   {"trip_id": "1450", "route_id": "7", "line": "Morris & Essex Line", "route_matches": true, "served_number": "1869", "served_destination": "Waldwick", "joined": true, "number": "6933", "destination": "DOVER", "last_stop": "DOVER", "last_call_on_the_boards": "terminal", "stale_by_number": [["DOVER", "MNE"]]},
+   {"trip_id": "1454", "route_id": "7", "line": "Morris & Essex Line", "route_matches": true, "served_number": "1873", "served_destination": "Waldwick", "joined": true, "number": "6935", "destination": "DOVER", "last_stop": "DOVER", "last_call_on_the_boards": "terminal", "stale_by_number": [["DOVER", "MNE"]]},
+   {"trip_id": "1521", "route_id": "8", "line": "Gladstone Branch", "route_matches": true, "served_number": "1167", "served_destination": "Suffern", "joined": true, "number": "0734", "destination": "SUMMIT", "last_stop": "SUMMIT", "last_call_on_the_boards": "terminal", "stale_by_number": [["SUMMIT", "MNEG"]]},
+   {"trip_id": "1522", "route_id": "8", "line": "Gladstone Branch", "route_matches": true, "served_number": "1215", "served_destination": "Waldwick", "joined": true, "number": "0736", "destination": "SUMMIT", "last_stop": "SUMMIT", "last_call_on_the_boards": "terminal", "stale_by_number": [["SUMMIT", "MNEG"]]},
+   {"trip_id": "1565", "route_id": "8", "line": "Gladstone Branch", "route_matches": true, "served_number": "1127", "served_destination": "Suffern", "joined": true, "number": "0733", "destination": "GLADSTONE", "last_stop": "GLADSTONE", "last_call_on_the_boards": "terminal", "stale_by_number": [["GLADSTONE", "MNEG"]]},
+   {"trip_id": "1598", "route_id": "9", "line": "Meadowlands Rail Line", "route_matches": true, "served_number": "0074", "served_destination": "Hoboken", "joined": true, "number": "1978", "destination": "SECAUCUS LOWER LEVEL", "last_stop": "SECAUCUS LOWER LEVEL", "last_call_on_the_boards": null, "stale_by_number": [["HOBOKEN", "MRL"]]},
+   {"trip_id": "1599", "route_id": "9", "line": "Meadowlands Rail Line", "route_matches": true, "served_number": "0066", "served_destination": "Hoboken", "joined": true, "number": "1986", "destination": "SECAUCUS LOWER LEVEL", "last_stop": "SECAUCUS LOWER LEVEL", "last_call_on_the_boards": "terminal", "stale_by_number": []},
+   {"trip_id": "1663", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "0043", "served_destination": "Port Jervis", "joined": true, "number": "7854", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "NEC"]]},
+   {"trip_id": "1664", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "0055", "served_destination": "Port Jervis", "joined": true, "number": "7858", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "past-the-cap", "stale_by_number": [["NEW YORK PENN STATION", "NEC"]]},
+   {"trip_id": "1678", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "0067", "served_destination": "Port Jervis", "joined": true, "number": "7852", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "NEC"]]},
+   {"trip_id": "1679", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "0067", "served_destination": "Port Jervis", "joined": true, "number": "7856", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "NEC"]]},
+   {"trip_id": "1776", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "6922", "served_destination": "New York Penn Station", "joined": true, "number": "7863", "destination": "TRENTON TRANSIT CENTER", "last_stop": "TRENTON TRANSIT CENTER", "last_call_on_the_boards": "terminal", "stale_by_number": [["TRENTON TRANSIT CENTER", "NEC"]]},
+   {"trip_id": "1782", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "6920", "served_destination": "New York Penn Station", "joined": true, "number": "7859", "destination": "TRENTON TRANSIT CENTER", "last_stop": "TRENTON TRANSIT CENTER", "last_call_on_the_boards": "terminal", "stale_by_number": [["TRENTON TRANSIT CENTER", "NEC"]]},
+   {"trip_id": "1793", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "6324", "served_destination": "Hoboken", "joined": true, "number": "7861", "destination": "TRENTON TRANSIT CENTER", "last_stop": "TRENTON TRANSIT CENTER", "last_call_on_the_boards": "terminal", "stale_by_number": [["TRENTON TRANSIT CENTER", "NEC"]]},
+   {"trip_id": "1794", "route_id": "10", "line": "Northeast Corridor", "route_matches": true, "served_number": "0332", "served_destination": "Hoboken", "joined": true, "number": "7865", "destination": "TRENTON TRANSIT CENTER", "last_stop": "TRENTON TRANSIT CENTER", "last_call_on_the_boards": "terminal", "stale_by_number": [["TRENTON TRANSIT CENTER", "NEC"]]},
+   {"trip_id": "1876", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "6935", "served_destination": "Dover", "joined": true, "number": "7252", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "NJCL"]]},
+   {"trip_id": "1877", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "6943", "served_destination": "Dover", "joined": true, "number": "7256", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "past-the-cap", "stale_by_number": [["NEW YORK PENN STATION", "NJCL"]]},
+   {"trip_id": "1897", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "0877", "served_destination": "Hackettstown", "joined": true, "number": "7652", "destination": "NEW YORK PENN STATION", "last_stop": "NEW YORK PENN STATION", "last_call_on_the_boards": "terminal", "stale_by_number": [["NEW YORK PENN STATION", "NJCL"]]},
+   {"trip_id": "1955", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "0331", "served_destination": "Summit", "joined": true, "number": "7261", "destination": "LONG BRANCH", "last_stop": "LONG BRANCH", "last_call_on_the_boards": "terminal", "stale_by_number": [["LONG BRANCH", "NJCL"]]},
+   {"trip_id": "1956", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "0339", "served_destination": "Summit", "joined": true, "number": "7265", "destination": "LONG BRANCH", "last_stop": "LONG BRANCH", "last_call_on_the_boards": "terminal", "stale_by_number": [["LONG BRANCH", "NJCL"]]},
+   {"trip_id": "1964", "route_id": "11", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "6659", "served_destination": "Dover", "joined": true, "number": "7665", "destination": "RAHWAY", "last_stop": "RAHWAY", "last_call_on_the_boards": "terminal", "stale_by_number": [["RAHWAY", "NJCL"]]},
+   {"trip_id": "2012", "route_id": "12", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "0434", "served_destination": "Hoboken", "joined": true, "number": "4760", "destination": "LONG BRANCH", "last_stop": "LONG BRANCH", "last_call_on_the_boards": "terminal", "stale_by_number": [["LONG BRANCH", "NJCLL"]]},
+   {"trip_id": "2043", "route_id": "12", "line": "North Jersey Coast Line", "route_matches": true, "served_number": "0726", "served_destination": "Summit", "joined": true, "number": "4761", "destination": "BAY HEAD", "last_stop": "BAY HEAD", "last_call_on_the_boards": "terminal", "stale_by_number": [["BAY HEAD", "NJCLL"], ["MANASQUAN", "NJCLL"]]},
+   {"trip_id": "2767", "route_id": "14", "line": "Pascack Valley Line", "route_matches": true, "served_number": "7206", "served_destination": "New York Penn Station", "joined": true, "number": "2122", "destination": "HOBOKEN", "last_stop": "HOBOKEN", "last_call_on_the_boards": "terminal", "stale_by_number": [["HOBOKEN", "PASC"]]},
+   {"trip_id": "2805", "route_id": "14", "line": "Pascack Valley Line", "route_matches": true, "served_number": "3234", "served_destination": "New York Penn Station", "joined": true, "number": "2121", "destination": "SPRING VALLEY", "last_stop": "SPRING VALLEY", "last_call_on_the_boards": "terminal", "stale_by_number": [["SPRING VALLEY", "PASC"]]},
+   {"trip_id": "2806", "route_id": "14", "line": "Pascack Valley Line", "route_matches": true, "served_number": "3244", "served_destination": "New York Penn Station", "joined": true, "number": "2123", "destination": "SPRING VALLEY", "last_stop": "SPRING VALLEY", "last_call_on_the_boards": "terminal", "stale_by_number": [["SPRING VALLEY", "PASC"]]},
+   {"trip_id": "2853", "route_id": "15", "line": "Princeton Shuttle", "route_matches": true, "served_number": "7273", "served_destination": "Long Branch", "joined": true, "number": "4258", "destination": "PRINCETON JCT.", "last_stop": "PRINCETON JCT.", "last_call_on_the_boards": "terminal", "stale_by_number": [["PRINCETON JCT.", "PRIN"]]},
+   {"trip_id": "2930", "route_id": "15", "line": "Princeton Shuttle", "route_matches": true, "served_number": "3255", "served_destination": "Long Branch", "joined": true, "number": "4259", "destination": "PRINCETON", "last_stop": "PRINCETON", "last_call_on_the_boards": null, "stale_by_number": [["PRINCETON", "PRIN"]]},
+   {"trip_id": "2931", "route_id": "15", "line": "Princeton Shuttle", "route_matches": true, "served_number": "3263", "served_destination": "Long Branch", "joined": true, "number": "4261", "destination": "PRINCETON", "last_stop": "PRINCETON", "last_call_on_the_boards": "terminal", "stale_by_number": [["PRINCETON", "PRIN"]]},
+   {"trip_id": "3000", "route_id": "16", "line": "Raritan Valley Line", "route_matches": true, "served_number": "4360", "served_destination": "Long Branch", "joined": true, "number": "5528", "destination": "NEWARK PENN STATION", "last_stop": "NEWARK PENN STATION", "last_call_on_the_boards": null, "stale_by_number": [["NEWARK PENN STATION", "RARV"]]},
+   {"trip_id": "3001", "route_id": "16", "line": "Raritan Valley Line", "route_matches": true, "served_number": "4366", "served_destination": "Long Branch", "joined": true, "number": "5530", "destination": "NEWARK PENN STATION", "last_stop": "NEWARK PENN STATION", "last_call_on_the_boards": "past-the-cap", "stale_by_number": [["NEWARK PENN STATION", "RARV"]]},
+   {"trip_id": "3078", "route_id": "16", "line": "Raritan Valley Line", "route_matches": true, "served_number": "4351", "served_destination": "Bay Head", "joined": true, "number": "5531", "destination": "RARITAN", "last_stop": "RARITAN", "last_call_on_the_boards": "terminal", "stale_by_number": [["RARITAN", "RARV"]]},
+   {"trip_id": "3079", "route_id": "16", "line": "Raritan Valley Line", "route_matches": true, "served_number": "4355", "served_destination": "Bay Head", "joined": true, "number": "5533", "destination": "RARITAN", "last_stop": "RARITAN", "last_call_on_the_boards": "terminal", "stale_by_number": [["RARITAN", "RARV"]]}
+  ],
+  "boards": {
+   "New York Penn Station": [
+    ["1678", "0067", "Port Jervis", "NEW YORK PENN STATION"],
+    ["1362", "1210", "Hoboken", "NEW YORK PENN STATION"],
+    ["1663", "0043", "Port Jervis", "NEW YORK PENN STATION"],
+    ["1876", "6935", "Dover", "NEW YORK PENN STATION"],
+    ["1897", "0877", "Hackettstown", "NEW YORK PENN STATION"],
+    ["1679", "0067", "Port Jervis", "NEW YORK PENN STATION"]
+   ],
+   "Newark Penn Station": [
+    ["1964", "6659", "Dover", "RAHWAY"],
+    ["1663", "0043", "Port Jervis", "NEW YORK PENN STATION"],
+    ["1876", "6935", "Dover", "NEW YORK PENN STATION"],
+    ["1956", "0339", "Summit", "LONG BRANCH"],
+    ["1794", "0332", "Hoboken", "TRENTON TRANSIT CENTER"],
+    ["1897", "0877", "Hackettstown", "NEW YORK PENN STATION"]
+   ]
+  }
+ },
+ "after": {
+  "deployment": "7730268879",
+  "in_progress_at": "2026-11-22T23:47:21Z",
+  "success_at": "2026-11-22T23:48:45Z",
+  "njt_promoted_at": "2026-11-22T23:48:52Z",
+  "polls": ["time", "cross_check_failures", "trains", "numbers_right", "destinations_right"],
+  "series": [
+   ["2026-11-22T23:51:29Z", 0, 29, 29, 29],
+   ["2026-11-22T23:51:54Z", 0, 29, 29, 29],
+   ["2026-11-22T23:52:19Z", 0, 29, 29, 29]
+  ],
+  "boards": {
+   "New York Penn Station": [
+    ["1783", "7867", "Trenton Transit Center", "TRENTON TRANSIT CENTER"],
+    ["1962", "7269", "Long Branch", "LONG BRANCH"],
+    ["1451", "6937", "Dover", "DOVER"],
+    ["1795", "7869", "Trenton Transit Center", "TRENTON TRANSIT CENTER"],
+    ["1679", "7856", "New York Penn Station", "NEW YORK PENN STATION"],
+    ["1877", "7256", "New York Penn Station", "NEW YORK PENN STATION"]
+   ],
+   "Newark Penn Station": [
+    ["1679", "7856", "New York Penn Station", "NEW YORK PENN STATION"],
+    ["3001", "5530", "Newark Penn Station", "NEWARK PENN STATION"],
+    ["1877", "7256", "New York Penn Station", "NEW YORK PENN STATION"],
+    ["1783", "7867", "Trenton Transit Center", "TRENTON TRANSIT CENTER"],
+    ["1664", "7858", "New York Penn Station", "NEW YORK PENN STATION"],
+    ["1962", "7269", "Long Branch", "LONG BRANCH"]
+   ]
+  }
+ }
+}

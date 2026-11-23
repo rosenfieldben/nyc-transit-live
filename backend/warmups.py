@@ -467,6 +467,7 @@ async def _warm_njt_static(app: FastAPI) -> None:
         # panel era's scheduled calls per stop. Built here, from the tables the
         # load already parsed, so neither later phase re-reads the zip.
         app.state.njt_trips = njt_static.build_njt_trip_index(data["trips"])
+        app.state.njt_lines = njt_static.build_njt_line_names(data["routes"])
         app.state.njt_stop_schedule = njt_static.build_njt_stop_schedule(
             data["trips"], data["stop_times"]
         )

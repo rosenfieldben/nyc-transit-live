@@ -706,8 +706,12 @@ def main() -> int:
         )
     )
     trimmed_trips = njt_static.build_njt_trip_index(trimmed_parsed["trips"])
-    trains, arrivals, feed_ts, warnings = njt_feed.decode_njt_trip_updates(
-        tu_raw, trimmed_parsed["stops"], trimmed_trips, now
+    trains, arrivals, feed_ts, identity = njt_feed.decode_njt_trip_updates(
+        tu_raw,
+        trimmed_parsed["stops"],
+        trimmed_trips,
+        now,
+        njt_static.build_njt_line_names(trimmed_parsed["routes"]),
     )
     measured_join = (
         sum(1 for t in live_trip_ids if t in trimmed_trips) / len(live_trip_ids)
@@ -729,7 +733,7 @@ def main() -> int:
                 "feed_timestamp": feed_ts,
                 "trains": trains,
                 "arrivals": arrivals,
-                "warnings": warnings,
+                "warnings": [warning.text for warning in identity.warnings],
                 # The input-side counts, committed WITH the golden so a future
                 # reader can tell a decode change from a capture change without
                 # re-running this script.

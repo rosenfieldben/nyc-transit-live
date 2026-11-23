@@ -3875,8 +3875,8 @@ function busHasHeading(bus) {
    words: "NJ Transit heading comes from the served direction passed to bearingAlong; there
    is no headsign rule." v2 had `headsign === "New York"` as inbound, which is a string
    match on a rider-facing label: the same trip reads "New York Penn Station" on NJ Transit
-   and "Penn Station" on the LIRR, an added trip's headsign is synthesized from the route
-   and the train number, and a branch that terminates short of the city has no such
+   and "Penn Station" on the LIRR, an added trip's headsign is its own last stop's name
+   rather than one the schedule gives it, and a branch that terminates short of the city has no such
    headsign at all. What the railroads DO serve is `direction`, "Inbound" or "Outbound"
    from direction_id (backend/feeds/railroad.py's _RAILROAD_DIRECTION), and what NJ Transit
    serves is the anchor pair itself, prev and next, which is a direction of travel without

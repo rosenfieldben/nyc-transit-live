@@ -1482,6 +1482,18 @@ def _status_json(**overrides):
             },
             "MNR": {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0},
         },
+        # What a healthy NJ Transit decode finds about its trains' identities, by kind
+        # (the 2026-11-22 incident): every joined train the train its schedule says it is.
+        "njt_feeds": {
+            "total": 1,
+            "ok": 1,
+            "failed": [],
+            "joined": 51,
+            "checked": 51,
+            "number_mismatches": 0,
+            "no_identity": 0,
+            "repeated_identity": 0,
+        },
     }
     base.update(overrides)
     return json.dumps(base).encode()
@@ -2550,9 +2562,10 @@ def test_njt_realtime_does_not_judge_placement_without_the_static_tables():
 
 
 def test_njt_realtime_warns_on_entity_id_cross_check_drift():
-    """The 745-of-745 agreement feeds.njt._identity is built on. Nothing is served
-    wrong when it drifts, so this is a WARN; but a drift that STARTS is worth a
-    human deciding about rather than a log line nobody reads."""
+    """The 745-of-745 agreement feeds.njt._identity was built on. The schedule this decode
+    reads is the one the run just downloaded, so a mismatch HERE is NJ Transit disagreeing
+    with itself, which no deploy fixes: a WARN. A DEPLOYMENT holding a replaced schedule is
+    production:njt-schedule's to fail on."""
     drifted = _njt_tu(count=30, entity_ids=False)
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
     assert result.status == cm.WARN
@@ -2567,7 +2580,8 @@ def test_njt_realtime_cross_check_names_five_pairs_and_counts_the_rest():
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
     assert result.status == cm.WARN
     assert result.detail == (
-        "8 entity.id/trip_short_name mismatches (probe: 0 of 745): x0/3800 on trip T0, "
+        "8 entity.id/trip_short_name mismatches of 8 checked (probe: 0 of 745): "
+        "x0/3800 on trip T0, "
         "x1/3801 on trip T1, x2/3802 on trip T2, x3/3803 on trip T3, x4/3804 on trip T4, "
         "3 more not named"
     )
@@ -2583,7 +2597,7 @@ def test_njt_realtime_cross_check_escapes_a_markdown_active_id():
     feed.entity[1].id = "38\n01"
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
     assert result.detail == (
-        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): "
+        "2 entity.id/trip_short_name mismatches of 2 checked (probe: 0 of 745): "
         "\\[x\\]\\(http\\:\\/\\/evil\\.example\\)/3800 on trip T0, 38\\n01/3801 on trip T1"
     )
     assert len(cm.format_summary_table([result]).splitlines()) == 3
@@ -2591,43 +2605,75 @@ def test_njt_realtime_cross_check_escapes_a_markdown_active_id():
 
 
 def test_njt_realtime_cross_check_counts_a_warning_of_another_kind():
-    """The decoder's other two warnings (no identity at all, a repeated identity) carry no
-    pair. They stay in the count, as they always were, and are counted, not named."""
+    """The decoder's other two warnings (no identity at all, a repeated identity) are each
+    their own clause in their own words. They were counted under the number mismatch's
+    words until 2026-11-22, which is how runs 452 and 455 came to report mismatches that
+    were none. Four updates: one with no identity, one mismatched, and one scheduled train
+    sent twice, so one of each kind beside a joined count that says what it is a share of."""
     feed = pb.FeedMessage()
-    feed.ParseFromString(_njt_tu(count=2))
+    feed.ParseFromString(_njt_tu(count=4))
     feed.entity[0].id = ""
     feed.entity[0].trip_update.trip.trip_id = ""
     feed.entity[1].id = "x1"
+    feed.entity[3].id = feed.entity[2].id
+    feed.entity[3].trip_update.trip.trip_id = feed.entity[2].trip_update.trip.trip_id
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.status == cm.WARN
     assert result.detail == (
-        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): x1/3801 on trip T1, "
-        "1 more not named"
+        "1 entity.id/trip_short_name mismatches of 3 checked (probe: 0 of 745): "
+        "x1/3801 on trip T1; "
+        "1 trip updates with neither a trip_id nor an entity.id; "
+        "1 trip updates repeating an earlier one's identity"
     )
 
 
 def test_njt_realtime_cross_check_says_so_when_no_warning_is_a_pair():
-    """A line whose warnings are all of the decoder's other kinds still says how many it
-    could not name, so it never reads as the old count-only line, and a run that prints it
-    is not mistaken for one that has not printed pairs yet."""
+    """RUNS 452 AND 455, as they should have read. A decode whose warnings are all of the
+    decoder's other kinds says nothing of a mismatch, because there is none."""
     feed = pb.FeedMessage()
     feed.ParseFromString(_njt_tu(count=2))
     feed.entity[0].id = ""
     feed.entity[0].trip_update.trip.trip_id = ""
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
-    assert result.detail == (
-        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): 1 not named"
+    assert result.status == cm.WARN
+    assert result.detail == "1 trip updates with neither a trip_id nor an entity.id"
+
+
+@pytest.mark.parametrize(
+    "joined,checked,detail",
+    [
+        (20, 0, "only 0 of 20 joined trips carry a number on both sides to check"),
+        (20, 9, "only 9 of 20 joined trips carry a number on both sides to check"),
+        (20, 10, "20 trip updates, both feeds decodable (in service)"),
+        (19, 0, "19 trip updates, both feeds decodable (in service)"),
+    ],
+)
+def test_njt_realtime_says_when_a_full_feed_could_not_be_checked(joined, checked, detail):
+    """A publication without its train numbers joins every trip and contradicts none, which
+    reads as agreement to every count (the first round's F1). Twenty joined trips and less
+    than half of them checkable is the WARN; a thin feed is not asked."""
+    trips = {
+        trip: row if n < checked else {**row, "short_name": None}
+        for n, (trip, row) in enumerate(NJT_RT_TRIPS.items())
+    }
+    result = _check_njt_rt(
+        _njt_rt_fetch(**{NJT_TU: _njt_tu(count=joined)}),
+        parsed={"stops": NJT_RT_STOPS, "trips": trips},
     )
+    warns = detail.startswith("only")
+    assert (result.status, result.detail) == (cm.WARN if warns else cm.PASS, detail)
 
 
 def test_njt_realtime_cross_check_reads_an_id_repr_writes_in_double_quotes():
-    """Python's repr quotes a string holding a single quote in double quotes, the other
-    half of the pattern the pairs are read back with."""
+    """An id holding a single quote, which the pairs' old reading (a pattern over the
+    decoder's own repr) needed a second arm for. The pair comes off the warning itself."""
     feed = pb.FeedMessage()
     feed.ParseFromString(_njt_tu(count=2))
     feed.entity[0].id = "it's"
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
     assert result.detail == (
-        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): it\\'s/3800 on trip T0"
+        "1 entity.id/trip_short_name mismatches of 2 checked (probe: 0 of 745): "
+        "it\\'s/3800 on trip T0"
     )
 
 
@@ -3131,8 +3177,8 @@ def _assert_the_credentials_skip(results):
         )
 
 
-def test_a_refused_run_keeps_the_roster_of_22_checks():
-    """A refusal changes two lines' words and nothing else: the same 22 checks in the same
+def test_a_refused_run_keeps_the_roster_of_23_checks():
+    """A refusal changes two lines' words and nothing else: the same 23 checks in the same
     order as a run that minted, production included."""
 
     def run(trigger):
@@ -3161,8 +3207,368 @@ def test_a_refused_run_keeps_the_roster_of_22_checks():
 
     minted = run({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "1"})
     refused = run({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "2"})
-    assert len(minted) == 22
+    assert len(minted) == 23
     assert refused == minted
+    assert minted[minted.index("production:railroad-positions") + 1] == "production:njt-schedule"
+
+
+# ---------------------------------------------------------------------------
+# production:njt-schedule (the 2026-11-22 incident)
+# ---------------------------------------------------------------------------
+
+BEHIND = "production's schedule is behind NJ Transit's publication: redeploy"
+
+
+def _fresh(checked, mismatches=0, *, others=0):
+    """This run's own decode: `checked` trips that could be, `mismatches` of them number
+    mismatches, and `others` warnings of the other two kinds, each."""
+    kinds = [cm.njt_feed.NUMBER_MISMATCH] * mismatches
+    kinds += [cm.njt_feed.NO_IDENTITY, cm.njt_feed.REPEATED_IDENTITY] * others
+    return cm.njt_feed.IdentityReport(
+        checked + 3, checked, [cm.njt_feed.IdentityWarning(kind, "a warning") for kind in kinds]
+    )
+
+
+def _njt_feeds(checked, mismatches, nameless=0, repeated=0, **overrides):
+    return {
+        "total": 1,
+        "ok": 1,
+        "failed": [],
+        "joined": checked + 1 if isinstance(checked, int) else None,
+        "checked": checked,
+        "number_mismatches": mismatches,
+        "no_identity": nameless,
+        "repeated_identity": repeated,
+        **overrides,
+    }
+
+
+def _schedule_line(fresh, **status_overrides):
+    results = cm.check_production(
+        _healthy_prod(**status_overrides),
+        NO_SLEEP,
+        1000.0,
+        _PROD_BASE,
+        upstream_njt_identity=fresh,
+    )
+    (line,) = [r for r in results if r.name == "production:njt-schedule"]
+    return line
+
+
+def test_production_behind_a_clean_decode_fails_and_says_redeploy():
+    """THE INCIDENT, as this check would have read it on 2026-11-22: production's 37 checked
+    trains all contradicting its schedule, and run 470's own decode, 51 trips against the
+    schedule it had just downloaded, contradicting nothing."""
+    line = _schedule_line(_fresh(51), njt_feeds=_njt_feeds(37, 37))
+    assert line.status == cm.FAIL
+    assert line.detail == (
+        "production's schedule is behind NJ Transit's publication: redeploy "
+        "(37 of 37 checked trips contradict the schedule's train number (38 joined, 0 with no "
+        "identity, 0 repeated); 0 of 51 against the schedule this run downloaded)"
+    )
+
+
+def test_production_and_this_run_both_dirty_is_upstream_disagreeing_with_itself():
+    """RUN 445's SHAPE: the schedule this run downloaded is contradicted too, so a redeploy
+    would load it, and the line neither fails nor says redeploy as an instruction."""
+    line = _schedule_line(_fresh(45, 41), njt_feeds=_njt_feeds(44, 40))
+    assert line.status == cm.WARN
+    assert line.detail == (
+        "NJ Transit's realtime feed disagrees with its own schedule, so a redeploy would "
+        "load one that disagrees too: 40 of 44 checked trips contradict the schedule's train "
+        "number (45 joined, 0 with no identity, 0 repeated); 41 of 45 against the schedule "
+        "this run downloaded"
+    )
+
+
+@pytest.mark.parametrize(
+    "fresh,why",
+    [
+        (None, "it made no decode against a schedule"),
+        (_fresh(0), "its own decode checked 0 of 3 joined"),
+        (_fresh(4), "its own decode checked 4 of 7 joined"),
+        # Most of what it joined could not be checked, so what could says little (the second
+        # round's F8).
+        (cm.njt_feed.IdentityReport(60, 5, []), "its own decode checked 5 of 60 joined"),
+    ],
+    ids=["none", "empty", "four", "mostly-unchecked"],
+)
+def test_production_behind_with_nothing_to_set_beside_it_warns(fresh, why):
+    """It cannot say which side moved, and says that, and why it cannot."""
+    line = _schedule_line(fresh, njt_feeds=_njt_feeds(37, 37))
+    assert line.status == cm.WARN
+    assert line.detail == (
+        "37 of 37 checked trips contradict the schedule's train number (38 joined, 0 with no "
+        f"identity, 0 repeated); this run has nothing to set beside it ({why}), so it cannot "
+        "say whether production's schedule is behind or NJ Transit disagrees with itself"
+    )
+
+
+@pytest.mark.parametrize(
+    "checked,mismatches,behind",
+    [(20, 5, True), (21, 5, False), (17, 4, False), (40, 9, False), (40, 10, True)],
+)
+def test_production_is_behind_at_the_apps_own_threshold(checked, mismatches, behind):
+    """Five, and a quarter: the numbers the app's /healthz code uses, each side of both."""
+    line = _schedule_line(_fresh(51), njt_feeds=_njt_feeds(checked, mismatches))
+    assert (line.status, BEHIND in line.detail) == ((cm.FAIL, True) if behind else (cm.PASS, False))
+
+
+@pytest.mark.parametrize(
+    "own,status",
+    [
+        ((51, 12), "FAIL"),
+        ((51, 13), "WARN"),
+        ((5, 5), "WARN"),
+        ((5, 4), "WARN"),
+        ((5, 2), "WARN"),
+        ((5, 1), "FAIL"),
+    ],
+)
+def test_this_runs_decode_is_clean_under_one_in_four(own, status):
+    """Not "zero": a stray mismatch in the fresh decode is not a feed at odds with itself,
+    and would otherwise be what turned a FAIL into a WARN. And not "under five": four of
+    five is (the branch's review, F4)."""
+    assert _schedule_line(_fresh(*own), njt_feeds=_njt_feeds(37, 37)).status == status
+
+
+def test_the_other_kinds_say_nothing_of_either_schedule():
+    """Sixteen entities of the other two kinds in this run's decode, and sixty in
+    production's: neither is a mismatch, so the incident still FAILs and a deployment in
+    step still PASSes."""
+    assert _schedule_line(_fresh(51, others=8), njt_feeds=_njt_feeds(37, 37)).status == cm.FAIL
+    line = _schedule_line(_fresh(51), njt_feeds=_njt_feeds(48, 1, 30, 31))
+    assert (line.status, line.detail) == (
+        cm.PASS,
+        "1 of 48 checked trips contradict the schedule's train number (49 joined, 30 with no "
+        "identity, 31 repeated)",
+    )
+
+
+@pytest.mark.parametrize(
+    "fresh,checked,mismatches,status,tail",
+    [
+        (_fresh(51), 4, 4, "WARN", "beside 51 this run checked"),
+        # A quarter or more contradicted without the five to be over the threshold by: not
+        # in step, and not enough to say behind (the second round's F2).
+        (_fresh(51), 5, 4, "WARN", "beside 51 this run checked"),
+        (_fresh(51), 16, 4, "WARN", "beside 51 this run checked"),
+        (_fresh(19), 16, 4, "PASS", None),
+        (_fresh(51), 0, 0, "WARN", "beside 51 this run checked"),
+        (_fresh(20), 0, 0, "WARN", "beside 20 this run checked"),
+        (_fresh(19), 4, 4, "PASS", None),
+        (_fresh(0), 0, 0, "PASS", None),
+        (None, 4, 4, "PASS", None),
+    ],
+)
+def test_production_with_too_few_trips_to_judge_says_so(fresh, checked, mismatches, status, tail):
+    """A quiet night is a PASS that claims nothing. Beside a full feed's worth checked by
+    this run in the same minutes it is a schedule that does not have the trips, the
+    2026-11-03 shape, which no mismatch can show (the branch's review, F2)."""
+    line = _schedule_line(fresh, njt_feeds=_njt_feeds(checked, mismatches))
+    assert line.status == status
+    assert "too few to judge" in line.detail
+    if tail is None:
+        assert line.detail.endswith(": too few to judge")
+    else:
+        assert tail in line.detail
+
+
+@pytest.mark.parametrize(
+    "njt_feeds,detail",
+    [
+        (None, "/api/status served no njt_feeds, so there is no decode to judge"),
+        ([1], "/api/status served no njt_feeds, so there is no decode to judge"),
+        (
+            {"total": 1, "ok": 1, "failed": [], "cross_check_failures": 41},
+            "njt_feeds carries no count of checked trips and mismatches to judge by",
+        ),
+        (
+            {**_njt_feeds(None, None, None, None), "ok": 0, "failed": ["njt"]},
+            "production's last NJ Transit poll failed, so there is no decode to judge",
+        ),
+        (_njt_feeds(37, "37"), "njt_feeds' checked and number_mismatches are not two counts"),
+        (_njt_feeds(37, True), "njt_feeds' checked and number_mismatches are not two counts"),
+        (_njt_feeds(37, -1), "njt_feeds' checked and number_mismatches are not two counts"),
+        (_njt_feeds(37, 3.5), "njt_feeds' checked and number_mismatches are not two counts"),
+        (_njt_feeds(37, None), "njt_feeds' checked and number_mismatches are not two counts"),
+        # More mismatches than trips that could be checked is no reading of any decode.
+        (_njt_feeds(3, 37), "njt_feeds' checked and number_mismatches are not two counts"),
+        (_njt_feeds(0, 5), "njt_feeds' checked and number_mismatches are not two counts"),
+    ],
+)
+def test_production_counts_it_cannot_read_warn_and_never_fail(njt_feeds, detail):
+    line = _schedule_line(_fresh(51), njt_feeds=njt_feeds)
+    assert (line.status, line.detail) == (cm.WARN, detail)
+
+
+def test_a_count_too_large_for_a_float_is_judged_and_aborts_nothing():
+    line = _schedule_line(_fresh(51), njt_feeds=_njt_feeds(10**400, 5))
+    assert line.status == cm.PASS
+
+
+@pytest.mark.parametrize(
+    "joined,checked,status",
+    [(126, 0, "WARN"), (126, 62, "WARN"), (126, 63, "PASS"), (20, 9, "WARN"), (19, 5, "PASS")],
+)
+def test_a_held_schedule_without_its_train_numbers_is_not_read_as_agreement(
+    joined, checked, status
+):
+    """It joins a full feed and can check less than half of it, so it contradicts nothing
+    whatever it says (the second round's F4). Beside any decode of this run's, or none."""
+    for fresh in (_fresh(51), None):
+        line = _schedule_line(fresh, njt_feeds=_njt_feeds(checked, 0, joined=joined))
+        assert line.status == status
+        assert ("too little of what joined" in line.detail) is (status == "WARN")
+
+
+@pytest.mark.parametrize("key", ["joined", "no_identity", "repeated_identity"])
+@pytest.mark.parametrize("value", ["absent", None, "x", -1])
+def test_a_count_the_verdict_does_not_need_never_hides_it(key, value):
+    """The incident in full, with one of the other three counts unreadable: it FAILs all the
+    same (the branch's review, F16)."""
+    counts = _njt_feeds(37, 37)
+    if value == "absent":
+        del counts[key]
+    else:
+        counts[key] = value
+    line = _schedule_line(_fresh(51), njt_feeds=counts)
+    assert line.status == cm.FAIL
+    assert "an unreadable number" in line.detail
+    # And it turns a PASS into a WARN, in step or too thin to say (the second round's F5).
+    for checked in (48, 4):
+        line = _schedule_line(
+            None, njt_feeds={**counts, "checked": checked, "number_mismatches": 0}
+        )
+        assert line.status == cm.WARN, line
+
+
+def test_the_counts_this_reads_are_the_counts_the_app_publishes():
+    """Mirrored literals, held to the app's own names so a rename fails here and not in a
+    scheduled run that reads the new release as an old one."""
+    import models
+
+    mirrored = {*cm._NJT_VERDICT_COUNTS, *cm._NJT_OTHER_COUNTS}
+    assert mirrored == set(cm.njt_feed.IdentityReport(0, 0, []).counts())
+    assert mirrored == set(models.NjtFeedHealth.model_fields) - {"total", "ok", "failed"}
+
+
+def test_production_not_configured_has_no_schedule_to_be_behind():
+    line = _schedule_line(None, njt_static="not-configured", njt_feeds=None)
+    assert (line.status, line.detail) == (
+        cm.PASS,
+        "njt_static is not-configured, so no trip joins a schedule",
+    )
+
+
+def test_the_schedule_code_is_a_warn_on_the_health_line_with_its_note():
+    """njt-schedule-behind cannot tell a replaced schedule from run 445's shape, and
+    production:njt-schedule can, so the health line says what the code means and the other
+    line is the one that fails the run. Beside any other recognized code it still FAILs."""
+    import models
+
+    assert "njt-schedule-behind" not in models.HEALTH_GATING_CODES
+
+    def health(*codes):
+        results = cm.check_production(
+            _healthy_prod(health=_healthz_json(degraded=list(codes))), NO_SLEEP, 1000.0, _PROD_BASE
+        )
+        return next(r for r in results if r.name == "production:healthz")
+
+    line = health("njt-schedule-behind")
+    assert (line.status, line.detail) == (
+        cm.WARN,
+        "degraded: njt-schedule-behind; for ten minutes of the NJ Transit decodes that could "
+        "judge, and through any outage or quiet night since, production's trains have "
+        "contradicted the train numbers its schedule gives their trip ids; riders are shown "
+        "the trains' own numbers and last stops; production:njt-schedule says whether a "
+        "redeploy fixes it, when it has a decode of each side",
+    )
+    assert health("njt-schedule-behind", "subway-groups-down").status == cm.FAIL
+
+
+# _njt_tu's thirty trips, as the archive the run downloads would give them.
+_NJT_THIRTY_TRIPS = (
+    "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+    + "".join(f"1,S,T{i},NY,0,{3800 + i},s1\n" for i in range(30))
+)
+
+
+_NJT_NO_DECODE = "(it made no decode against a schedule)"
+
+
+@pytest.mark.parametrize(
+    "case,status,tail",
+    [
+        ("clean", "FAIL", "; 0 of 30 against the schedule this run downloaded)"),
+        ("dirty", "WARN", "; 30 of 30 against the schedule this run downloaded"),
+        # By night as by day: the decode is as good a witness at 03:00.
+        ("overnight", "FAIL", "; 0 of 30 against the schedule this run downloaded)"),
+        # A re-run may not mint, so there is no decode at all.
+        ("re-run", "WARN", _NJT_NO_DECODE),
+        ("unreadable", "WARN", _NJT_NO_DECODE),
+        # The archive parsed and the app's gate refuses it: the decode against it is clean,
+        # and a redeploy onto it would serve no NJ Transit (the first round's F3).
+        ("refused", "WARN", "gate refuses that publication (njt-static)"),
+        # njt-static FAILs on a check of the monitor's own over a publication the app loads,
+        # so a redeploy is still the answer (the second round's F3).
+        ("monitor-only FAIL", "FAIL", "; 0 of 30 against the schedule this run downloaded)"),
+    ],
+)
+def test_run_all_hands_its_own_decode_to_the_schedule_check(case, status, tail):
+    """THE HAND-OFF, which run_all alone expresses. The one NJ Transit decode the run makes
+    anyway is what production's counts are set beside, and it costs no mint and no request
+    of its own: one getToken and one trip-update POST, whichever way it reads, and neither
+    on a run that may not mint."""
+    production = _healthy_prod(njt_feeds=_njt_feeds(37, 37))
+    archive = {
+        "unreadable": b"not a zip",
+        "refused": _njt_zip(**{"trips.txt": _NJT_THIRTY_TRIPS}, last_service="20260101"),
+        "monitor-only FAIL": _njt_zip(
+            **{
+                "trips.txt": _NJT_THIRTY_TRIPS,
+                "stops.txt": _NJT_STOPS + _NJT_IDENTITY.replace("109,NY,", "109,NYP,"),
+            }
+        ),
+    }.get(case, _njt_zip(**{"trips.txt": _NJT_THIRTY_TRIPS}))
+    now = NJT_RT_CLOSED if case == "overnight" else NJT_RT_NOW
+    calls = []
+
+    def fetch(url, headers=None, params=None, files=None):
+        calls.append(url)
+        if url == cm.njt_auth.NJT_TOKEN_URL:
+            return cm.FetchResult(200, _njt_token())
+        if url == cm.njt_static.NJT_STATIC_URL:
+            return cm.FetchResult(200, archive)
+        if url == cm.njt_feed.NJT_TU_URL:
+            return cm.FetchResult(200, _njt_tu(entity_ids=case != "dirty", header_ts=now))
+        if url == cm.njt_feed.NJT_ALERTS_URL:
+            return cm.FetchResult(200, _rt_feed())
+        if url.startswith(_PROD_BASE):
+            return production(url, headers, params, files)
+        return cm.FetchResult(500, b"")
+
+    attempt = "2" if case == "re-run" else "1"
+    results = cm.run_all(
+        fetch,
+        NO_SLEEP,
+        now,
+        env={
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_STATUS_URL": _PROD_BASE,
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_RUN_ATTEMPT": attempt,
+        },
+    )
+    (line,) = [r for r in results if r.name == "production:njt-schedule"]
+    assert (line.status, tail in line.detail) == (status, True), line
+    (static,) = [r for r in results if r.name == "njt-static"]
+    failed = case in ("unreadable", "refused", "monitor-only FAIL")
+    assert (static.status == cm.FAIL) is failed, static
+    spent = 0 if case == "re-run" else 1
+    assert calls.count(cm.njt_auth.NJT_TOKEN_URL) == spent
+    assert calls.count(cm.njt_feed.NJT_TU_URL) == spent
 
 
 def test_production_reports_a_dark_njt_layer():
@@ -4452,7 +4858,8 @@ def test_the_lines_code_is_watched_and_explained_in_words():
 
 
 def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
-    """subway-route-unmapped (Amendment 1, Q1) is the one recognized code that WARNs: a
+    """subway-route-unmapped (Amendment 1, Q1) was the one recognized code that WARNs, and
+    njt-schedule-behind (2026-11-22) is the other: a
     route a live group served is missing from the route-to-group table, which asks for a
     row in the next deploy rather than a page. The WARN names each route and the groups
     that served it, read from /api/status's subway_unmapped_routes; a name that does not
@@ -4460,7 +4867,7 @@ def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
     recognized code the run still FAILs."""
     import models
 
-    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped",)
+    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped", "njt-schedule-behind")
     assert "subway-route-unmapped" not in models.HEALTH_GATING_CODES
     unmapped = {"X9": ["NQRW"], "Y1": ["ACE", "BDFM"]}
     fetch = _healthy_prod(

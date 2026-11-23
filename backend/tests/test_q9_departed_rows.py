@@ -22,12 +22,15 @@ import pytest
 import main as app_module
 import njt_auth
 import pollers
+from feeds import njt as njt_feed
 from feeds import row_departed
 
 pytestmark = pytest.mark.anyio
 
 T = 1000.0
 OBSERVED = 995.0
+# What an NJ Transit decode says about its trains when there is nothing to say.
+NO_WARNINGS = njt_feed.IdentityReport(0, 0, [])
 
 
 @pytest.fixture
@@ -53,8 +56,10 @@ def world(monkeypatch):
         "njt_static_status": "ready",
         "njt_stops": {"105": {"name": "New York Penn Station", "lat": 40.75, "lon": -73.99}},
         "njt_trips": {},
+        "njt_lines": {},
         "njt_arrivals": {},
         "njt_feed_health": None,
+        "njt_behind_run": None,
         "railroad_stops": {
             "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
             "MNR": {"1": {"name": "Grand Central", "lat": 40.75, "lon": -73.97}},
@@ -165,10 +170,10 @@ async def test_nj_transit_prunes_a_departed_kept_row_on_a_failed_poll(world, mon
     dwell = _row("dwell", T + 10, T + 120, **extra)
     later = _row("later", T + 295, T + 300, **extra)
 
-    async def healthy(stops, trips):
-        return [], {"105": [dwell, soon, later]}, OBSERVED, []
+    async def healthy(stops, trips, lines):
+        return [], {"105": [dwell, soon, later]}, OBSERVED, NO_WARNINGS
 
-    async def down(stops, trips):
+    async def down(stops, trips, lines):
         raise njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)")
 
     monkeypatch.setattr(app_module, "fetch_njt_trains", healthy)
@@ -226,8 +231,9 @@ async def test_a_deadline_or_an_unclassified_failure_prunes_the_same_way(world, 
     same rows. Driven through _bounded_refresh with a wedged upstream on NJ Transit, the
     source the deadline reaches most."""
 
-    async def healthy(stops, trips):
-        return [], {"105": [_row("soon", T + 25, T + 30), _row("later", T + 295, T + 300)]}, 0, []
+    async def healthy(stops, trips, lines):
+        rows = [_row("soon", T + 25, T + 30), _row("later", T + 295, T + 300)]
+        return [], {"105": rows}, 0, NO_WARNINGS
 
     monkeypatch.setattr(app_module, "fetch_njt_trains", healthy)
     await pollers._refresh_njt(app_module.app, None)

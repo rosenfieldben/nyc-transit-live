@@ -602,6 +602,23 @@ routes carry `route_type=113`, the GTFS *extended* Rail Service type that anythi
 switch-casing the classic 0-7 falls through. `shapes.txt` is present and
 deliberately unparsed: it is 10 MB of the 11.1 MB payload and nothing reads it yet.
 
+**NJ Transit's trip ids are not stable across publications either, and a train that
+contradicts its join is believed.** NJ Transit numbers its trips 1 to N afresh in each
+publication, and a process keeps the one it loaded at start (A06 on the 2026-10-12
+record). From 2026-11-12 to 2026-11-22 production held one that had been replaced at least
+three times, and on the 22nd every joined train it served wore another train's destination
+and number. A realtime entity's id is the train number, so where it disagrees with the
+number the schedule gives its `trip_id` the join is **refuted**: the row's number is the
+entity's, its destination is the name of the stop its own update ends at, and its route is
+the realtime one alone. A trip the schedule does not have takes the same destination.
+Either row carries `identity` (`refuted` or `unjoined`) on `/api/njt-trains` and
+`/api/njt-arrivals`; a clean join carries no such key and is served byte for byte as it
+was. The destination rule was measured rather than chosen: in the publication in force on
+2026-11-22 the headsign is the name of the last stop on 1,441 of 1,441 rail trips
+(`backend/tests/test_njt_drift_incident.py` holds the sampled rows). Where that stop
+cannot be named the row reads the line's name and the train number, and never a bare route
+id.
+
 **NJ Transit's stop ids are not stable across publications; its `stop_code`s have
 been.** Between contract monitor runs #425 (2026-11-02 21:45 UTC) and #426
 (2026-11-03 06:55 UTC) NJ Transit republished with its stop ids reassigned. Joined
@@ -693,7 +710,8 @@ floor's denominator is trips that CLAIM to be scheduled (SCHEDULED and CANCELED)
 since ADDED trips are definitionally unjoinable; and train identity falls through
 `trip_id`, then `entity.id`, then position, because dozens of extras sharing the
 empty string would otherwise collapse into one train on exactly the disrupted
-nights extras are running.
+nights extras are running. An extra is named by its own last stop, as any trip the
+schedule does not have is.
 
 `getVehiclePositions` is deliberately never fetched, parsed, modelled or captured;
 the numbers behind that are at the poller registry in `backend/pollers.py`.
@@ -931,9 +949,22 @@ station that may not name a dark group on its board. `subway-route-unmapped` say
 static routes index lists such a route, or a live subway group has served one since the
 process started. `/api/status`'s `subway_unmapped_routes` names each route and where it
 was seen (the feed groups that served it, and `static` for the index), and the contract
-monitor prints them in a `WARN`, the one recognized code that warns rather than fails,
-because what it asks for is a table row in the next deploy. It holds for the life of the
-process, since only a deploy can add the row, and it never gates.
+monitor prints them in a `WARN`, one of the two recognized codes that warn rather than
+fail, because what it asks for is a table row in the next deploy. It holds for the life of
+the process, since only a deploy can add the row, and it never gates.
+
+The other is read off the NJ Transit trains themselves. `njt-schedule-behind` says that on
+every decode for ten minutes at least five trains, and at least a quarter of those that
+joined the schedule, have carried a number other than the one the schedule gives their
+trip. Riders are shown the trains' own words meanwhile, and a redeploy is what loads the
+current schedule, so it never gates: the probe that could refuse a build is answered by
+the process that has just loaded it. A failed poll neither starts, lengthens nor clears
+it, and a night with too few trains to judge clears it until morning. `/api/status`'s
+`njt_feeds` carries the counts behind it for the last decode, each kind its own: `joined`,
+`number_mismatches`, `no_identity` and `repeated_identity` (they were one number,
+`cross_check_failures`, until 2026-11-22). What it cannot see is a schedule behind by
+misses alone, since a trip id the schedule does not have is no mismatch. The contract
+monitor warns on the code and lets `production:njt-schedule` decide what it means.
 
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule

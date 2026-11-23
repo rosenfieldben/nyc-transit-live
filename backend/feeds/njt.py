@@ -12,6 +12,14 @@ JOIN, NOT A MATCHER. PATH synthesizes identity because its bridge churns ids;
 NJ Transit does not, and inventing a matcher here would add a failure mode the
 feed does not have.
 
+THE JOIN IS CHECKED PER TRAIN, AND A TRAIN THAT CONTRADICTS IT IS BELIEVED. The trip
+ids are stable from poll to poll and NOT from publication to publication: NJ Transit
+numbers its trips 1..N afresh in each one, and this process keeps the publication it
+loaded at start. From 2026-11-12 to 2026-11-22 production held one that NJ Transit had
+replaced at least three times, and on the 22nd every joined train it served wore another
+train's destination and number. So where entity.id and the schedule's train number
+disagree, the row takes nothing from the schedule (see _identity).
+
 THE DECODER LAW, written by the rush probe and treated as ground truth. Each
 rule below exists because the probe watched it happen, and each has a hermetic
 test with a killing mutation:
@@ -30,8 +38,8 @@ test with a killing mutation:
      would act on.
   3. ADDED IS REAL, AND IT CARRIES AN EMPTY trip_id. Both 2026-08-05 probes saw
      none, and this rule used to say so; a later live capture carried 36 of them
-     out of 164 trip_updates, every one with trip_id "". It joins no static,
-     synthesizes its display name from route plus train number, and MUST BE KEYED
+     out of 164 trip_updates, every one with trip_id "". It joins no static, takes
+     its destination from its own last stop (_destination), and MUST BE KEYED
      ON entity.id, because 36 extras sharing the empty string collapse into one
      train and extras run on exactly the disrupted nights a rider is watching the
      map. See _identity's fallback chain, and note what the chain cannot see by
@@ -55,12 +63,15 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import NamedTuple
 
 import env_seams
 import njt_auth
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
     _DROP_TRIP_RELATIONSHIPS,
+    _STOP_SR,
     ARRIVALS_PER_DIRECTION,
     MAX_FUTURE_FIRST_STOP_S,
     _header_timestamp,
@@ -514,28 +525,214 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
     return None
 
 
+# THE THREE KINDS OF IDENTITY WARNING, each its own count everywhere it is reported
+# (/api/status njt_feeds, the poll's one log line, the contract monitor's WARN). They
+# were one count until 2026-11-22, and it cost a diagnosis: contract monitor runs 452
+# and 455 printed "3" and "1 entity.id/trip_short_name mismatches" for warnings that
+# were none of them a number mismatch.
+NUMBER_MISMATCH = "number-mismatch"
+NO_IDENTITY = "no-identity"
+REPEATED_IDENTITY = "repeated-identity"
+
+# HOW A ROW'S IDENTITY WAS COME BY, when it was not a clean join. The row carries one
+# of these under "identity"; a clean join carries no such key at all, so its row is the
+# row it always was, byte for byte.
+#
+#   refuted    the trip joined and the train contradicts the join: entity.id is not the
+#              train number the schedule gives that trip_id. Nothing is taken from the
+#              schedule.
+#   unjoined   the trip_id is not in the schedule, or the trip carries none (ADDED).
+REFUTED = "refuted"
+UNJOINED = "unjoined"
+
+
+class IdentityWarning(NamedTuple):
+    """One identity warning: its kind, the sentence the log prints, and, for a number
+    mismatch, the pair and the trip it was found on (empty for the other two kinds)."""
+
+    kind: str
+    text: str
+    entity_id: str = ""
+    short_name: str = ""
+    trip_id: str = ""
+
+
+@dataclass(frozen=True)
+class IdentityReport:
+    """What one decode found about its trains' identities.
+
+    `joined` counts the running (not canceled) trip updates whose trip_id is in the
+    schedule, which is the denominator a mismatch count means anything against: five
+    mismatches of five joined is a schedule that is not this feed's, and five of a
+    thousand is not."""
+
+    joined: int
+    warnings: list[IdentityWarning]
+
+    def of_kind(self, kind: str) -> list[IdentityWarning]:
+        return [warning for warning in self.warnings if warning.kind == kind]
+
+    def counts(self) -> dict[str, int]:
+        """The counts as /api/status publishes them (models.NjtFeedHealth)."""
+        return {
+            "joined": self.joined,
+            "number_mismatches": len(self.of_kind(NUMBER_MISMATCH)),
+            "no_identity": len(self.of_kind(NO_IDENTITY)),
+            "repeated_identity": len(self.of_kind(REPEATED_IDENTITY)),
+        }
+
+
+# WHEN A COUNT OF NUMBER MISMATCHES MEANS THE SCHEDULE, and not one odd train. Both
+# arms are needed: the floor keeps a quiet night's one or two from being a share, and
+# the share keeps a handful in a full feed from being a floor. In the 2026-11-22
+# incident every joined train mismatched (37 of 37 in the one fetch generation counted
+# in full, and 37 to 41 over the readings), and after the redeploy none did.
+SCHEDULE_BEHIND_MIN_MISMATCHES = 5
+SCHEDULE_BEHIND_MIN_SHARE = 0.25
+
+# How long that must hold before /healthz says so. NJ Transit's realtime feed and its
+# schedule endpoint do not move at one instant: contract monitor run 445 (2026-11-10)
+# read 41 mismatches against a schedule it had just downloaded, and the next run's
+# download agreed. Ten minutes is the band the operator's other codes use.
+SCHEDULE_BEHIND_HOLD_S = 600.0
+
+
+def schedule_behind(number_mismatches: int, joined: int) -> bool:
+    """Whether one decode's counts say the schedule is not the one the feed is keyed to.
+
+    THE ONE STATEMENT OF THE RULE, read by the poller for njt-schedule-behind and by the
+    contract monitor for production's counts and for its own fresh decode's, so the two
+    cannot come to mean different things by the same words."""
+    return (
+        number_mismatches >= SCHEDULE_BEHIND_MIN_MISMATCHES
+        and number_mismatches >= joined * SCHEDULE_BEHIND_MIN_SHARE
+    )
+
+
+class BehindRun(NamedTuple):
+    """An unbroken run of decodes that schedule_behind held for: its first and its
+    latest, as the poller's clock read them."""
+
+    since: float
+    latest: float
+
+
+def behind_run(run: BehindRun | None, report: IdentityReport, now: float) -> BehindRun | None:
+    """The run after one more successful decode, or None when this decode ends it.
+
+    ONLY A DECODE SPEAKS. A failed poll calls nothing here, so it neither ends a run nor
+    lengthens one: the hold is measured between two decodes that both saw it, and a feed
+    that went dark after one bad decode can never age into the code by itself."""
+    counts = report.counts()
+    if not schedule_behind(counts["number_mismatches"], counts["joined"]):
+        return None
+    return BehindRun(run.since if run is not None else now, now)
+
+
+def behind_past_hold(run: BehindRun | None) -> bool:
+    """Whether a run has lasted long enough for /healthz to name it."""
+    return run is not None and run.latest - run.since >= SCHEDULE_BEHIND_HOLD_S
+
+
+def _own_last_stop(tu, stops: dict[str, dict]) -> dict | None:
+    """The stop this trip update itself ends at, or None when it cannot be named.
+
+    THE LAST STOP THE TRAIN IS STILL GOING TO, which takes two readings the feed forces:
+
+      * A SKIPPED stop is not one it goes to. A partially canceled train drops its
+        terminal and keeps its row, and the stop it now ends at is the last one left.
+        NO_DATA is kept: it says no prediction exists, not that the train does not call.
+      * FEED ORDER IS NOT TRAVEL ORDER. On the committed capture six live trips list a
+        SKIPPED intermediate stop after their terminal, so the order is stop_sequence
+        wherever every remaining stop carries one (decoder law 5's rule, the one
+        _ordered_calls applies), and feed order otherwise.
+
+    NONE RATHER THAN AN EARLIER STOP when the last one is not in the schedule's stops:
+    the last stop the schedule HAPPENS to know is not where the train is going, and
+    naming it would be exactly the kind of wrong this rule exists to end."""
+    going_to = [
+        stu
+        for stu in tu.stop_time_update
+        if stu.stop_id and stu.schedule_relationship != _STOP_SR.SKIPPED
+    ]
+    if not going_to:
+        return None
+    if all(stu.HasField("stop_sequence") for stu in going_to):
+        last = max(going_to, key=lambda stu: stu.stop_sequence)
+    else:
+        last = going_to[-1]
+    return stops.get(last.stop_id)
+
+
+def _destination(
+    tu,
+    stops: dict[str, dict],
+    lines: dict[str, str],
+    route_id: str | None,
+    train_num: str | None,
+) -> str | None:
+    """Where a train the schedule cannot speak for is going.
+
+    ITS OWN LAST STOP, BY NAME, because that is what NJ Transit's own headsign is.
+    Measured against the publication in force on 2026-11-22 (njtransit.com's public
+    rail_data.zip): the headsign is the name of the trip's last stop on 1441 of 1441
+    rail trips, so on all 42 refuted and all 8 unjoined trips sampled from production
+    that evening; on the boards themselves the last call a trip showed was its terminal
+    on 39 of the 39 whose terminal row was visible. Re-joining the held schedule by
+    train number was measured beside it and refused: one sampled number was ambiguous,
+    one absent, and one answered with another destination.
+
+    THE LINE AND THE TRAIN NUMBER when that stop cannot be named ("Main/Bergen County
+    Line 1724"), and never a bare route id: "5 1724" was what riders read, and 5 is a
+    key in NJ Transit's tables rather than a name."""
+    last = _own_last_stop(tu, stops)
+    if last is not None:
+        return last["name"]
+    line = lines.get(route_id or "")
+    if line and train_num:
+        return f"{line} {train_num}"
+    return line or (f"Train {train_num}" if train_num else None)
+
+
 def _identity(
     tu,
     entity_id: str,
     trips: dict[str, dict],
+    stops: dict[str, dict],
+    lines: dict[str, str],
     position: int,
     seen: set[str],
-) -> tuple[dict, list[str]]:
+) -> tuple[dict, list[IdentityWarning]]:
     """(identity fields, warnings) for one trip_update.
 
-    THE JOIN, and the cross-check the probe says will never fire. trip_id joins
-    app.state.njt_trips for route_id, headsign and the train number; separately,
-    entity.id was equal to the train number and to trip_short_name at 745 of 745
-    observations. So the equality is asserted as a CROSS-CHECK and a mismatch is
-    reported as a warning on the poll result rather than dropping the train: the
-    probe says it will not happen, and if it starts happening we want to know
-    rather than guess which side moved.
+    THE JOIN, AND THE TRAIN'S OWN WORD ON IT. trip_id joins app.state.njt_trips for
+    route_id, headsign and the train number; entity.id is the train number too, and the
+    2026-08-05 probe found the two equal at 745 of 745 observations. This docstring used
+    to conclude that a mismatch would never happen and to ask, if it did, which side had
+    moved. It has happened, and we know. NJ Transit numbers its trips 1..N in each
+    publication, so a republication hands a trip_id to another train; this process keeps
+    the publication it loaded at start (A06), so after one the JOIN is what moved and
+    entity.id still names the train in front of the rider. On 2026-11-22 production was
+    still serving the joined answer from a schedule loaded on the 12th: 37 of 37 joined
+    trains in one generation wore another train's destination and number, an NEC train to
+    New York reading "Port Jervis".
 
-    AN ADDED TRIP (decoder law 3) is expected to miss the static entirely. Its
-    display name is synthesized from the realtime route_id plus the train number,
-    which is everything a rider needs to identify it on a board, and the join miss
-    is NOT reported as a warning: a miss is the documented shape for ADDED, and
-    warning on it would train the operator to ignore the signal that matters.
+    SO A REFUTED JOIN GIVES THE ROW NOTHING. Where the schedule's train number and
+    entity.id disagree, the number is entity.id, the destination is _destination's, and
+    the route is the realtime route_id alone: the schedule's route_id is the other
+    train's as surely as its headsign is. The row is marked "refuted" so a board or a
+    train can be told from a clean join. The mismatch is still warned about, as its own
+    kind, because one or two of them is news and a feed full of them is a schedule that
+    needs replacing (schedule_behind).
+
+    AN UNJOINED TRIP TAKES THE SAME DESTINATION RULE, and is marked "unjoined". It is the
+    documented shape for ADDED (decoder law 3), and it is also what a trip the held
+    schedule has never heard of looks like, which after a republication can be a whole
+    line. The join miss is NOT a warning: warning on ADDED would train the operator to
+    ignore the signal that matters.
+
+    WHAT NO RULE HERE CAN SEE: a trip whose id AND number both survive a republication
+    under a changed destination. It is not refuted, and it shows the held schedule's.
 
     NJ TRANSIT'S ADDED TRIPS CARRY AN EMPTY trip_id. Measured on a live capture:
     164 trip_updates, 128 with a trip_id that joined, and the other 36 all ADDED
@@ -566,28 +763,41 @@ def _identity(
     """
     trip_id = tu.trip.trip_id or ""
     static = trips.get(trip_id) or {}
-    # The realtime route_id is preferred when present: for an ADDED trip it is the
-    # only route there is, and for a scheduled trip the probe found the two agree.
-    route_id = (tu.trip.route_id or None) or static.get("route_id")
-    train_num = static.get("short_name") or (entity_id or None)
-    headsign = static.get("headsign")
+    scheduled_num = static.get("short_name")
+    refuted = bool(static and entity_id and scheduled_num and entity_id != scheduled_num)
+    realtime_route = tu.trip.route_id or None
+
+    route_id: str | None = realtime_route
+    train_num: str | None = entity_id or None
+    headsign: str | None = None
+    if not refuted:
+        # The realtime route_id is preferred when present: for an ADDED trip it is the
+        # only route there is, and for a scheduled trip the probe found the two agree.
+        route_id = realtime_route or static.get("route_id")
+        train_num = scheduled_num or train_num
+        headsign = static.get("headsign")
     if headsign is None:
-        # Synthesized, and marked as such by construction rather than by a flag:
-        # "NEC 3800" is what a board would show for a train the schedule does not
-        # know, and it degrades to whichever half exists.
-        parts = [part for part in (route_id, train_num) if part]
-        headsign = " ".join(parts) if parts else None
+        headsign = _destination(tu, stops, lines, route_id, train_num)
 
     warnings = []
-    if static and entity_id and train_num and entity_id != train_num:
+    if refuted:
         warnings.append(
-            f"entity.id {entity_id!r} does not match trip_short_name {train_num!r} "
-            f"for trip {trip_id!r}"
+            IdentityWarning(
+                NUMBER_MISMATCH,
+                f"entity.id {entity_id!r} does not match trip_short_name {scheduled_num!r} "
+                f"for trip {trip_id!r}",
+                entity_id=entity_id,
+                short_name=scheduled_num or "",
+                trip_id=trip_id,
+            )
         )
     elif not trip_id and not entity_id:
         warnings.append(
-            f"trip_update at position {position} carries neither a trip_id nor an entity.id, "
-            "so it has no identity that survives a poll; keyed by position"
+            IdentityWarning(
+                NO_IDENTITY,
+                f"trip_update at position {position} carries neither a trip_id nor an "
+                "entity.id, so it has no identity that survives a poll; keyed by position",
+            )
         )
 
     # THE KEY. Falls through trip_id, entity.id, position: see the docstring for
@@ -609,9 +819,12 @@ def _identity(
     # would be keyed on and "#" would be read as a fragment.
     if key in seen:
         warnings.append(
-            f"trip_update at position {position} repeats the identity {key!r} of an "
-            "earlier entity in this feed; keyed by position so the two do not "
-            "collapse into one train"
+            IdentityWarning(
+                REPEATED_IDENTITY,
+                f"trip_update at position {position} repeats the identity {key!r} of an "
+                "earlier entity in this feed; keyed by position so the two do not "
+                "collapse into one train",
+            )
         )
         key = f"{key}:position-{position}"
     # Recording the key actually HANDED OUT, not the one asked for. The suffix
@@ -619,16 +832,17 @@ def _identity(
     # measured; it is what keeps the set meaning "keys in use" rather than "keys
     # requested", which is the invariant a third duplicate would rely on.
     seen.add(key)
-    return (
-        {
-            "trip_id": key,
-            "route_id": route_id,
-            "headsign": headsign,
-            "train_num": train_num,
-            "joined": bool(static),
-        },
-        warnings,
-    )
+    mark = REFUTED if refuted else (None if static else UNJOINED)
+    fields = {
+        "trip_id": key,
+        "route_id": route_id,
+        "headsign": headsign,
+        "train_num": train_num,
+        "joined": bool(static),
+        # Spread into the served rows as it is, so a clean join adds no key to one.
+        "mark": {"identity": mark} if mark else {},
+    }
+    return fields, warnings
 
 
 def decode_njt_trip_updates(
@@ -636,13 +850,17 @@ def decode_njt_trip_updates(
     stops: dict[str, dict],
     trips: dict[str, dict],
     now: float,
-) -> tuple[list[dict], dict[str, list[dict]], float | None, list[str]]:
-    """Decode the NJT TripUpdates feed into (trains, arrivals, feed_timestamp, warnings).
+    lines: dict[str, str] | None = None,
+) -> tuple[list[dict], dict[str, list[dict]], float | None, IdentityReport]:
+    """Decode the NJT TripUpdates feed into (trains, arrivals, feed_timestamp, identity).
 
     One parse, one walk, two products, matching every other decoder in this
-    package. `warnings` carries the entity.id cross-check misses for the poll
-    result; it is deliberately not an error, and an empty list is the expected
-    state.
+    package. `identity` is the IdentityReport for the poll result: how many trips
+    joined, and every identity warning by kind. It is deliberately not an error, and
+    no warnings is the expected state.
+
+    `lines` is the rider-facing name of each route (njt_static.build_njt_line_names),
+    read only for a train whose own last stop cannot be named.
 
     CANCELED IS FILTERED ONCE, AT THE TOP OF THE WALK (decoder law 1), which is
     what makes the phantom impossible rather than merely unlikely: both products
@@ -660,7 +878,8 @@ def decode_njt_trip_updates(
 
     trains: list[dict] = []
     arrivals: dict[str, list[dict]] = defaultdict(list)
-    warnings: list[str] = []
+    joined = 0
+    warnings: list[IdentityWarning] = []
     # The keys handed out so far in THIS decode, so _identity can refuse to hand the
     # same one to two entities. Scoped to the walk, never carried between polls: a
     # key repeating across polls is the same train, which is the whole point of a key.
@@ -677,7 +896,10 @@ def decode_njt_trip_updates(
             # and a rider's departure board.
             continue
 
-        identity, entity_warnings = _identity(tu, entity.id, trips, position, seen_keys)
+        identity, entity_warnings = _identity(
+            tu, entity.id, trips, stops, lines or {}, position, seen_keys
+        )
+        joined += identity["joined"]
         warnings.extend(entity_warnings)
 
         calls = _ordered_calls(tu, stops)
@@ -700,6 +922,7 @@ def decode_njt_trip_updates(
                     "trip_id": identity["trip_id"],
                     "observed_at": feed_header,
                     "provenance": "reported",
+                    **identity["mark"],
                 }
             )
 
@@ -724,10 +947,11 @@ def decode_njt_trip_updates(
                 # THE FRESHNESS BUDGET, DERIVED at the top of this file is the working.
                 "observed_at": feed_header,
                 **placement,
+                **identity["mark"],
             }
         )
 
-    return trains, _trim_njt_arrivals(arrivals), feed_header, warnings
+    return trains, _trim_njt_arrivals(arrivals), feed_header, IdentityReport(joined, warnings)
 
 
 def _trim_njt_arrivals(arrivals: dict[str, list[dict]]) -> dict[str, list[dict]]:
@@ -771,8 +995,9 @@ def _arrival_sort_key(row: dict) -> tuple[bool, float, bool, str]:
 async def fetch_njt_trains(
     stops: dict[str, dict],
     trips: dict[str, dict],
+    lines: dict[str, str] | None = None,
     post=None,
-) -> tuple[list[dict], dict[str, list[dict]], float | None, list[str]]:
+) -> tuple[list[dict], dict[str, list[dict]], float | None, IdentityReport]:
     """Fetch and decode the NJT TripUpdates feed.
 
     THROUGH njt_post AND NOTHING ELSE. That is not a style preference: the token
@@ -789,23 +1014,26 @@ async def fetch_njt_trains(
     """
     sender = post if post is not None else njt_auth.njt_post
     raw = await sender(NJT_TU_URL, {})
-    return decode_njt_trip_updates(raw, stops, trips, time.time())
+    return decode_njt_trip_updates(raw, stops, trips, time.time(), lines)
 
 
-def log_cross_check(warnings: list[str]) -> None:
-    """Log the identity warnings from one decode, at most one line per poll.
+def log_cross_check(report: IdentityReport) -> None:
+    """Log one decode's identity warnings, at most one line per poll.
 
-    Three kinds reach here and the wording covers all of them rather than naming
-    one: the entity.id / trip_short_name cross-check miss, an entity carrying no
-    identity at all, and two entities claiming the same one. Capped and counted
-    rather than one line per train, because the probe says none of them can happen,
-    so if one starts it will probably happen to the whole feed at once and 700
-    identical warnings a poll would bury the signal it exists to raise.
+    EACH KIND IS COUNTED BY ITSELF and the first warning is quoted whole. One line
+    rather than one per train, because a schedule that has fallen behind mismatches the
+    whole feed at once (37 to 41 trains a poll in the 2026-11-22 incident, every 20 s),
+    and that many lines a poll would bury the signal the line exists to raise.
     """
-    if not warnings:
+    if not report.warnings:
         return
+    counts = report.counts()
     logger.warning(
-        "NJ Transit trip identity check failed for %d trip(s); first: %s",
-        len(warnings),
-        warnings[0],
+        "NJ Transit trip identity: %d number mismatch(es) of %d joined trip(s), "
+        "%d with no identity, %d repeated; first: %s",
+        counts["number_mismatches"],
+        counts["joined"],
+        counts["no_identity"],
+        counts["repeated_identity"],
+        report.warnings[0].text,
     )

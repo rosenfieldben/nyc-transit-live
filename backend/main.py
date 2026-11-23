@@ -269,6 +269,7 @@ async def lifespan(app: FastAPI):
     app.state.njt_routes = []
     app.state.njt_station_routes = {}  # {stop_id: [route_id]} (H5)
     app.state.njt_trips = {}  # {trip_id: {route_id, headsign, short_name}} for 15b
+    app.state.njt_lines = {}  # {route_id: rider-facing name} (njt_static.build_njt_line_names)
     app.state.njt_stop_schedule = {}  # {stop_id: [scheduled call]} for the panel era
     # FOUR states, not three: "loading" | "ready" | "failed" | "not-configured".
     # A deployment with no NJT credentials reaches the fourth without touching the
@@ -281,6 +282,10 @@ async def lifespan(app: FastAPI):
     # ids collide with MTA, PATH and ferry ids.
     app.state.njt_arrivals = {}
     app.state.njt_feed_health = None
+    # The unbroken run of NJ Transit decodes whose train numbers contradict the schedule
+    # (feeds.njt.BehindRun), None while the latest decode does not. What /healthz raises
+    # njt-schedule-behind from; a failed poll leaves it alone.
+    app.state.njt_behind_run = None
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
     # server accepts requests (no warmup task, no "loading" state, no 503). Loading

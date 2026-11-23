@@ -1648,10 +1648,11 @@ def test_njt_the_trap_matrix_never_reaches_a_riders_board(contract_app):
     # Never observed in either probe, accepted anyway, joins no static.
     assert _ADDED in trains, "an ADDED trip must be accepted, not dropped and not crashed on"
     added = trains[_ADDED]
-    assert added["headsign"] == "1 9001", (
-        "an ADDED trip joins no static, so its display name is synthesized from the "
-        f"realtime route plus the train number; got {added['headsign']!r}"
+    assert (added["headsign"], added["identity"]) == ("New York Penn Station", "unjoined"), (
+        "an ADDED trip joins no static, so its destination is the stop its own update ends "
+        f"at; got {added['headsign']!r}, {added.get('identity')!r}"
     )
+    assert "identity" not in trains[_HEALTHY], "a clean join carries no mark at all"
     assert _ADDED in penn, "and it reaches a rider's board like any other train"
 
     # BOTH EXTRAS, AND THAT IS THE POINT OF THERE BEING TWO. NJ Transit publishes

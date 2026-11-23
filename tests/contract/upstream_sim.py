@@ -605,7 +605,7 @@ def _ferry_members() -> dict[str, str]:
 #   A9  ADDED         TWO of them, both with an EMPTY trip_id, which is what the
 #       A9b            live feed publishes (36 of 164 trip_updates, all empty).
 #                      Route lives on the realtime descriptor only (decoder law 3).
-#                      Must render from synthesized names and stay TWO trains: a
+#                      Must be named by their own last stop and stay TWO trains: a
 #                      decoder keying on trip_id merges them, and that is 35 trains
 #                      vanishing at the scale the real feed runs extras.
 NJT_TRAP_TRIPS = ("T1", "T3", "T4", "T5", "T7", "A9", "A9b")
@@ -719,8 +719,8 @@ def _njt_trip_updates(now: float) -> bytes:
         [(10, "112", -120, False, True, 0), (20, "109", 480, True, True, 0)],
     )
     # A9: ADDED, an extra Northeast Corridor train into Penn. No static trip, so
-    # the display name has to be synthesized from the realtime route plus the
-    # train number. Routed INTO 109 on purpose: the claim worth making about ADDED
+    # its destination is the last stop of its own update, which is Penn, and its
+    # number is entity.id. Routed INTO 109 on purpose: the claim worth making about ADDED
     # is that it reaches a rider's board, not merely that it fails to crash.
     # TWO of them, with EMPTY trip_ids, which is the shape NJ Transit actually
     # publishes: a live capture carried 36 ADDED trips out of 164 trip_updates and

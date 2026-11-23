@@ -106,7 +106,10 @@ def _trip(
 
 
 def _decode(raw: bytes, now: float = NOW):
-    return njt.decode_njt_trip_updates(raw, STOPS, TRIPS, now)
+    """(trains, arrivals, feed_timestamp, the identity warnings' sentences). The report
+    itself, with its kinds and counts, is test_njt_drift.py's subject."""
+    trains, arrivals, ts, identity = njt.decode_njt_trip_updates(raw, STOPS, TRIPS, now)
+    return trains, arrivals, ts, [warning.text for warning in identity.warnings]
 
 
 # ---------------------------------------------------------------------------
@@ -274,15 +277,17 @@ def test_a_no_data_stop_drops_like_a_skipped_one():
 # ---------------------------------------------------------------------------
 
 
-def test_an_added_trip_renders_with_a_synthesized_name():
+def test_an_added_trip_is_named_by_its_own_last_stop():
     """ADDED WAS NEVER OBSERVED in either probe, which is exactly why it is
     handled rather than assumed away: the one shape we have never seen is the one
     that will arrive unannounced.
 
     It joins nothing in the static, so route and train number come off the wire
-    and the display name is synthesized from them. The join miss must NOT produce
-    a cross-check warning: a miss is the documented shape for ADDED, and warning
-    on it would train an operator to ignore the signal that matters.
+    and the destination is the stop its own update ends at (feeds.njt._destination;
+    it was "9 9999", the route id and the train number, until the 2026-11-22
+    incident). The join miss must NOT produce a cross-check warning: a miss is the
+    documented shape for ADDED, and warning on it would train an operator to ignore
+    the signal that matters.
 
     THE trip_id IS EMPTY, WHICH IS THE REAL SHAPE. This test used to pass a fake
     "T-UNKNOWN", and a live capture then showed NJ Transit publishes ADDED trips
@@ -308,9 +313,11 @@ def test_an_added_trip_renders_with_a_synthesized_name():
     train = trains[0]
     assert train["train_num"] == "9999", "the train number falls back to entity.id"
     assert train["route_id"] == "9", "the realtime route_id is the only route there is"
-    assert train["headsign"] == "9 9999", "synthesized from route plus train number"
+    assert train["headsign"] == "Penn Station New York", "the stop its own update ends at"
+    assert train["identity"] == "unjoined"
     assert warnings == [], "a join miss is the documented ADDED shape, not a warning"
-    assert arrivals["109"][0]["headsign"] == "9 9999"
+    assert arrivals["109"][0]["headsign"] == "Penn Station New York"
+    assert arrivals["109"][0]["identity"] == "unjoined"
 
 
 def test_an_added_trip_with_no_route_still_renders():
@@ -329,7 +336,8 @@ def test_an_added_trip_with_no_route_still_renders():
     )
     trains, _arrivals, _ts, _w = _decode(raw)
     assert len(trains) == 1
-    assert trains[0]["headsign"] == "7777"
+    assert trains[0]["headsign"] == "Penn Station New York"
+    assert trains[0]["route_id"] is None, "no line is invented for it"
 
 
 # ---------------------------------------------------------------------------
@@ -574,10 +582,10 @@ def test_the_join_fills_route_headsign_and_train_number():
 
 
 def test_an_entity_id_mismatch_warns_without_dropping_the_train():
-    """entity.id == train number == trip_short_name at 745 of 745 observations, so
-    this cross-check should never fire. It warns rather than drops precisely
-    BECAUSE the probe is confident: if the invariant starts breaking we want to
-    know, not to silently lose trains while we guess which side moved."""
+    """entity.id == train number == trip_short_name at 745 of 745 observations, and then
+    it broke, for a whole feed, when NJ Transit renumbered its trips under a schedule this
+    process had already loaded. It warns rather than drops, and test_njt_drift.py holds
+    what the row says: the train is there, and it is the train that is believed."""
     raw = _feed(
         _trip(
             "XXXX",

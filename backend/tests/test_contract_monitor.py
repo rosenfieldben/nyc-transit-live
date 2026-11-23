@@ -1482,6 +1482,17 @@ def _status_json(**overrides):
             },
             "MNR": {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0},
         },
+        # What a healthy NJ Transit decode finds about its trains' identities, by kind
+        # (the 2026-11-22 incident): every joined train the train its schedule says it is.
+        "njt_feeds": {
+            "total": 1,
+            "ok": 1,
+            "failed": [],
+            "joined": 51,
+            "number_mismatches": 0,
+            "no_identity": 0,
+            "repeated_identity": 0,
+        },
     }
     base.update(overrides)
     return json.dumps(base).encode()
@@ -2550,9 +2561,10 @@ def test_njt_realtime_does_not_judge_placement_without_the_static_tables():
 
 
 def test_njt_realtime_warns_on_entity_id_cross_check_drift():
-    """The 745-of-745 agreement feeds.njt._identity is built on. Nothing is served
-    wrong when it drifts, so this is a WARN; but a drift that STARTS is worth a
-    human deciding about rather than a log line nobody reads."""
+    """The 745-of-745 agreement feeds.njt._identity was built on. The schedule this decode
+    reads is the one the run just downloaded, so a mismatch HERE is NJ Transit disagreeing
+    with itself, which no deploy fixes: a WARN. A DEPLOYMENT holding a replaced schedule is
+    production:njt-schedule's to fail on."""
     drifted = _njt_tu(count=30, entity_ids=False)
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
     assert result.status == cm.WARN
@@ -2567,7 +2579,8 @@ def test_njt_realtime_cross_check_names_five_pairs_and_counts_the_rest():
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
     assert result.status == cm.WARN
     assert result.detail == (
-        "8 entity.id/trip_short_name mismatches (probe: 0 of 745): x0/3800 on trip T0, "
+        "8 entity.id/trip_short_name mismatches of 8 joined (probe: 0 of 745): "
+        "x0/3800 on trip T0, "
         "x1/3801 on trip T1, x2/3802 on trip T2, x3/3803 on trip T3, x4/3804 on trip T4, "
         "3 more not named"
     )
@@ -2583,7 +2596,7 @@ def test_njt_realtime_cross_check_escapes_a_markdown_active_id():
     feed.entity[1].id = "38\n01"
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
     assert result.detail == (
-        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): "
+        "2 entity.id/trip_short_name mismatches of 2 joined (probe: 0 of 745): "
         "\\[x\\]\\(http\\:\\/\\/evil\\.example\\)/3800 on trip T0, 38\\n01/3801 on trip T1"
     )
     assert len(cm.format_summary_table([result]).splitlines()) == 3
@@ -2591,43 +2604,50 @@ def test_njt_realtime_cross_check_escapes_a_markdown_active_id():
 
 
 def test_njt_realtime_cross_check_counts_a_warning_of_another_kind():
-    """The decoder's other two warnings (no identity at all, a repeated identity) carry no
-    pair. They stay in the count, as they always were, and are counted, not named."""
+    """The decoder's other two warnings (no identity at all, a repeated identity) are each
+    their own clause in their own words. They were counted under the number mismatch's
+    words until 2026-11-22, which is how runs 452 and 455 came to report mismatches that
+    were none. Four updates: one with no identity, one mismatched, and one scheduled train
+    sent twice, so one of each kind beside a joined count that says what it is a share of."""
     feed = pb.FeedMessage()
-    feed.ParseFromString(_njt_tu(count=2))
+    feed.ParseFromString(_njt_tu(count=4))
     feed.entity[0].id = ""
     feed.entity[0].trip_update.trip.trip_id = ""
     feed.entity[1].id = "x1"
+    feed.entity[3].id = feed.entity[2].id
+    feed.entity[3].trip_update.trip.trip_id = feed.entity[2].trip_update.trip.trip_id
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
+    assert result.status == cm.WARN
     assert result.detail == (
-        "2 entity.id/trip_short_name mismatches (probe: 0 of 745): x1/3801 on trip T1, "
-        "1 more not named"
+        "1 entity.id/trip_short_name mismatches of 3 joined (probe: 0 of 745): "
+        "x1/3801 on trip T1; "
+        "1 trip updates with neither a trip_id nor an entity.id; "
+        "1 trip updates repeating an earlier one's identity"
     )
 
 
 def test_njt_realtime_cross_check_says_so_when_no_warning_is_a_pair():
-    """A line whose warnings are all of the decoder's other kinds still says how many it
-    could not name, so it never reads as the old count-only line, and a run that prints it
-    is not mistaken for one that has not printed pairs yet."""
+    """RUNS 452 AND 455, as they should have read. A decode whose warnings are all of the
+    decoder's other kinds says nothing of a mismatch, because there is none."""
     feed = pb.FeedMessage()
     feed.ParseFromString(_njt_tu(count=2))
     feed.entity[0].id = ""
     feed.entity[0].trip_update.trip.trip_id = ""
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
-    assert result.detail == (
-        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): 1 not named"
-    )
+    assert result.status == cm.WARN
+    assert result.detail == "1 trip updates with neither a trip_id nor an entity.id"
 
 
 def test_njt_realtime_cross_check_reads_an_id_repr_writes_in_double_quotes():
-    """Python's repr quotes a string holding a single quote in double quotes, the other
-    half of the pattern the pairs are read back with."""
+    """An id holding a single quote, which the pairs' old reading (a pattern over the
+    decoder's own repr) needed a second arm for. The pair comes off the warning itself."""
     feed = pb.FeedMessage()
     feed.ParseFromString(_njt_tu(count=2))
     feed.entity[0].id = "it's"
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: feed.SerializeToString()}))
     assert result.detail == (
-        "1 entity.id/trip_short_name mismatches (probe: 0 of 745): it\\'s/3800 on trip T0"
+        "1 entity.id/trip_short_name mismatches of 2 joined (probe: 0 of 745): "
+        "it\\'s/3800 on trip T0"
     )
 
 
@@ -3163,6 +3183,31 @@ def test_a_refused_run_keeps_the_roster_of_22_checks():
     refused = run({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ATTEMPT": "2"})
     assert len(minted) == 22
     assert refused == minted
+
+
+def test_the_schedule_code_is_a_warn_on_the_health_line_with_its_note():
+    """njt-schedule-behind cannot tell a replaced schedule from run 445's shape, and
+    production:njt-schedule can, so the health line says what the code means and the other
+    line is the one that fails the run. Beside any other recognized code it still FAILs."""
+    import models
+
+    assert "njt-schedule-behind" not in models.HEALTH_GATING_CODES
+
+    def health(*codes):
+        results = cm.check_production(
+            _healthy_prod(health=_healthz_json(degraded=list(codes))), NO_SLEEP, 1000.0, _PROD_BASE
+        )
+        return next(r for r in results if r.name == "production:healthz")
+
+    line = health("njt-schedule-behind")
+    assert (line.status, line.detail) == (
+        cm.WARN,
+        "degraded: njt-schedule-behind; for ten minutes the NJ Transit trains production "
+        "decodes have contradicted the train numbers its schedule gives their trip ids; "
+        "riders are shown the trains' own numbers and last stops meanwhile; "
+        "production:njt-schedule says whether a redeploy fixes it",
+    )
+    assert health("njt-schedule-behind", "subway-groups-down").status == cm.FAIL
 
 
 def test_production_reports_a_dark_njt_layer():
@@ -4452,7 +4497,8 @@ def test_the_lines_code_is_watched_and_explained_in_words():
 
 
 def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
-    """subway-route-unmapped (Amendment 1, Q1) is the one recognized code that WARNs: a
+    """subway-route-unmapped (Amendment 1, Q1) was the one recognized code that WARNs, and
+    njt-schedule-behind (2026-11-22) is the other: a
     route a live group served is missing from the route-to-group table, which asks for a
     row in the next deploy rather than a page. The WARN names each route and the groups
     that served it, read from /api/status's subway_unmapped_routes; a name that does not
@@ -4460,7 +4506,7 @@ def test_the_route_table_code_is_a_warn_naming_each_route_and_its_groups():
     recognized code the run still FAILs."""
     import models
 
-    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped",)
+    assert cm._WARN_HEALTH_CODES == ("subway-route-unmapped", "njt-schedule-behind")
     assert "subway-route-unmapped" not in models.HEALTH_GATING_CODES
     unmapped = {"X9": ["NQRW"], "Y1": ["ACE", "BDFM"]}
     fetch = _healthy_prod(

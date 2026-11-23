@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
 
 # THE PROVENANCE ENUMERATION (the freshness and provenance contract, section 3.1 of
 # docs/design/freshness-contract.md). How a served observation came to exist, for
@@ -647,6 +647,25 @@ class NjtRoute(BaseModel):
     polylines: list[list[list[float]]]
 
 
+# HOW AN NJ TRANSIT ROW'S IDENTITY WAS COME BY, when it was not a clean join of its
+# trip_id to the schedule (feeds.njt._identity). ABSENT ON A CLEAN JOIN, on the wire as
+# in the decode, so a row the schedule speaks for is served byte for byte as it was
+# before the mark existed.
+#
+#   refuted    the trip joined and the train contradicts the join, so its number is
+#              entity.id and its destination its own last stop
+#   unjoined   the trip is not in the schedule, or names none (every ADDED trip)
+NjtIdentity = Literal["refuted", "unjoined"]
+
+
+def _without_unmarked_identity(row: dict) -> dict:
+    """A served row with no null `identity` key: the one way both row models leave a
+    clean join unmarked rather than marked with nothing."""
+    if row.get("identity") is None:
+        row.pop("identity", None)
+    return row
+
+
 # NJ Transit Rail realtime (15b). SCHEDULE-DERIVED, never GPS: every position
 # below is computed from the TripUpdates feed's own times against 15a's stop
 # coordinates, because NJ Transit's vehicle positions feed is deliberately not
@@ -660,12 +679,12 @@ class NjtTrain(BaseModel):
     id: str
     trip_id: str
     route_id: str | None
-    # Static headsign when the trip joins 15a's index; for an ADDED trip (36 of them
-    # in the first capture that caught a disrupted evening, all carrying an empty
-    # trip_id) this is synthesized from route plus train number, which is what a
-    # departure board would show.
+    # Static headsign when the trip joins 15a's index and the train does not contradict
+    # the join; otherwise (a refuted join, or a trip the schedule does not have, which is
+    # every ADDED one) the name of the stop the train's own update ends at
+    # (feeds.njt._destination). `identity` below says which.
     headsign: str | None
-    train_num: str | None  # trip_short_name == entity.id == the train number
+    train_num: str | None  # entity.id, and the schedule's trip_short_name where they agree
     latitude: float
     longitude: float
     # "at-station" while inside the dwell window (arrival <= now < departure),
@@ -693,6 +712,11 @@ class NjtTrain(BaseModel):
     # these two.
     observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
     provenance: Provenance = "unknown"
+    identity: NjtIdentity | None = None
+
+    @model_serializer(mode="wrap")
+    def _clean_join_is_unmarked(self, handler: SerializerFunctionWrapHandler):
+        return _without_unmarked_identity(handler(self))
 
 
 class NjtFeed(BaseModel):
@@ -721,6 +745,11 @@ class NjtArrival(BaseModel):
     # The TripUpdates header, as for NjtTrain: nothing else in this feed is dated.
     observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
     provenance: Provenance = "unknown"
+    identity: NjtIdentity | None = None
+
+    @model_serializer(mode="wrap")
+    def _clean_join_is_unmarked(self, handler: SerializerFunctionWrapHandler):
+        return _without_unmarked_identity(handler(self))
 
 
 class NjtStationArrivals(BaseModel):
@@ -855,12 +884,20 @@ class NjtFeedHealth(BaseModel):
     total: int  # 1: NJ Transit's trip updates are one feed
     ok: int
     failed: list[str]  # ["njt"] when the last poll failed, else []
-    # The last successful poll's entity.id / trip_short_name cross-check disagreements
-    # (feeds/njt.py log_cross_check), NULL on a failed poll: no decode ran, so there is no
+    # What the last successful decode found about its trains' identities
+    # (feeds.njt.IdentityReport), NULL on a failed poll: no decode ran, so there is no
     # count, and a 0 there would read as "no disagreements" to an operator sampling it for
     # drift (the adversarial round of Amendment 1's Step 3, its F14). Unlike PathFeedHealth's
     # `unresolved`, which defaults to 0 for the same failure dicts and predates this.
-    cross_check_failures: int | None = None
+    #
+    # FOUR NUMBERS WHERE THERE WAS ONE (`cross_check_failures`), because the one added
+    # three kinds together and could not say which: 41 wrong train numbers and 41 entities
+    # with no identity are different faults with different fixes, and a count of either
+    # means nothing without how many trips joined at all.
+    joined: int | None = None  # running trip updates whose trip_id is in the schedule
+    number_mismatches: int | None = None  # of those, the train contradicts the join
+    no_identity: int | None = None  # neither a trip_id nor an entity.id
+    repeated_identity: int | None = None  # an identity an earlier entity already has
 
 
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
@@ -1291,6 +1328,28 @@ HEALTH_SUBWAY_LINES_DEGRADED = "subway-lines-degraded"
 # Degraded rather than gating: the table's drift is not a reason to refuse a build, the
 # build that fixes it included.
 HEALTH_SUBWAY_ROUTE_UNMAPPED = "subway-route-unmapped"
+# THE SCHEDULE THIS PROCESS HOLDS IS NOT THE ONE NJ TRANSIT'S TRAINS ARE RUNNING. NJ
+# Transit numbers its trips afresh in each publication and this process loads one at
+# start and never again (A06 and F07 of the 2026-10-12 record), so after a republication
+# its trip ids join other trains. Raised when at least feeds.njt's five number mismatches
+# make up at least a quarter of the joined trips on every decode for ten minutes
+# (feeds.njt.schedule_behind, behind_run). On 2026-11-22 that was the state of production,
+# every joined train of it, from a schedule loaded on the 12th and under a /healthz that
+# said pass.
+#
+# WHAT IT COSTS A RIDER NOW is the schedule's own words, not the truth: a refuted row
+# takes its number and destination from the train (feeds.njt._identity). WHAT CLEARS IT
+# is a process that loads the current publication, which means a redeploy.
+#
+# WHAT IT CANNOT SEE is a schedule behind by misses alone. A trip id the schedule does
+# not have is no mismatch, so a publication whose ids overlap the held one nowhere
+# (2026-11-03's: seven digits before, one to four after) joins nothing and raises
+# nothing here. The 2026-10-12 record's live list carries that as its own row.
+#
+# Degraded rather than gating, as every njt code is and for their reason: the probe is
+# read while a build is being promoted, the fresh process that answers it has just loaded
+# the current schedule, and gating would refuse the very build that fixes it.
+HEALTH_NJT_SCHEDULE_BEHIND = "njt-schedule-behind"
 
 HEALTH_DEGRADED_CODES = (
     HEALTH_NO_FEED_FRESH,
@@ -1303,6 +1362,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_NJT_MINT_ALLOWANCE,
     HEALTH_SUBWAY_LINES_DEGRADED,
     HEALTH_SUBWAY_ROUTE_UNMAPPED,
+    HEALTH_NJT_SCHEDULE_BEHIND,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO

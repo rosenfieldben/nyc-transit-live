@@ -26,6 +26,7 @@ from pathlib import Path
 import httpx
 import pytest
 import test_q9_departed_rows as q9
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2 as pb
 
 import main as app_module
@@ -151,6 +152,7 @@ def test_no_row_shows_a_number_or_a_destination_the_newer_publication_does_not_g
     ] == [146, 742, 53]
     assert identity.counts() == {
         "joined": 126,
+        "checked": 126,
         "number_mismatches": REFUTED,
         "no_identity": 0,
         "repeated_identity": 0,
@@ -170,6 +172,7 @@ def test_a_clean_join_is_the_row_it_always_was():
     assert identity.warnings == []
     assert identity.counts() == {
         "joined": 131,
+        "checked": 131,
         "number_mismatches": 0,
         "no_identity": 0,
         "repeated_identity": 0,
@@ -201,6 +204,7 @@ def test_the_real_captures_shapes_survive_the_same_drift():
     _t, _a, _ts, identity = njt.decode_njt_trip_updates(raw, STOPS, OLDER, at, LINES)
     assert identity.counts() == {
         "joined": 83,
+        "checked": 83,
         "number_mismatches": 75,
         "no_identity": 0,
         "repeated_identity": 0,
@@ -229,6 +233,7 @@ S = {
     "1": {"id": "1", "name": "Trenton", "lat": 40.2, "lon": -74.7},
     "2": {"id": "2", "name": "Newark Penn Station", "lat": 40.7, "lon": -74.1},
     "3": {"id": "3", "name": "New York Penn Station", "lat": 40.75, "lon": -73.99},
+    "4": {"id": "4", "name": None, "lat": 40.76, "lon": -73.98},
 }
 T = {
     "77": {"route_id": "9", "headsign": "Port Jervis", "short_name": "0043"},
@@ -335,6 +340,14 @@ def test_who_is_refuted_and_who_is_not(entity_id, trip_id, expected, mark):
         # The last stop is one this schedule does not know, so no stop is named, and the
         # last one it HAPPENS to know is not where the train is going.
         ((("1", 1), ("2", 2), ("99", 3)), "Northeast Corridor 7856"),
+        # Nor when the last call names no stop at all.
+        ((("1", 1), ("2", 2), ("", 3)), "Northeast Corridor 7856"),
+        # Of two calls under one sequence the later listed is the later call, as it is to
+        # _ordered_calls: explicit zeros throughout, and a tie at the end.
+        ((("1", 0), ("2", 0), ("3", 0)), "New York Penn Station"),
+        ((("1", 1), ("2", 5), ("3", 5)), "New York Penn Station"),
+        # A stop the schedule knows and gives no name is no name.
+        ((("1", 1), ("2", 2), ("4", 3)), "Northeast Corridor 7856"),
         # Nothing left to go to.
         ((("1", 1, SKIPPED), ("2", 2, SKIPPED)), "Northeast Corridor 7856"),
         ((), "Northeast Corridor 7856"),
@@ -379,13 +392,17 @@ def test_line_names_are_the_routes_endpoints_own():
 # ---------------------------------------------------------------------------
 
 
-def _report(joined: int, *, mismatches=0, nameless=0, repeated=0) -> njt.IdentityReport:
+def _report(checked: int, *, mismatches=0, nameless=0, repeated=0) -> njt.IdentityReport:
+    """A decode's report. Two more trips joined than could be checked, so that no test can
+    pass by reading one count for the other."""
     kinds = (
         [njt.NUMBER_MISMATCH] * mismatches
         + [njt.NO_IDENTITY] * nameless
         + [njt.REPEATED_IDENTITY] * repeated
     )
-    return njt.IdentityReport(joined, [njt.IdentityWarning(kind, f"a {kind}") for kind in kinds])
+    return njt.IdentityReport(
+        checked + 2, checked, [njt.IdentityWarning(kind, f"a {kind}") for kind in kinds]
+    )
 
 
 def _feed_of(*entities) -> bytes:
@@ -403,6 +420,7 @@ def test_each_kind_is_its_own_count():
     _t, _a, _ts, identity = njt.decode_njt_trip_updates(raw, S, T, NOW, L)
     assert identity.counts() == {
         "joined": 3,
+        "checked": 3,
         "number_mismatches": 2,
         "no_identity": 2,
         "repeated_identity": 1,
@@ -420,10 +438,36 @@ def test_a_canceled_trip_is_in_no_count():
     _t, _a, _ts, identity = njt.decode_njt_trip_updates(_feed_of(*canceled), S, T, NOW, L)
     assert identity.counts() == {
         "joined": 0,
+        "checked": 0,
         "number_mismatches": 0,
         "no_identity": 0,
         "repeated_identity": 0,
     }
+
+
+def test_a_join_there_is_nothing_to_check_by_is_counted_as_joined_and_not_as_checked():
+    """A schedule with no number for the trip (79), and an entity with no id: each shows the
+    schedule's words, as it always has, and neither is evidence for or against it."""
+    raw = _feed_of(_one("7856", "79"), _one("", "78"), _one("7856", "77"))
+    _t, _a, _ts, identity = njt.decode_njt_trip_updates(raw, S, T, NOW, L)
+    assert identity.counts() == {
+        "joined": 3,
+        "checked": 1,
+        "number_mismatches": 1,
+        "no_identity": 0,
+        "repeated_identity": 0,
+    }
+
+
+def test_a_publication_with_no_train_numbers_checks_nothing_and_says_so():
+    """THE SHAPE THE REVIEW FOUND (F1). The older publication without its train numbers
+    joins 126 trips to other trains and can contradict none of them: the rows are the
+    schedule's, as they were before this rule, and the counts say nothing was checked
+    rather than that everything agreed."""
+    numberless = {trip_id: {**row, "short_name": None} for trip_id, row in OLDER.items()}
+    _trains, _arrivals, _ts, identity = _decode(numberless)
+    assert (identity.joined, identity.checked, identity.warnings) == (126, 0, [])
+    assert njt.can_judge_schedule(identity.checked) is False
 
 
 def test_the_log_line_counts_each_kind_and_says_nothing_when_there_is_nothing(caplog):
@@ -432,7 +476,7 @@ def test_the_log_line_counts_each_kind_and_says_nothing_when_there_is_nothing(ca
         assert caplog.records == []
         njt.log_cross_check(_report(40, mismatches=37, nameless=2, repeated=1))
     assert [record.getMessage() for record in caplog.records] == [
-        "NJ Transit trip identity: 37 number mismatch(es) of 40 joined trip(s), "
+        "NJ Transit trip identity: 37 number mismatch(es) of 40 checked trip(s), "
         "2 with no identity, 1 repeated; first: a number-mismatch"
     ]
 
@@ -443,7 +487,7 @@ def test_the_log_line_counts_each_kind_and_says_nothing_when_there_is_nothing(ca
 
 
 @pytest.mark.parametrize(
-    "mismatches,joined,behind",
+    "mismatches,checked,behind",
     [
         (0, 0, False),
         (4, 4, False),  # under the floor, however large a share
@@ -455,31 +499,51 @@ def test_the_log_line_counts_each_kind_and_says_nothing_when_there_is_nothing(ca
         (37, 37, True),  # the incident's one reconciled generation
         (40, 41, True),
         (0, 51, False),  # run 470
+        (5, 10**400, False),  # a count off the wire, too large to make a float of
     ],
 )
-def test_the_threshold(mismatches, joined, behind):
-    assert njt.schedule_behind(mismatches, joined) is behind
+def test_the_threshold(mismatches, checked, behind):
+    assert njt.schedule_behind(mismatches, checked) is behind
+
+
+@pytest.mark.parametrize(
+    "mismatches,checked,disagrees",
+    [(0, 5, False), (1, 5, False), (2, 5, True), (4, 5, True), (12, 51, False), (13, 51, True)],
+)
+def test_the_share_alone(mismatches, checked, disagrees):
+    assert njt.schedule_disagrees(mismatches, checked) is disagrees
 
 
 def test_the_numbers_are_the_briefs():
     assert (
         njt.SCHEDULE_BEHIND_MIN_MISMATCHES,
-        njt.SCHEDULE_BEHIND_MIN_SHARE,
+        njt.SCHEDULE_BEHIND_ONE_IN,
         njt.SCHEDULE_BEHIND_HOLD_S,
-    ) == (5, 0.25, 600.0)
+    ) == (5, 4, 600.0)
+    assert [njt.can_judge_schedule(n) for n in (0, 4, 5)] == [False, False, True]
 
 
-def test_a_run_is_started_lengthened_and_ended_only_by_decodes():
-    behind, in_step = _report(40, mismatches=40), _report(40)
+def test_a_run_is_started_lengthened_and_ended_only_by_a_decode_that_can_judge():
+    behind, in_step = _report(40, mismatches=40), _report(40, mismatches=9)
     run = njt.behind_run(None, behind, 1000.0)
     assert run == (1000.0, 1000.0)
     assert njt.behind_run(run, behind, 1020.0) == (1000.0, 1020.0)
     assert njt.behind_run(run, in_step, 1020.0) is None
     assert njt.behind_run(None, in_step, 1020.0) is None
+    # Four trips, whatever they say, and an empty body: as if they had not been.
+    for thin in (_report(4, mismatches=4), _report(4), _report(0)):
+        assert njt.behind_run(run, thin, 1020.0) == (1000.0, 1000.0)
+        assert njt.behind_run(None, thin, 1020.0) is None
     assert [
         njt.behind_past_hold(r)
         for r in (None, njt.BehindRun(1000.0, 1599.0), njt.BehindRun(1000.0, 1600.0))
     ] == [False, False, True]
+
+
+def test_the_other_kinds_start_no_run():
+    """Forty trips all in step, and twenty entities with no identity or a repeated one: not
+    a word about the schedule."""
+    assert njt.behind_run(None, _report(40, nameless=10, repeated=10), 1000.0) is None
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +584,9 @@ async def _poll(monkeypatch, report=None, *, raw=RAW, at=None, clock=None):
         async def fetch(stops, trips, lines):
             if isinstance(report, Exception):
                 raise report
-            return [], {}, clock[0], report
+            # A header that falls behind the poller's clock by a second in ten, so that a
+            # hold measured on it would come late.
+            return [], {}, NOW + 0.9 * (clock[0] - NOW) - 5.0, report
 
         monkeypatch.setattr(app_module, "fetch_njt_trains", fetch)
     await pollers._refresh_njt(app_module.app, None)
@@ -551,10 +617,28 @@ async def test_a_rider_is_served_the_newer_publications_words(world, monkeypatch
         "ok": 1,
         "failed": [],
         "joined": 126,
+        "checked": 126,
         "number_mismatches": 106,
         "no_identity": 0,
         "repeated_identity": 0,
     }
+
+
+async def test_a_train_whose_last_stop_the_schedule_lacks_is_served_by_its_lines_name(
+    world, monkeypatch
+):
+    """The line's name, through every hop that carries it: the poller reads it off the app's
+    state, the fetch and the decode pass it on, and the board and the train both read it."""
+    feed = pb.FeedMessage.FromString(RAW)
+    tu = feed.entity[0].trip_update
+    tu.trip.trip_id = "9001"
+    tu.stop_time_update[-1].stop_id = "99999"
+    await _poll(monkeypatch, raw=feed.SerializeToString())
+    trains = (await _get("/api/njt-trains")).json()["trains"]
+    (train,) = [t for t in trains if t["trip_id"] == "9001"]
+    assert (train["headsign"], train["identity"]) == ("Atlantic City Rail Line 4633", "unjoined")
+    board = (await _get(f"/api/njt-arrivals/{train['stop_id']}")).json()["arrivals"]
+    assert "Atlantic City Rail Line 4633" in {row["headsign"] for row in board}
 
 
 def test_a_clean_row_is_served_byte_for_byte_and_a_marked_one_says_so():
@@ -578,10 +662,34 @@ def test_a_clean_row_is_served_byte_for_byte_and_a_marked_one_says_so():
     assert models.NjtArrival(**arrival).model_dump_json() == clean + "}"
     marked = models.NjtArrival(**arrival, identity="refuted").model_dump_json()
     assert marked == clean + ',"identity":"refuted"}'
-    trains, _a, _ts, _i = _decode(OLDER)
-    kept = models.NjtTrain(**trains[0]).model_dump()
-    assert "identity" not in kept and kept["train_num"] == "4633"
-    assert models.NjtTrain(**trains[-1]).model_dump()["identity"] == "unjoined"
+    train = {
+        "id": "77",
+        "trip_id": "77",
+        "route_id": None,
+        "headsign": None,
+        "train_num": "0043",
+        "latitude": 40.5,
+        "longitude": -74.5,
+        "status": "at-station",
+        "stop_id": "2",
+        "stop_name": "Newark Penn Station",
+        "delay": None,
+        "prev_lat": None,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": 4.0,
+        "observed_at": 3.0,
+        "provenance": "placed",
+    }
+    clean = (
+        '{"id":"77","trip_id":"77","route_id":null,"headsign":null,"train_num":"0043",'
+        '"latitude":40.5,"longitude":-74.5,"status":"at-station","stop_id":"2",'
+        '"stop_name":"Newark Penn Station","delay":null,"prev_lat":null,"prev_lon":null,'
+        '"prev_time":null,"next_time":4.0,"observed_at":3.0,"provenance":"placed"'
+    )
+    assert models.NjtTrain(**train).model_dump_json() == clean + "}"
+    marked = models.NjtTrain(**train, identity="unjoined").model_dump_json()
+    assert marked == clean + ',"identity":"unjoined"}'
 
 
 async def test_the_code_is_raised_ten_minutes_into_an_unbroken_run(world, monkeypatch):
@@ -603,28 +711,73 @@ async def test_the_code_is_raised_ten_minutes_into_an_unbroken_run(world, monkey
     assert CODE not in (await _get("/healthz")).json()["degraded"]
 
 
-async def test_failed_polls_neither_age_a_run_nor_end_it(world, monkeypatch):
-    """One bad decode and then an outage: the code stays off for the hour, since nothing
-    has decoded twice. The first decode after it, still behind, closes the hold."""
-    down = njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)")
-    await _poll(monkeypatch, _report(40, mismatches=40), at=NOW, clock=world)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)"),
+        njt_auth.NjtAuthError("token rejected"),
+        njt_auth.NjtNotConfigured("not configured"),
+        httpx.ConnectError("upstream refused"),
+        DecodeError("not a protobuf"),
+        "deadline",
+        "static not ready",
+    ],
+    ids=lambda f: f if isinstance(f, str) else type(f).__name__,
+)
+async def test_no_failed_poll_ages_a_run_or_ends_it(world, monkeypatch, failure):
+    """Every way a poll fails, at each point it could matter. One bad decode and then an
+    hour of it: off, since nothing has decoded twice. The first decode after, still behind,
+    closes the hold and raises it; and the same failure after that does not clear it."""
+    behind = _report(40, mismatches=40)
+    state = app_module.app.state
+
+    async def fail(at):
+        world[0] = NOW + at
+        if failure == "deadline":
+            entry = state.feed_cache["njt"]
+
+            async def wedged():
+                await pollers.asyncio.Event().wait()
+
+            monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+            await pollers._bounded_refresh(
+                entry, wedged(), pollers._feed_degrader(app_module.app, "njt", entry)
+            )
+        elif failure == "static not ready":
+            state.njt_static_status = "loading"
+            await pollers._refresh_njt(app_module.app, None)
+            state.njt_static_status = "ready"
+        else:
+            await _poll(monkeypatch, failure, at=NOW + at, clock=world)
+
+    await _poll(monkeypatch, behind, at=NOW, clock=world)
     for at in (20, 600, 620, 3600):
-        await _poll(monkeypatch, down, at=NOW + at, clock=world)
+        await fail(at)
         assert CODE not in (await _get("/healthz")).json()["degraded"]
-    await _poll(monkeypatch, _report(40, mismatches=40), at=NOW + 3620, clock=world)
+    assert state.njt_behind_run == (NOW, NOW)
+    await _poll(monkeypatch, behind, at=NOW + 3620, clock=world)
     assert CODE in (await _get("/healthz")).json()["degraded"]
-    # And an outage after it is raised does not clear it: nothing has said otherwise.
-    await _poll(monkeypatch, down, at=NOW + 3640, clock=world)
+    await fail(3640)
     assert CODE in (await _get("/healthz")).json()["degraded"]
+    assert state.njt_behind_run == (NOW, NOW + 3620)
 
 
-async def test_a_night_too_quiet_to_judge_clears_it(world, monkeypatch):
-    """The floor is five mismatches, so a late feed of four trains is in step by the rule
-    whatever they say, and the code clears until there are trains enough to judge by."""
-    for at in (0, 600):
-        await _poll(monkeypatch, _report(40, mismatches=40), at=NOW + at, clock=world)
+async def test_a_night_too_quiet_to_judge_neither_raises_it_nor_clears_it(world, monkeypatch):
+    """A raised code stays through a feed of four trains and a valid feed of none, and goes
+    at the first decode with trains enough to say otherwise. An empty body every few
+    minutes does not hold it off either (the branch's review, F6)."""
+    behind, quiet, empty = _report(40, mismatches=40), _report(4, mismatches=4), _report(0)
+    for at, report in ((0, behind), (580, empty), (600, behind)):
+        await _poll(monkeypatch, report, at=NOW + at, clock=world)
     assert CODE in (await _get("/healthz")).json()["degraded"]
-    await _poll(monkeypatch, _report(4, mismatches=4), at=NOW + 620, clock=world)
+    for at, report in ((620, quiet), (640, empty), (9000, quiet)):
+        await _poll(monkeypatch, report, at=NOW + at, clock=world)
+        assert CODE in (await _get("/healthz")).json()["degraded"]
+    await _poll(monkeypatch, _report(40), at=NOW + 9020, clock=world)
+    assert CODE not in (await _get("/healthz")).json()["degraded"]
+    # And a quiet night on its own raises nothing.
+    for at in range(9040, 10_000, 20):
+        await _poll(monkeypatch, quiet, at=NOW + at, clock=world)
     assert CODE not in (await _get("/healthz")).json()["degraded"]
 
 

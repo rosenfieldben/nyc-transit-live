@@ -337,6 +337,8 @@ _WARN_HEALTH_CODES = ("subway-route-unmapped", "njt-schedule-behind")
 # holding at its own share of that budget, which is the same instruction.
 # "subway-lines-degraded" names what riders lost and not that the fault is upstream's,
 # that the running process cannot recover it, or what a redeploy needs first.
+# "subway-route-unmapped" asks for a table row and "njt-schedule-behind" sends the reader
+# to the line that can say whether a redeploy would help, which neither name says.
 # "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
 # qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
@@ -400,10 +402,11 @@ _HEALTH_CODE_NOTES = {
         "holds it for its life"
     ),
     "njt-schedule-behind": (
-        "for ten minutes the NJ Transit trains production decodes have contradicted the "
-        "train numbers its schedule gives their trip ids; riders are shown the trains' own "
-        "numbers and last stops meanwhile; production:njt-schedule says whether a redeploy "
-        "fixes it"
+        "for ten minutes of the NJ Transit decodes that could judge, and through any outage "
+        "or quiet night since, production's trains have contradicted the train numbers its "
+        "schedule gives their trip ids; riders are shown the trains' own numbers and last "
+        "stops; production:njt-schedule says whether a redeploy fixes it, when it has a "
+        "decode of each side"
     ),
 }
 
@@ -1325,8 +1328,15 @@ def _identity_clauses(report: njt_feed.IdentityReport) -> list[str]:
         named, unnamed = _mismatch_pairs(mismatches)
         parts = named + ([f"{unnamed} more not named"] if unnamed else [])
         clauses.append(
-            f"{len(mismatches)} entity.id/trip_short_name mismatches of {report.joined} joined "
+            f"{len(mismatches)} entity.id/trip_short_name mismatches of {report.checked} checked "
             "(probe: 0 of 745): " + ", ".join(parts)
+        )
+    if report.joined >= NJT_MIN_TRIPS_FOR_RATIO and not njt_feed.can_judge_schedule(report.checked):
+        # A publication that dropped trip_short_name, or a feed that dropped its ids, would
+        # join everything and check nothing, which reads as agreement to every count above.
+        clauses.append(
+            f"only {report.checked} of {report.joined} joined trips carry a number on both sides, "
+            "so nothing can be checked"
         )
     nameless = len(report.of_kind(njt_feed.NO_IDENTITY))
     if nameless:
@@ -2764,8 +2774,9 @@ def _check_production_health(
     URL write into the job summary. Unrecognized codes are COUNTED instead, which
     still says "this deployment knows something I do not" without quoting it.
 
-    EVERY RECOGNIZED CODE FAILS THE RUN BUT ONE. subway-route-unmapped alone is a WARN
-    (_WARN_HEALTH_CODES says why), and it names the routes and the groups that served
+    EVERY RECOGNIZED CODE FAILS THE RUN BUT TWO, subway-route-unmapped and
+    njt-schedule-behind (_WARN_HEALTH_CODES says why each). The first names the routes and
+    the groups that served
     them, read from /api/status's subway_unmapped_routes, which run_all hands over as
     `unmapped_routes`; the names are printed only when they look like a route id and a
     group key, under the rule above, and counted otherwise.
@@ -3461,9 +3472,15 @@ def _check_production_railroad_positions(data: dict) -> Result:
 
 
 # The counts /api/status publishes for NJ Transit's last decode (models.NjtFeedHealth).
-# MIRRORED as literals for the reason PRODUCTION_HEALTH_CODES is: what this reads off the
-# wire is its own statement, and a count the app stopped publishing must be missed here.
-_NJT_IDENTITY_COUNTS = ("joined", "number_mismatches", "no_identity", "repeated_identity")
+# MIRRORED as literals for the reason PRODUCTION_HEALTH_CODES is, and held to the app's by
+# a test for the reason that tuple is: a count the app renamed must be missed here, and
+# must not be missed in CI. The first two are the ones the verdict is read from.
+_NJT_VERDICT_COUNTS = ("checked", "number_mismatches")
+_NJT_OTHER_COUNTS = ("joined", "no_identity", "repeated_identity")
+
+
+def _is_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | None) -> Result:
@@ -3477,26 +3494,35 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
     read the schedule the run downloads, which is always new, and production's own count
     was on /api/status where nothing read it.
 
-    ONE THRESHOLD, THE APP'S (feeds.njt.schedule_behind), asked of production's counts and
-    then of this run's own decode of the same feed against a schedule minutes old. The two
-    answers together say what neither does alone:
+    THE APP'S THRESHOLD FOR PRODUCTION (feeds.njt.schedule_behind), and then this run's own
+    decode of the same feed against a schedule minutes old, called clean when fewer than
+    one in four of its checked trips contradict it. The two together say what neither does
+    alone:
 
-      * production over it, this run's decode under it: production's schedule is behind
-        NJ Transit's publication, and a redeploy loads the current one. FAIL.
-      * both over it: NJ Transit's realtime feed and its own schedule endpoint disagree
-        (run 445's shape). Riders are read the trains' own words meanwhile, and a redeploy
-        would load a schedule that disagrees too. WARN.
-      * production over it and this run with nothing to set beside it (no credentials, a
-        run that may not mint, a feed or an archive that would not read, or too few joined
-        trips to call a decode clean): it cannot say which. WARN.
+      * production over it, this run's decode clean: production's schedule is behind NJ
+        Transit's publication, and a redeploy loads the current one. FAIL.
+      * production over it, this run's decode not clean: NJ Transit's realtime feed and its
+        own schedule endpoint disagree (run 445's shape). Riders are read the trains' own
+        words meanwhile, and a redeploy would load a schedule that disagrees too. WARN. The
+        floor of five is not asked of this run's decode: four of five is a quiet feed at
+        odds with itself, and reading it as clean would be what said redeploy.
+      * production over it and nothing to set beside it: WARN, since it cannot say which.
+        That is a run with no credentials or that may not mint, a feed or an archive that
+        would not read, a decode that checked too few trips, and an archive njt-static
+        FAILED. The last matters most: the decode may be clean against a publication the
+        app would refuse, and a redeploy onto it would serve no NJ Transit at all.
+      * production checked too few trips to judge: PASS, saying so, since a quiet night is
+        not news. WARN when this run checked a full feed's worth in the same minutes, which
+        is a schedule missing the trips rather than contradicting them.
 
     NO HOLD OF ITS OWN. The app waits ten minutes before its /healthz code, because it has
     nothing to compare against and upstream's two surfaces do not move at one instant; this
     line has the comparison, so one reading is enough.
 
     NEVER A FAIL FOR A PAYLOAD IT CANNOT READ. A release older than the split, a failed
-    poll's nulls and a malformed count are each a WARN that says so: production:feeds is
-    the line that fails on a feed that has stopped.
+    poll's nulls and counts that cannot be counts are each a WARN that says so, and the two
+    counts the verdict needs are the only ones it needs: production:feeds is the line that
+    fails on a feed that has stopped.
     """
     name = "production:njt-schedule"
     if data.get("njt_static") == "not-configured":
@@ -3504,38 +3530,58 @@ def _check_production_njt_schedule(data: dict, fresh: njt_feed.IdentityReport | 
     health = data.get("njt_feeds")
     if not isinstance(health, dict):
         return Result(name, WARN, "/api/status served no njt_feeds, so there is no decode to judge")
-    if any(key not in health for key in _NJT_IDENTITY_COUNTS):
-        return Result(name, WARN, "njt_feeds carries no identity counts by kind (an older release)")
-    counts = [health[key] for key in _NJT_IDENTITY_COUNTS]
-    if all(count is None for count in counts):
+    if any(key not in health for key in _NJT_VERDICT_COUNTS):
+        return Result(
+            name, WARN, "njt_feeds carries no count of checked trips and mismatches to judge by"
+        )
+    checked, mismatches = (health[key] for key in _NJT_VERDICT_COUNTS)
+    if checked is None and mismatches is None:
         return Result(
             name, WARN, "production's last NJ Transit poll failed, so there is no decode to judge"
         )
-    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts):
-        return Result(name, WARN, "njt_feeds' identity counts are not four counts")
-    joined, mismatches, nameless, repeated = counts
-    summary = (
-        f"{mismatches} of {joined} joined trips contradict the schedule's train number, "
-        f"{nameless} with no identity, {repeated} repeated"
+    if not (_is_count(checked) and _is_count(mismatches) and mismatches <= checked):
+        return Result(name, WARN, "njt_feeds' checked and number_mismatches are not two counts")
+    joined, nameless, repeated = (
+        str(health[key]) if _is_count(health.get(key)) else "an unreadable number"
+        for key in _NJT_OTHER_COUNTS
     )
-    if not njt_feed.schedule_behind(mismatches, joined):
+    summary = (
+        f"{mismatches} of {checked} checked trips contradict the schedule's train number "
+        f"({joined} joined, {nameless} with no identity, {repeated} repeated)"
+    )
+    can_compare = fresh is not None and njt_feed.can_judge_schedule(fresh.checked)
+    if not njt_feed.can_judge_schedule(checked):
+        if fresh is not None and fresh.checked >= NJT_MIN_TRIPS_FOR_RATIO:
+            return Result(
+                name,
+                WARN,
+                f"{summary}: too few to judge, beside {fresh.checked} this run checked against "
+                "the schedule it downloaded, so production's schedule may not have these trips",
+            )
+        return Result(name, PASS, f"{summary}: too few to judge")
+    if not njt_feed.schedule_behind(mismatches, checked):
         return Result(name, PASS, summary)
-    if fresh is None or fresh.joined < njt_feed.SCHEDULE_BEHIND_MIN_MISMATCHES:
+    if fresh is None or not can_compare:
+        why = (
+            "it made no decode against a schedule a deploy would load"
+            if fresh is None
+            else f"its own decode checked {fresh.checked}"
+        )
         return Result(
             name,
             WARN,
-            f"{summary}; this run has no decode of its own to set beside it, so it cannot say "
+            f"{summary}; this run has nothing to set beside it ({why}), so it cannot say "
             "whether production's schedule is behind or NJ Transit disagrees with itself",
         )
     own = fresh.counts()
     beside = (
-        f"{own['number_mismatches']} of {own['joined']} against the schedule this run downloaded"
+        f"{own['number_mismatches']} of {own['checked']} against the schedule this run downloaded"
     )
-    if njt_feed.schedule_behind(own["number_mismatches"], own["joined"]):
+    if njt_feed.schedule_disagrees(own["number_mismatches"], own["checked"]):
         return Result(
             name,
             WARN,
-            f"NJ Transit's realtime feed disagrees with its own schedule, so a redeploy would "
+            "NJ Transit's realtime feed disagrees with its own schedule, so a redeploy would "
             f"load one that disagrees too: {summary}; {beside}",
         )
     return Result(
@@ -4175,7 +4221,9 @@ def run_all(
     results.append(check_alerts_realtime(fetch, sleep, now))
     # THE NJ TRANSIT DECODE IS KEPT, not only judged, for the reason the subway headers
     # are: production:njt-schedule sets production's counts beside it. A refused run has
-    # none, and that check says it has nothing to compare.
+    # none, and nor has one whose njt-static FAILED, whatever the decode said: a schedule
+    # the app would refuse is not one a redeploy would load, so it is no ground to ask for
+    # one. The check says it has nothing to compare.
     njt_identity: njt_feed.IdentityReport | None = None
     if mint_refused:
         njt_realtime = _njt_mint_refused("njt-realtime", mint_reason)
@@ -4189,6 +4237,8 @@ def run_all(
             env.get(njt_auth.PASSWORD_VAR),
             token=njt_token,
         )
+        if njt_res.status == FAIL:
+            njt_identity = None
     results.append(njt_realtime)
     results.append(check_bus_realtime(fetch, sleep, now, env.get("MTA_BUS_API_KEY")))
 

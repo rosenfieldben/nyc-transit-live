@@ -30,7 +30,7 @@ pytestmark = pytest.mark.anyio
 T = 1000.0
 OBSERVED = 995.0
 # What an NJ Transit decode says about its trains when there is nothing to say.
-NO_WARNINGS = njt_feed.IdentityReport(0, [])
+NO_WARNINGS = njt_feed.IdentityReport(0, 0, [])
 
 
 @pytest.fixture

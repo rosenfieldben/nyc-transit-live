@@ -680,9 +680,10 @@ class NjtTrain(BaseModel):
     trip_id: str
     route_id: str | None
     # Static headsign when the trip joins 15a's index and the train does not contradict
-    # the join; otherwise (a refuted join, or a trip the schedule does not have, which is
-    # every ADDED one) the name of the stop the train's own update ends at
-    # (feeds.njt._destination). `identity` below says which.
+    # the join; otherwise (a refuted join, a trip the schedule does not have, which is
+    # every ADDED one, or a joined one whose headsign is blank, which none seen is) the
+    # name of the stop the train's own update ends at (feeds.njt._destination).
+    # `identity` below names the first two.
     headsign: str | None
     train_num: str | None  # entity.id, and the schedule's trip_short_name where they agree
     latitude: float
@@ -890,11 +891,12 @@ class NjtFeedHealth(BaseModel):
     # drift (the adversarial round of Amendment 1's Step 3, its F14). Unlike PathFeedHealth's
     # `unresolved`, which defaults to 0 for the same failure dicts and predates this.
     #
-    # FOUR NUMBERS WHERE THERE WAS ONE (`cross_check_failures`), because the one added
+    # FIVE NUMBERS WHERE THERE WAS ONE (`cross_check_failures`), because the one added
     # three kinds together and could not say which: 41 wrong train numbers and 41 entities
     # with no identity are different faults with different fixes, and a count of either
-    # means nothing without how many trips joined at all.
+    # means nothing without how many trips could be checked at all.
     joined: int | None = None  # running trip updates whose trip_id is in the schedule
+    checked: int | None = None  # of those, both sides carry a train number to compare
     number_mismatches: int | None = None  # of those, the train contradicts the join
     no_identity: int | None = None  # neither a trip_id nor an entity.id
     repeated_identity: int | None = None  # an identity an earlier entity already has
@@ -1238,11 +1240,11 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # served arrival rows are more than 600 seconds old (526 are past a rider's 90), because
 # LIRR dates each prediction by its trip_update.timestamp and most of those are old on
 # an ordinary evening. An any-row rule would therefore be on permanently, and the
-# contract monitor fails its run on any recognized code but one (subway-route-unmapped,
-# its only WARN), so a code that is always on is a monitor nobody reads. The whole-system
-# rule is quiet on that capture (45 of its 97 trips carry a prediction inside the band)
-# and fires in every case the code exists for: a subway group serving content older
-# than the band while polled fresh (the F03
+# contract monitor fails its run on any recognized code but two (subway-route-unmapped
+# and njt-schedule-behind, its WARNs), so a code that is always on is a monitor nobody
+# reads. The whole-system rule is quiet on that capture (45 of its 97 trips carry a
+# prediction inside the band) and fires in every case the code exists for: a subway group
+# serving content older than the band while polled fresh (the F03
 # world, once past its ten minutes), a carried-forward system whose rows have aged past
 # the band, a total outage whose rows age past it, PATH's bridge serving fresh write
 # times over trip clocks older than it, and a dropped system. The last is the fallback
@@ -1331,15 +1333,17 @@ HEALTH_SUBWAY_ROUTE_UNMAPPED = "subway-route-unmapped"
 # THE SCHEDULE THIS PROCESS HOLDS IS NOT THE ONE NJ TRANSIT'S TRAINS ARE RUNNING. NJ
 # Transit numbers its trips afresh in each publication and this process loads one at
 # start and never again (A06 and F07 of the 2026-10-12 record), so after a republication
-# its trip ids join other trains. Raised when at least feeds.njt's five number mismatches
-# make up at least a quarter of the joined trips on every decode for ten minutes
-# (feeds.njt.schedule_behind, behind_run). On 2026-11-22 that was the state of production,
-# every joined train of it, from a schedule loaded on the 12th and under a /healthz that
-# said pass.
+# its trip ids join other trains. Raised when at least five number mismatches make up at
+# least a quarter of the trips that could be checked on every decode that can judge for
+# ten minutes (feeds.njt.schedule_behind, behind_run). On 2026-11-22 that was the state
+# of production, every joined train of it, from a schedule loaded on the 12th and under a
+# /healthz that said pass.
 #
 # WHAT IT COSTS A RIDER NOW is the schedule's own words, not the truth: a refuted row
 # takes its number and destination from the train (feeds.njt._identity). WHAT CLEARS IT
-# is a process that loads the current publication, which means a redeploy.
+# is a decode with trains enough to judge by that does not see it, which means a process
+# holding the current publication, which means a redeploy. Neither a failed poll nor a
+# night too quiet to judge clears it, so a code that went away was a schedule that did.
 #
 # WHAT IT CANNOT SEE is a schedule behind by misses alone. A trip id the schedule does
 # not have is no mismatch, so a publication whose ids overlap the held one nowhere

@@ -145,7 +145,7 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         kinds = [njt_feed.NUMBER_MISMATCH] * 4 + [njt_feed.NO_IDENTITY] * 2
         kinds += [njt_feed.REPEATED_IDENTITY]
         warnings = [njt_feed.IdentityWarning(kind, "a warning") for kind in kinds]
-        return [], {}, q9.OBSERVED, njt_feed.IdentityReport(31, warnings)
+        return [], {}, q9.OBSERVED, njt_feed.IdentityReport(31, 30, warnings)
 
     async def down(stops, trips, lines):
         raise njt_auth.NjtUpstreamError("NJ Transit returned HTTP 503: (empty body)")
@@ -157,6 +157,7 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         "ok": 1,
         "failed": [],
         "joined": 31,
+        "checked": 30,
         "number_mismatches": 4,
         "no_identity": 2,
         "repeated_identity": 1,
@@ -169,6 +170,7 @@ async def test_nj_transit_feed_health_is_served(world, monkeypatch):
         "ok": 0,
         "failed": ["njt"],
         "joined": None,
+        "checked": None,
         "number_mismatches": None,
         "no_identity": None,
         "repeated_identity": None,

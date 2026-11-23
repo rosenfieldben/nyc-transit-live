@@ -613,7 +613,10 @@ entity's, its destination is the name of the stop its own update ends at, and it
 the realtime one alone. A trip the schedule does not have takes the same destination.
 Either row carries `identity` (`refuted` or `unjoined`) on `/api/njt-trains` and
 `/api/njt-arrivals`; a clean join carries no such key and is served byte for byte as it
-was. The destination rule was measured rather than chosen: in the publication in force on
+was (with one exception no publication has shown: a joined trip whose headsign is blank
+is named by its own last stop too). The stop is named through the schedule held, so where
+NJ Transit moves its stop ids as well the name is another station's, as every station name
+then served is. The destination rule was measured rather than chosen: in the publication in force on
 2026-11-22 the headsign is the name of the last stop on 1,441 of 1,441 rail trips
 (`backend/tests/test_njt_drift_incident.py` holds the sampled rows). Where that stop
 cannot be named the row reads the line's name and the train number, and never a bare route
@@ -955,14 +958,16 @@ the process, since only a deploy can add the row, and it never gates.
 
 The other is read off the NJ Transit trains themselves. `njt-schedule-behind` says that on
 every decode for ten minutes at least five trains, and at least a quarter of those that
-joined the schedule, have carried a number other than the one the schedule gives their
+could be checked, have carried a number other than the one the schedule gives their
 trip. Riders are shown the trains' own words meanwhile, and a redeploy is what loads the
 current schedule, so it never gates: the probe that could refuse a build is answered by
 the process that has just loaded it. A failed poll neither starts, lengthens nor clears
-it, and a night with too few trains to judge clears it until morning. `/api/status`'s
+it, and nor does a decode with fewer than five trips to check, so it stands through an
+outage and a quiet night until a decode with trains enough says otherwise. `/api/status`'s
 `njt_feeds` carries the counts behind it for the last decode, each kind its own: `joined`,
-`number_mismatches`, `no_identity` and `repeated_identity` (they were one number,
-`cross_check_failures`, until 2026-11-22). What it cannot see is a schedule behind by
+`checked` (joined, with a train number on both sides to compare), `number_mismatches`,
+`no_identity` and `repeated_identity` (they were one number, `cross_check_failures`, until
+2026-11-22). What it cannot see is a schedule behind by
 misses alone, since a trip id the schedule does not have is no mismatch. The contract
 monitor warns on the code and lets `production:njt-schedule` decide what it means.
 
@@ -1285,14 +1290,18 @@ whose counts cannot be read is reported while the systems that can be read still
 `production:njt-schedule` asks whether the NJ Transit schedule the deployment holds is the
 one its trains run to, which nothing here could before 2026-11-22: `njt-static` and
 `njt-realtime` read the schedule the run downloads, which is always new. It puts the app's
-own threshold (five, and a quarter of the joined trips) to production's counts and then to
-this run's own decode of the same feed, which it already made, so it costs no request and
-no mint. Production over it and this run under it is a `FAIL`, "production's schedule is
-behind NJ Transit's publication: redeploy". Both over it is a `WARN`: NJ Transit's
+own threshold (five, and a quarter of the checked trips) to production's counts and then
+asks whether this run's own decode of the same feed, which it already made, so it costs no
+request and no mint, is clean: fewer than one in four of its checked trips contradicted.
+Production over it and this run clean is a `FAIL`, "production's schedule is behind NJ
+Transit's publication: redeploy". This run not clean either is a `WARN`: NJ Transit's
 realtime feed and its own schedule endpoint disagree, as run 445 caught them doing on
 2026-11-10, and a redeploy would load a schedule that disagrees too. Production over it on
-a run with nothing to set beside it is a `WARN` that says so, and so are counts it cannot
-read. On every other arm it prints the counts.
+a run with nothing to set beside it is a `WARN` that says so, and that includes a run whose
+`njt-static` `FAIL`ed: a schedule the app would refuse is no reason to redeploy onto it. A
+production decode with fewer than five trips to check is a `PASS` that says it is too few
+to judge, and a `WARN` beside twenty or more this run checked, which is a schedule without
+the trips. Counts it cannot read are a `WARN`. On every other arm it prints the counts.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

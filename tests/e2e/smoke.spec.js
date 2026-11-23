@@ -1724,7 +1724,12 @@ test("C2c2. a healthy group covering NO routes still counts as coverage (C2)", a
     });
   await page.clock.fastForward(15_000);
 
-  expect(await page.evaluate(() => subwayRouteCoverage)).toBe(true);
+  // A WAIT, NOT A READ. fastForward returns when the clock has moved, not when the poll it
+  // fired has been answered and applied, and until it has the page still holds the first
+  // poll's coverage, which had no route list at all (false). Read once, this raced the
+  // mocked response: about one run in ten under two workers since the A4 freeze, and once
+  // in CI on Playwright 1.65.0, whose clock gives the response less real time to land.
+  await expect.poll(() => page.evaluate(() => subwayRouteCoverage)).toBe(true);
   expect(await page.evaluate(() => subwayGroupsByRoute.has("G"))).toBe(false);
   await expect
     .poll(() => page.$$eval(".train-marker", (els) => els.map((e) => e.style.opacity || "1")))

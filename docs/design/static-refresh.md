@@ -249,7 +249,11 @@ promotion, to 20270509 from run 449, 20270515 from run 462 and 20270516 from run
 2026-11-12 07:20:56 UTC), and very probably before run 466 (44811710331, created 2026-11-20
 20:28:43 UTC), "the first in-service decode clean on the publication of the 22nd, which
 production did not hold" (ledger:589). So riders were served wrongly for at most
-10 d 16 h 27 min 56 s, very probably for more than two days, and certainly from the first
+10 d 17 h 12 min 18 s, from the promotion at 06:36:34, since the ledger's "after run 448"
+rests on the API's download and the realtime feed can lead the API (2.3); or for at most
+10 d 16 h 27 min 56 s if run 448 counts as a witness, whose decode passed on 8 trip updates
+with the feed closed and did not print how many it checked, as run 444's did (their logs;
+2.3). They were served wrongly very probably for more than two days, and certainly from the first
 reading on record (23:04 UTC, its seconds not recorded) to the Redeploy's promotion, 43 min
 53 s to 44 min 52 s.
 
@@ -282,9 +286,14 @@ trip's `block_id` in the new file's `trips.txt` (record:589, :649).
 
 **The window.** Riders' rows were carried by PR #145's rule for "at least 11 h 47 min 50 s and
 at most 34 h 19 min 41 s", from some moment
-after run 478's check at 2026-11-26 21:41:09 UTC (16:41:09 Eastern) and no later than
+after run 478's check, whose printed line is stamped 2026-11-26 21:41:09 UTC (16:41:09
+Eastern), and no later than
 2026-11-27 20:13:00 UTC (15:13:00 Eastern), to the Redeploy's NJ Transit promotion at
-2026-11-28 08:00:50 UTC (03:00:50 Eastern) (record:666). One run narrows it, if it counts as a
+2026-11-28 08:00:50 UTC (03:00:50 Eastern) (record:666). The record counts from that printed
+line, which follows the read. Counted as 2.3 counts the realtime window, from run 478's step
+opening at 2026-11-26 21:40:50.30 UTC (its log), the safe side of its read, to the
+promotion's `last_promoted_at` of 08:00:50.670 UTC (`/api/status`, read for this design), the
+upper bound is 34 h 20 min 0.37 s. One run narrows it, if it counts as a
 witness: run 479 (45967989070, created 2026-11-27 08:44:18 UTC) read production at 0 of 2
 checked, and its own decode passed on 6 trip updates with the feed closed (its log). Counted,
 the move came after run 479's step opening at 08:44:33.63 UTC, and the upper bound falls to
@@ -328,8 +337,18 @@ them "with no deploy" (ledger:655): its record 7674420159 went `in_progress` at 
 05:29:20 UTC and `inactive` at 05:29:27, with no `success`, and no production deployment record
 was created after it until `55065d0`'s (the production environment's deployments, `gh api`).
 Production's archives still read promoted 2026-11-08 17:48:40 to 17:48:54 UTC at 05:30:40 and at
-07:29 UTC on 2026-11-10 (ledger:655); after that read, a restart that writes no deployment
-record is not excluded by any source.
+07:29 UTC on 2026-11-10 (ledger:655). After that read, a restart that writes no deployment
+record and reloads the publication production held is excluded by no source. One that loaded
+the publication runs 446 to 448 downloaded is very probably excluded through run 447's read,
+which lies between its step opening (2026-11-11 19:41:03.1060423 UTC) and its first printed
+line (19:41:20.7611465): `production:njt-routes` read 13 routes and 1595 points on runs 445 to
+447, and 14 and 1623 from run 448 on, once `55065d0`'s cold start had loaded that publication
+or one their `njt-static` line cannot tell from it (2.2; the runs' logs). The application code
+is the same at both (a `git diff` of `590054a` against `55065d0` over `backend/` lists only
+`backend/scripts/contract_monitor.py` and two tests), and so is the check (a `git diff` of
+`4489202` against `55065d0` over `backend/scripts/contract_monitor.py` is empty; runs 445 to 447 ran
+`4489202`, run 448 `55065d0`). Between run 447's read and 2026-11-12 06:36:34 UTC, a restart
+that writes no deployment record is excluded by no source.
 
 Run 445 (42889072568, created 2026-11-10 19:49:15 UTC, 14:49:15 Eastern, on `4489202`) printed,
 against the schedule it had downloaded in the same 19.11 s (its step opened at 19:49:29.134 and
@@ -340,7 +359,8 @@ its first line is stamped 19:49:48.247; the download runs before the realtime re
 WARN  njt-realtime: 41 entity.id/trip_short_name mismatches (probe: 0 of 745): 0421/6431 on trip 2152, 0423/6437 on trip 2153, 0426/0400 on trip 2069, 0428/0430 on trip 2070, 0877/6621 on trip 1974, 36 more not named
 ```
 
-Its download printed 16 routes, 229 stops, service through 20270503, as runs 440 to 444 had,
+Its download printed 16 routes, 229 stops, service through 20270503, as runs 440, 441, 442 and 444 had (run 443's two attempts skipped
+NJ Transit, 2.2),
 and run 446 (42973821279, created 2026-11-11 06:38:14 UTC) downloaded 17 routes, 228 stops,
 service through 20270507, and its realtime passed (the runs' logs). At `4489202` the 41 counts
 every identity warning the decoder raised, of its three kinds
@@ -361,8 +381,8 @@ first line; the API moved after run 445's step opening and before run 446's firs
 | Counted from | To 2026-11-12 06:36:34 UTC |
 | --- | --- |
 | The realtime feed's move, at its latest (run 445's first line, 2026-11-10 19:49:48.247) | at least 34 h 46 min 45.75 s |
-| The realtime feed's move, at its earliest (run 442's step opening) | at most 56 h 8 min 31.16 s |
-| The same, if run 444 (42775373334, created 2026-11-10 07:27:05 UTC; 7 trip updates, the feed closed, no warning) counts as a witness, from its step opening at 07:27:18.569 | at most 47 h 9 min 15.43 s |
+| The realtime feed's move, at its earliest (run 442's step opening) | at most 56 h 8 min 31.17 s |
+| The same, if run 444 (42775373334, created 2026-11-10 07:27:05 UTC; 7 trip updates, the feed closed, no warning) counts as a witness, from its step opening at 07:27:18.569 | at most 47 h 9 min 15.44 s |
 | The API's move (run 445's step opening to run 446's first line) | at least 23 h 57 min 42.69 s, at most 34 h 47 min 4.87 s |
 
 The first three rows start at the realtime feed's move and the last at the API's, and none is a
@@ -373,8 +393,8 @@ said so: run 445's `WARN`, and no `FAIL`, since `production:njt-schedule` did no
 ("Nobody read production's count between 2026-11-09 and 2026-11-22", ledger:589); and neither
 run 445's production lines nor run 446's carry an NJ Transit count (their logs). What ended it
 was no repair aimed at it: PR #143's merge (`55065d0`, merged 2026-11-12 06:35:01 UTC, 01:35:01
-Eastern) deployed, and its cold start loaded the publication that 1.1.2 then held. The ledger
-counts three (record:592). **This design poses the fourth for the ledger (Q15) and does not count it.**
+Eastern) deployed, and its cold start loaded the publication that 1.1.2 then held. The republication
+record counts three (record:592), where the ledger at `16d1c19` still counts two (ledger:592). **This design poses the fourth for the ledger (Q15) and does not count it.**
 
 ### 1.2 The detection chain
 
@@ -383,10 +403,10 @@ Times in the table are UTC; each cell's source is beside it or in 1.1.
 | | 2026-11-03: stop ids | 2026-11-12: trip ids | 2026-11-27: trip ids again | 2026-11-10: the possible fourth (1.1.4) |
 | --- | --- | --- | --- | --- |
 | **Process holding the replaced schedule** | `ef98328`, NJ Transit promoted 2026-11-01 15:14:21 (ledger:653) | `55065d0`, promoted 2026-11-12 06:36:34 (ledger:589) | `758c0f6`, promoted 2026-11-23 02:29:20 (ledger:589) | `590054a`, promoted by 2026-11-08 17:48:54 (ledger:655) |
-| **Publisher moved** | Static between run 425 (created 2026-11-02 21:45:18) and run 426 (2026-11-03 06:55:47); realtime dated only by a read at 2026-11-07 00:18:55, "most likely with the static" (ledger:653) | Trip ids after run 448 (created 2026-11-12 07:20:56), very probably before run 466 (2026-11-20 20:28:43); which republication moved them is not known (ledger:589) | API between run 479 (created 2026-11-27 08:44:18) and run 480 (21:25:13); trains contradicting the held schedule from 20:13:00 at the latest (record:589, :647) | Realtime between run 442's step opening (2026-11-09 22:28:02.835) and run 445's first line (2026-11-10 19:49:48.247); API between run 445's step opening (19:49:29.134) and run 446's first line (2026-11-11 06:38:51.309) |
+| **Publisher moved** | Static between run 425 (created 2026-11-02 21:45:18) and run 426 (2026-11-03 06:55:47); realtime dated only by a read at 2026-11-07 00:18:55, "most likely with the static" (ledger:653) | Trip ids after run 448 (created 2026-11-12 07:20:56), very probably before run 466 (2026-11-20 20:28:43); which republication moved them is not known (ledger:589). That dates the API's download: the realtime feed's move is dated after run 448 only if its closed decode of 8 trip updates counts as a witness, so riders' wrong rows began no earlier than the promotion at 06:36:34 (1.1.2) | API between run 479 (created 2026-11-27 08:44:18) and run 480 (21:25:13); trains contradicting the held schedule from 20:13:00 at the latest (record:589, :647) | Realtime between run 442's step opening (2026-11-09 22:28:02.835) and run 445's first line (2026-11-10 19:49:48.247); API between run 445's step opening (19:49:29.134) and run 446's first line (2026-11-11 06:38:51.309) |
 | **First signal, and what it read** | Run 426's `njt-static` identity `FAIL`, 2026-11-03 06:56:26 (01:56:26 Eastern): the upstream publication, not production; production served no NJ Transit count | A count that nothing read, `cross_check_failures` on `/api/status`; first reading on record 41 at 2026-11-22 23:04 (18:04 Eastern); `/healthz` pass (ledger:589) | `/healthz` `njt-schedule-behind` after its 600 s hold, seen at Claude's read at 20:23:00 (15:23:00 Eastern): joined 59, checked 59, mismatches 45 (record:589, :648) | Run 445's `njt-realtime` `WARN`, 41, against the run's own download; production's `cross_check_failures`, read by nothing (ledger:589) |
 | **First red run** | Run 426 (41592974665), `1 FAIL, 2 WARN, 22 checks total`; runs 426 to 433 all red on that line (433: 42279999223, created 2026-11-06 19:29:00) | None: runs 448 to 470, 23 runs, all 0 `FAIL` (ledger:589) | Run 480 (46070185338, created 2026-11-27 21:25:13), its `FAIL` at 21:25:44 (16:25:44 Eastern), 44 of 58; run 481 (46123612408, created 2026-11-28 07:58:21), 7 of 8 (record:680, :691) | None: runs 445 to 447 end 0 `FAIL` on 22 checks |
-| **When Ben knew, and from what** | Not on the record. The first repository record of the event is commit `e053bd9`, 2026-11-04 02:31:56 (2026-11-03 21:31:56 Eastern), 19 h 35 min 30 s after run 426's line; whether GitHub's email for run 426 reached Ben is not recorded | Not on the record: the count of 23:04 was "read by Claude, whose status check this came from" (ledger:589), and the minute Ben learned is not given | From Claude's messages, then the failing lines in the Actions tab, which he read himself; no GitHub email by about 08:30 on 2026-11-28 (record:589, :619), nor by 12:43:47 (1.3) | Not on the record: nobody read production's count from 2026-11-09 to 2026-11-22 (ledger:589) |
+| **When Ben knew, and from what** | Not on the record. The first repository record of the event is commit `e053bd9`, 2026-11-04 02:31:56 (2026-11-03 21:31:56 Eastern), 19 h 35 min 30 s after run 426's line; whether GitHub's email for run 426 reached Ben is not recorded | Not on the record: the count of 23:04 was "read by Claude, whose status check this came from" (ledger:589), and the minute Ben learned is not given | From Claude's messages, then the failing lines in the Actions tab, which he read himself; no GitHub email by about 08:30 (03:30 Eastern) on 2026-11-28 (record:589, :619), nor by 12:43:47 (07:43:47 Eastern) (1.3) | Not on the record: nobody read production's count from 2026-11-09 to 2026-11-22 (ledger:589) |
 | **Repaired by** | PR #137's merge deploy (`b27dc6d`, merged 2026-11-07 03:39:32, 2026-11-06 22:39:32 Eastern), NJ Transit promoted 03:41:18 (ledger:653): 3 d 20 h 44 min 52 s and 8 red runs after the first red line | Ben's hand Redeploy, record 7730268879 `in_progress` 2026-11-22 23:47:21 (18:47:21 Eastern), NJ Transit promoted 23:48:52 (ledger:589) | Ben's hand Railway Redeploy, record 7988955096 `in_progress` 2026-11-28 08:00:16 (03:00:16 Eastern), NJ Transit promoted 08:00:50 (record:589, :657, :658): 10 h 35 min 6 s after run 480's line | Nothing aimed at it: PR #143's merge deploy (`55065d0`), NJ Transit promoted 2026-11-12 06:36:34 (ledger:589) |
 
 **What could see production, at each.** At `ef98328` nothing could: the NJ Transit count was
@@ -401,7 +421,7 @@ schedule; `njt-schedule-behind` and `production:njt-schedule` still counted 0 at
 From `758c0f6` (and at `16d1c19`), `njt_feeds` serves five counts (`backend/models.py:884-902`),
 a row that disagrees or does not join is marked `identity: refuted` or `unjoined`
 (`backend/models.py:650-658`), `/healthz` raises `njt-schedule-behind`
-(`backend/models.py:1356`), and the monitor's 23rd check, `production:njt-schedule`, sets
+(`backend/routes/status.py:826`, `:440-441`; the code at `backend/models.py:1356`), and the monitor's 23rd check, `production:njt-schedule`, sets
 production's counts beside its own decode (runs 471 onward print `23 checks total`). **What
 none of them sees is the MISS**, 2026-11-03's shape, in the code's own words
 (`backend/models.py:1348-1351`):
@@ -432,7 +452,7 @@ in this order; each that does not hold ends the check at the PASS or WARN named 
 4. The run made its own decode against the schedule it downloaded, and that decode checked at
    least 5 trips and at least half of what it joined (`can_judge_schedule` and
    `mostly_checked`, `backend/feeds/njt.py:609-620`); else WARN, "this run has nothing to set
-   beside it" (`:3614-3628`).
+   beside it" (`contract_monitor.py:3614-3628`).
 5. The run's own decode agrees with its own schedule, fewer than one in four of its checked
    trips contradicting it; else WARN, run 445's shape, because "a redeploy would load one that
    disagrees too" (`:3633-3639`).
@@ -525,11 +545,11 @@ monitor is valuable for drift detection but is too coarse to be the only availab
 
 The ledger's amendment says "**The fix is not a timer alone.**" (ledger:687), and the runs say
 why. Over runs 400 (40189913375, created 2026-10-25 11:41:24 UTC) to 481, 33 d 20 h 16 min 57 s,
-NJ Transit's API archive, as `njt-static` prints it, changed visibly six times on dates a pair of runs brackets, with a seventh difference dated only to runs 425 to 434, and no two visible changes from 2026-11-10 on came less than 24.10 h apart (2.2). Those are changes the line can see, not publications: the line prints routes, stops, the NY and NP rows and the last service day
+NJ Transit's API archive, as `njt-static` prints it, changed visibly six times on dates a pair of runs brackets, with a seventh difference dated only to runs 425 to 434, and no two visible changes from 2026-11-10 on came less than 24.09 h apart (24 h 5 min 29.17 s from run 462's first printed line, 2026-11-18 20:39:23.01 UTC, to run 464's step opening, 2026-11-19 20:44:52.18 UTC; 24 h 5 min 55 s from creation to creation; the runs' logs, 2.2). Those are changes the line can see, not publications: the line prints routes, stops, the NY and NP rows and the last service day
 (`backend/scripts/contract_monitor.py:2484-2493`) and never a trip id, and the trip ids are what
 moved in the second and third incidents. And the instant a timer would be chasing is not the
 publication's. Run 445's realtime feed contradicted a schedule the same run had downloaded
-seconds before, at least 5 and at most 41 mismatches, and run 446's download agreed with the trains: the longest lead of the realtime feed over the API that the logs allow is under 32 h 10 min 48.47 s, and a lead of zero is not excluded (2.3). On 2026-11-27 no run landed between the two moves, and the bounds allow either to have gone first (2.3). So a refresh that runs because
+seconds before, at least 5 and at most 41 mismatches, and run 446's download agreed with the trains: the longest lead of the realtime feed over the API that the logs allow is under 32 h 10 min 48.48 s, and a lead of zero is not excluded (2.3). On 2026-11-27 no run landed between the two moves, and the bounds allow either to have gone first (2.3). So a refresh that runs because
 the trains contradict the schedule can find the publication unchanged, and has to try again
 soon; a timer alone does not know that it should, and a timer slow enough to be cheap leaves
 the incident running until it fires. 2.2 gives each publisher's cadence and the cost of a check
@@ -609,7 +629,7 @@ after the gates. The downloads were three tries per archive with curl from this 
 
 The second harness's medians: gates 819.5 (subway), 237.6 (LIRR), 733.0 (Metro-North), 360.3
 (PATH) and 999.6 ms (NJ Transit public), within 3.0% of the table; loads within 4.0%;
-`tracemalloc` retained within 0.2% for every archive but the bus (90,648 bytes against 86,563); and its `tracemalloc` peaks, in bytes, NJ Transit public 99,531,820, Metro-North 47,030,357, the subway 39,954,958, PATH 31,903,859, LIRR 27,340,207 and the bus 19,627,347. The footprint column is macOS's physical footprint after the load, less before it, in the first harness's plain runs. The eleven public archives the app downloads total 67,157,724 bytes on the wire, of
+`tracemalloc` retained within 0.2% for every archive but the ferry (595,548 bytes against 599,558, 0.7%) and the bus (90,648 bytes against 86,563, 4.7%); and its `tracemalloc` peaks, in bytes, NJ Transit public 99,531,820, Metro-North 47,030,357, the subway 39,954,958, PATH 31,903,859, LIRR 27,340,207 and the bus 19,627,347. The footprint column is macOS's physical footprint after the load, less before it, in the first harness's plain runs. The eleven public archives the app downloads total 67,157,724 bytes on the wire, of
 which the six bus archives are 54,633,368 (arithmetic over the table). The download column is
 this machine's network, not Railway's, and production's own timings per archive are on no
 record read here (the cold-start baseline below is the nearest).
@@ -692,10 +712,13 @@ Two plain runs and one `tracemalloc` run, then the second harness's own plain an
 
 Resident memory added by generation 2 read 201,392,128 and 182,681,600 bytes in the two plain
 runs (`proc_pid_rusage`) and 187,219,968 in the second harness's (`ps -o rss=`); the peak
-resident size at the end (`ru_maxrss`) was 466,862,080 and 425,394,176. Footprint and
-resident deltas do not repeat between runs or between generations, because memory freed
-after one load's transient peak is reused by the next; `tracemalloc`'s per-archive deltas do,
-within 1.2% between the generations for every archive but the bus. Substituting the rail-only
+resident size at the end (`ru_maxrss`) was 466,862,080 and 425,394,176. Footprint
+deltas repeat between the two plain runs, within 0.4 MB per archive (`m1_measure.py generations
+plain`, twice); resident deltas do not, since resident size fell on several loads in run 2
+while footprint did not, which on macOS is consistent with pages being compressed or purged
+(not investigated). Neither repeats between generations, because memory freed after one load's
+transient peak is reused by the next; `tracemalloc`'s per-archive deltas do, within 1.2%
+between the generations for every archive but the bus. Substituting the rail-only
 stand-in for the public one would lower the NJ Transit share by the difference of the two
 retained sizes, 26,274,573 bytes (`tracemalloc`, arithmetic over the table above); that
 substitution was not run in a two-generation process.
@@ -710,7 +733,7 @@ these:
 | Field | Set at | Read by | Size, with its instrument |
 | --- | --- | --- | --- |
 | `app.state.njt_static`, the whole parse, `shapes` included | `backend/warmups.py:442` (initially `backend/main.py:263`) | tests only (`backend/tests/test_api.py:5609`, `:5852`) | public stand-in, getsizeof: `shapes` 59,482,559, `stop_times` 13,435,859. Rail-only: `shapes` 50,427,455 (getsizeof), 50,176,714 (`tracemalloc`, its parse), 50,236,023 (`tracemalloc`, freed when deleted) |
-| `app.state.njt_stop_schedule` | `backend/warmups.py:471` (initially `backend/main.py:273`) | tests only (`backend/tests/test_api.py:5615`, `:5841`) | public stand-in: 12,393,046 (getsizeof), 12,393,072 (`tracemalloc`). Rail-only, the shape production serves: 4,911,854 (getsizeof), 4,911,728 (`tracemalloc`, freed when deleted) |
+| `app.state.njt_stop_schedule` | `backend/warmups.py:471` (initially `backend/main.py:273`) | tests only (`backend/tests/test_api.py:5615`; set, not read, at `:5841`) | public stand-in: 12,393,046 (getsizeof), 12,393,072 (`tracemalloc`). Rail-only, the shape production serves: 4,911,854 (getsizeof), 4,911,728 (`tracemalloc`, freed when deleted) |
 | `app.state.railroad_static` | `backend/warmups.py:249` (initially `backend/main.py:223`) | nothing | 62,898,354 (getsizeof, walked as one dict), of which 56,535,728 is referenced by nothing else: 6,362,626 is shared with `railroad_stops` and with the route lines' point lists |
 | `app.state.path_static` | `backend/warmups.py:308` (initially `backend/main.py:232`) | nothing | 22,828,178 (getsizeof), of which 22,651,175 is referenced by nothing else |
 
@@ -784,7 +807,7 @@ literals beside them, all UTC.
 | PR #143's merge, `55065d0` | 7730268879 | 2026-11-12 06:35:07 | 06:36:30 | 06:36:26 | 06:36:34 | 06:36:43 | 79 | 87 | 96 | 13 |
 | **Ben's hand Redeploy of `55065d0`** | 7730268879, reused | 2026-11-22 23:47:21 (18:47:21 Eastern) | 23:48:45, and again 23:48:49 | 23:48:39 | 23:48:52 | 23:49:09 | 78 | 91 | 108 | 24 |
 | PR #145's merge, `758c0f6` | 7988955096 | 2026-11-23 02:28:43 | 02:29:18 | 02:29:11 | 02:29:20 | 02:29:30 | 28 | 37 | 47 | 12 |
-| **Ben's hand Redeploy of `758c0f6`** | 7988955096, reused | 2026-11-28 08:00:16 (03:00:16 Eastern) | 08:00:51, and again 08:00:54 | 08:00:44.200 (ferry) | 08:00:50.670 | 08:00:57.278 (subway) | 28 | 34 | 41 | 6 |
+| **Ben's hand Redeploy of `758c0f6`** | 7988955096, reused | 2026-11-28 08:00:16 (03:00:16 Eastern) | 08:00:51, and again 08:00:54 | 08:00:44.200 (ferry) | 08:00:50.670 | 08:00:57.278 (subway) | 28 | 34.7 | 41 | 6 |
 
 On 2026-11-28 the six promotions ran ferry 08:00:44.200, LIRR 08:00:46.056, PATH 08:00:48.557,
 NJ Transit 08:00:50.670, Metro-North 08:00:55.232 and subway 08:00:57.278, 13.077 s first to
@@ -828,7 +851,7 @@ last. What the records show, and what they do not:
   `:694`) go through the `static_shared` logger (`:47`), which that list does not raise from
   the root's WARNING (`backend/main.py:106-107`), so they would not appear. No log was read.
 
-So today's only repair, a hand Redeploy, took 91 s on 2026-11-22 and 34 s on 2026-11-28
+So today's only repair, a hand Redeploy, took 91 s on 2026-11-22 and 34.7 s on 2026-11-28
 from its record's `in_progress` to NJ Transit's promotion, and 108 s and 41 s to the last
 promotion; what happened before `in_progress`, and when the old process stopped serving, are
 on no record. Its token cost is 2.7's.
@@ -893,11 +916,14 @@ archive the run just downloaded from the API (`backend/scripts/contract_monitor.
 
 A run's reads happen after its monitor step opens and before its first printed line (2.3),
 so `created_at` to `created_at` is not the strictest window: from the last old run's step
-opening to the first new run's first printed line, C3 lies in under 10 h 49 min 22.17 s and C7
+opening to the first new run's first printed line, C3 lies in under 10 h 49 min 22.18 s and C7
 in under 12 h 41 min 10.89 s (the runs' logs). Over the four intervals between consecutive
 changes from C3 on, where one line format and one check hold throughout, the lower bounds run
-from 24.10 h to 169.30 h (median 78.16 h) and the upper bounds from 47.79 h to 192.68 h
-(median 102.76 h); the longest closed stretch with no visible change is runs 465 to 479,
+from 24.09 h to 169.30 h (median 78.16 h) and the upper bounds from 47.79 h to 192.68 h
+(median 102.76 h), from creation to creation (`cadence.py`, which prints the shortest as
+1 d 0 h 5 min 55 s); from each change's first new run's first printed line to the next
+change's last old run's step opening, the lower bounds run from 24.09 h to 169.29 h (median
+78.15 h) (the runs' logs); the longest closed stretch with no visible change is runs 465 to 479,
 169.30 h from creation to creation. These are intervals between changes the line can see.
 
 **What each line cannot see.** Every line is `f"{r.status:4}  {r.name}: {r.detail}\n"`
@@ -969,7 +995,7 @@ feed 20261012 to 20270102; NJ Transit's public file neither `feed_info.txt` nor
 the repository records, and what that leaves open:
 
 - **Method.** "every RailData endpoint is POST multipart/form-data with the token as a form
-  field, so a GET gets nothing" (`backend/njt_static.py:760-761`). Whether a HEAD exists is
+  field, so a GET gets nothing" (`backend/njt_static.py:761-762`). Whether a HEAD exists is
   not recorded.
 - **Validators.** The app drops the headers (`backend/njt_auth.py:715-716`), and no script,
   fixture, ledger line or pull request body read for this design records a header of a
@@ -1098,19 +1124,20 @@ line follows every read, so each bound below lies on the safe side of the read i
 | Realtime's ids moved, at the earliest | after 2026-11-09 22:28:02.8353449 (17:28:02) | run 442 (databaseId 42712092087) at its step opening: 108 trip updates in service and no identity warning of any kind, which on `590054a` would have made the line a WARN |
 | The same, if run 444 is a witness | after 2026-11-10 07:27:18.5692700 (02:27:18) | run 444 (42775373334) at its step opening: 7 trip updates, closed, no warning; how many could be checked was not printed |
 | The API's schedule moved, at the earliest | after 19:49:29.1337651 (14:49:29) | run 445's step opening: its download still read 16, 229, 20270503 |
-| The API's schedule moved, at the latest | before 2026-11-11 06:38:51.3092359 (01:38:51) | run 446's (42973821279) first printed line: 17, 228, 20270507, and its realtime agreed |
+| The API's schedule moved, at the latest | before 2026-11-11 06:38:51.3086373 (01:38:51) | run 446's (42973821279) first printed line; its `njt-static` line, stamped 06:38:51.3092359, printed 17, 228, 20270507, and its realtime agreed |
 
 From these, by arithmetic over the stamps: the API's change lies in a window under 10 h 49 min
-22.17 s; the realtime move in one under 21 h 21 min 45.41 s, or under 12 h 22 min 29.68 s if run
+22.18 s; the realtime move in one under 21 h 21 min 45.42 s, or under 12 h 22 min 29.68 s if run
 444 counts; the longest lead of realtime over the API consistent with the logs is under 32 h 10
-min 48.47 s, or under 23 h 11 min 32.74 s with run 444. **The shortest lead is not positive.**
+min 48.48 s, or under 23 h 11 min 32.74 s with run 444. **The shortest lead is not positive.**
 Run 445 downloaded first and read realtime after, within 19.113 s, so had both moved together,
 or the API up to 19.113 s before the feed, inside those seconds, run 445 would have printed
 what it printed and run 446 what it printed. A lead of zero is not excluded. The ledger's
 "most likely the realtime feed moved before the schedule endpoint did, so a fresh schedule can
 be behind too, for some hours" (ledger:589) is an inference from one
-run landing in the window, not a measurement; it is also why `SCHEDULE_BEHIND_HOLD_S` is 600 s
-(`backend/feeds/njt.py:602-606`). From run 446 on the pairs are gone: every `njt-realtime`
+run landing in the window, not a measurement. That run is also why `SCHEDULE_BEHIND_HOLD_S`
+exists (`backend/feeds/njt.py:602-605`), and its 600 s is "the band the operator's other codes
+use" (`:605-606`). From run 446 on the pairs are gone: every `njt-realtime`
 from 446 to 450 is a PASS, run 447's on 76 trip updates in service. The download changed once
 more in that stretch, C4 (run 448's step opening 2026-11-12 07:21:12.26 UTC to run 449's first
 line 20:03:04.69 UTC, 20270507 to 20270509), and run 449, in service with 79 trip updates,
@@ -1150,7 +1177,7 @@ All five are scheduled first attempts on `018e82d`, read from their logs; runs 4
   longest realtime lead shrinks to 12 h 41 min 10.89 s, and the API's possible lead is
   unchanged. Nothing measured here says whether 2 checked trips would have shown it, so the
   witness is stated, not counted.
-- **The riders' window** is 1.1.3's: at most 34 h 19 min 41 s by the record (record:666), and 23 h 16 min 17.04 s if run 479 counts.
+- **The riders' window** is 1.1.3's: at most 34 h 20 min 0.37 s from run 478's step opening (21:40:50.30 UTC) to the promotion's `last_promoted_at` of 08:00:50.670 UTC (34 h 19 min 41 s by the record, counted from run 478's printed line, record:666), and 23 h 16 min 17.04 s if run 479 counts.
 - **The public file** read Last-Modified 2026-11-27 20:33:53 UTC, 20 min 53 s after 20:13:00:
   a bound on its latest write before 2026-11-28 08:35:10 UTC, not its first (2.2).
 
@@ -1158,9 +1185,9 @@ All five are scheduled first attempts on `018e82d`, read from their logs; runs 4
 
 | | 2026-11-10 | 2026-11-27 |
 | --- | --- | --- |
-| The API's change lies in | a window under 10 h 49 min 22.17 s | a window under 12 h 41 min 10.89 s |
-| The realtime move lies in | a window under 21 h 21 min 45.41 s (12 h 22 min 29.68 s with run 444) | a window of 22 h 32 min 9.70 s (11 h 28 min 26.37 s with run 479) |
-| Longest realtime lead consistent with the logs | under 32 h 10 min 48.47 s (23 h 11 min 32.74 s with run 444) | 23 h 44 min 54.22 s (12 h 41 min 10.89 s with run 479) |
+| The API's change lies in | a window under 10 h 49 min 22.18 s | a window under 12 h 41 min 10.89 s |
+| The realtime move lies in | a window under 21 h 21 min 45.42 s (12 h 22 min 29.68 s with run 444) | a window of 22 h 32 min 9.70 s (11 h 28 min 26.37 s with run 479) |
+| Longest realtime lead consistent with the logs | under 32 h 10 min 48.48 s (23 h 11 min 32.74 s with run 444) | 23 h 44 min 54.22 s (12 h 41 min 10.89 s with run 479) |
 | Longest API lead consistent with the logs | 19.113 s | 11 h 28 min 26.37 s |
 | A lead of zero | not excluded | not excluded |
 | A run that read realtime contradicting its own fresh download | run 445: at least 5 and at most 41 mismatches, no denominator | none |
@@ -1299,8 +1326,8 @@ PATH `Fri, 06 Jun 2025 17:54:51 GMT`; ferry `Fri, 27 Nov 2026 06:25:01 GMT`), re
 
 Each warmup's success path assigns in one step: every assignment of a group landed on one
 event-loop tick (ferry tick 46, PATH tick 800, railroad tick 1617, `verify_m4c.py` with a ticker
-coroutine). The literal reading "no `await` after the load" holds for the success path only:
-`backend/warmups.py:242`, `:301` and `:353` each hold `attempt = await _fail_and_wait(...)` on the
+coroutine). Only on the success path does no `await` fall between a load and its
+assignments: `backend/warmups.py:242`, `:301` and `:353` each hold `attempt = await _fail_and_wait(...)` on the
 empty-result branch, which continues before any assignment.
 
 No railroad, PATH or ferry loader or decoder parses a calendar; AirTrain's fixture records its own
@@ -1378,11 +1405,11 @@ verification: `njt_feed_health` only at `backend/pollers.py:1085`, `:1191` and t
 | `njt_arrivals` | stop ids of the poll's held `njt_stops`; headsigns from the held trips or stop names | the next successful poll, whole; departed rows pruned in place (`backend/pollers.py:452-473`) |
 | `feed_cache["njt"]` trains | `stop_id`, `stop_name`, coordinates from the held stops | the next successful poll; a failed poll keeps them |
 | `njt_feed_health` | counts of the decode against the held `njt_trips` | the next decode |
-| `njt_behind_run` | "the held schedule contradicts the trains" (`backend/feeds/njt.py:639`) | ends only when a decode can judge (`checked` at least 5, `:609-613`) and fewer than one in four contradict; `/healthz` names it 600 s after the run began (`SCHEDULE_BEHIND_HOLD_S`, `:606`, `:667-669`) |
+| `njt_behind_run` | a `BehindRun`, "The first and the latest decode that schedule_behind held for with no decode in between that said otherwise" (`backend/feeds/njt.py:639-641`), the decodes run against the held `njt_trips` | ends only when a decode can judge (`checked` at least 5, `:609-613`) and fewer than one in four contradict; `/healthz` names it once a decode at least 600 s after the run's first still sees it, since a decode that cannot judge leaves `latest` where it was (`SCHEDULE_BEHIND_HOLD_S`, `:606`; `:659-664`, `:667-669`) |
 | Subway trains, and a failed group's trains retained | coordinates and `stop_name` from `subway_stops` | the next decoding poll; a retained group up to `FEED_RETENTION_MAX_S` 600 s (`backend/cache.py:104`) |
 | `subway_arrivals`, `subway_arrivals_by_system` | parent station ids filtered by `subway_stops` | replaced on success; retained per failed group up to 600 s |
 | `subway_positions`, `railroad_positions` anchors | static stop ids and coordinates | **not the next poll**: `carry_forward_prev` keeps a train's anchor while its next stop is unchanged (`backend/feeds/shared.py:335`) and serves it as `prev_lat` and `prev_lon` (`:345-347`), so an older generation's coordinates survive successful polls until each train's next stop changes; how long that is was not measured |
-| `subway_unmapped_routes` | route ids, against `subway_station_routes` | latched for the process; `_unmapped_subway_routes` re-derives its static side per call, under a docstring that reads "The index is fixed for the process" (`backend/routes/status.py:462`) |
+| `subway_unmapped_routes` | route ids a decoding group served that `SUBWAY_ROUTE_GROUPS` lacks, the feed side (`backend/pollers.py:646-657`); no static table is read to build it | latched for the process; the static side is not stored: `_unmapped_subway_routes` re-derives it from `subway_station_routes` per call (`backend/routes/status.py:469-472`), under a docstring that reads "The index is fixed for the process" (`:462`) |
 | `railroad_arrivals` | static stop ids; buckets by `direction_id` or by direction inferred from static coordinates | retained per failed system; departed rows pruned |
 | `path_identity` | slots `(route_id, direction, stop_id)` (`backend/feeds/path.py:335-336`); the advance branch needs `path_station_order` | created once per process (`backend/main.py:247`) |
 | `path_arrivals`, `path_feed_health["unresolved"]` | static station ids; entities whose stop ids `path_stops` lacks | the next poll |
@@ -1433,9 +1460,10 @@ real loader):
 | `build_njt_trip_index` | `njt_static`, `njt_station_routes`, `njt_stops`, `njt_routes` | `njt_trips`, `njt_lines`, `njt_stop_schedule` | `ready` |
 
 The other NJ Transit builders were not measured. On a cold start the same raise leaves the status
-`loading` (F09, audit-2026-09-05.md:431). The railroad and PATH blocks have the
-same shape by code, builders between assignments (`backend/warmups.py:249-273`, `:308-325`); no
-raise there was measured.
+`loading` (F09, audit-2026-09-05.md:431). The railroad, PATH and ferry blocks
+have the same shape by code, builders between assignments (`backend/warmups.py:249-273`,
+`:308-325`, `:360-371`); no raise there was measured. Of the five warmups in `backend/warmups.py`,
+only the subway's assigns values its `try` already built (`:193-198`).
 
 #### 2.4.10 The browser's tables
 
@@ -1694,8 +1722,8 @@ case-folded name. **No realtime on the new numbering with per-call times exists 
 repository**, so the two new-realtime arms are stand-ins: C1 and D1 replay the 2026-09-01
 predictions with every stop id carried into the new numbering by a station join (nearest of the
 164 new rail rows, ties at Secaucus's two levels broken by shared route names: 164 to 164, 159
-within 1 m, 49 kept their id and 115 moved, the counts the 2026-11-06 pull gave at
-ledger:653); C2 and D2 use the new publication's own scheduled
+within 1 m, 49 kept their id and 115 moved, the counts the 2026-11-06 pull gave: 164, 49 and 115
+at ledger:653, and 159 within 1 m at `backend/scripts/contract_monitor.py:468-469`); C2 and D2 use the new publication's own scheduled
 stop_times (1,387 rail trips). Capturing real new-numbering realtime takes a mint.
 
 **Per snapshot, per pair.** Right means the realtime read under its own table; wrong means under
@@ -1731,8 +1759,13 @@ measured wrong trips above 200 (D2's smallest maximum 211.9). Under the trip upd
 Branch trains, where the predicted delay falls between consecutive stations faster than a train
 can recover it (train 0435, Murray Hill departure 22:51:32 UTC with 302 s of delay to Berkeley
 Heights arrival 22:51:35 UTC with 110 s, 3 s for 3,620 m, 4,343.7 km/h, against a scheduled 3 min
-15 s); 2 on NJCL trains 3267 and 3272 at calls their own schedule does not list; and 3 with **no
-measured cause**, trip 3363 twice (279.3 and 178.8 km/h) and trip 1169 (211.7 km/h).
+15 s); 2 on NJCL trains 3267 and 3272 at calls their own schedule does not list; and 3 on two
+more late trains where the predicted delay falls between consecutive stations the same way: NJCL
+train 3363 twice (Spring Lake departure with 2,701 s of delay to Manasquan arrival with 2,551 s,
+45 s against a scheduled 3 min 15 s, 279.3 km/h; Hazlet with 3,192 s to Middletown with 3,031 s,
+139 s against a scheduled 5 min, 178.8 km/h) and Bergen County Line train 1169 (Waldwick with
+561 s to Allendale with 462 s, 36 s against a scheduled 2 min 15 s, 211.7 km/h), by
+`dump_trips.py` on entities 3363 and 1169 (routes 10 and 5 of the fixture's `routes.txt`).
 
 **Absent stop ids are the sharper signal.** Zero in every right arm (0 of 1,231 realtime calls,
 0 of 17,461 and 0 of 1,722 schedule calls); 20 distinct absent ids in every wrong arm, on 69 of 90
@@ -1782,7 +1815,7 @@ whenever no cache is passed (`:1417`). The three production callers pass none:
 | --- | --- | --- |
 | The trains poller | `njt_auth.njt_post(NJT_TU_URL, {})` (`backend/feeds/njt.py:1066-1067`) | every 20 s (`backend/pollers.py:70`), under 45 s (`:108`), only while `njt_static_status` is `ready` (`:1095`) |
 | The alerts poller | `njt_auth.njt_post(url, {})` (`backend/feeds/alerts.py:537`) | every 60 s, under `ALERT_FEED_DEADLINE_S` 20 s (`:384`, applied at `:529`) |
-| The static download | `njt_auth.njt_post(url, {})` (`backend/njt_static.py:773`) | once per process today; under `asyncio.timeout(deadline_s)` (`:772`), `DOWNLOAD_DEADLINE_S` 120 s (`backend/static_shared.py:523`) |
+| The static download | `njt_auth.njt_post(url, {})` (`backend/njt_static.py:773`) | once per warmup attempt that finds its cache not fresh (`backend/njt_static.py:1275-1276`), under `asyncio.timeout(deadline_s)` (`:772`), `DOWNLOAD_DEADLINE_S` 120 s (`backend/static_shared.py:523`); so once per process today when the first attempt succeeds, while a failed download with no usable cache returns `{}` (`backend/njt_static.py:1288-1291`) and the warmup posts again on its rungs (`backend/warmups.py:434-441`) |
 
 A token is reused until `MAX_TOKEN_AGE_S` = 12 h (`backend/njt_auth.py:302`, checked lazily at
 `:1031`). A process sends at most `DAILY_MINT_ALLOWANCE` = 4 getToken POSTs per Eastern day
@@ -1791,7 +1824,7 @@ twice, with no loop (`:1432`, `:1455`), so one attempt sends at most 2. **While 
 `get()` serves the held token whatever its age** (`:1087-1098`, `:1252-1256`), so an over-age
 token does not always mean a mint: during a ladder, allowance or quota hold the static download
 posts the over-age token and sends nothing to getToken. On a cold start the NJ Transit alerts
-fetch, started beside the warmup (`backend/main.py:353`), races the warmup's
+fetch, started beside the warmup (`backend/main.py:354`), races the warmup's
 download to `TokenCache.get`; its lock means one mint either way, and which caller sends it is not
 measured.
 
@@ -1820,7 +1853,7 @@ not NJ Transit.
 | The refresh mints, a poll confirms the new token, getGTFS then refuses it | **2**, the most the code allows | promoted on the re-mint | V6 |
 | Every token refused | 1 re-mint, its token refused fresh | `NjtAuthError`, nothing promoted; a 600 s hold | R4 |
 | A cooldown running, token over age | 0: the held token was posted | promoted | R5 |
-| The day's allowance spent, token over age | 0 | promoted; the hold read 23,972.5 s | R5b |
+| The day's allowance spent, token over age | 0 | promoted; the hold, which runs to the next Eastern midnight plus 60 s (`backend/njt_auth.py:1164-1165`, `:630-655`), read 23,972.5 s, a length set by the hour the run's clock read (`m9_token_during_refresh.py` starts its fake wall clock at the real `time.time()`, its line 247) | R5b |
 
 **The refresh-specific +1.** The one path measured to add a POST was a deadline cancelling a
 mint in flight: with the refresh's deadline cut to 1.0 s against a 2.0 s getToken, 3 POSTs where
@@ -1853,7 +1886,9 @@ at 10:14:54 and 10:38:58 UTC. A deploy is a fresh process with a fresh allowance
 The token rides once, as the form field `token` at request start (`backend/njt_auth.py:1471`). The
 whole body is read before the status is judged (`resp.content`, `:716`), and once a 200 status
 line has arrived the server can only end the stream or add bytes. Any exception inside the
-transfer becomes `NjtUpstreamError`, which neither invalidates nor confirms the token.
+transfer but a cancellation becomes `NjtUpstreamError`: `_post` catches `Exception`
+(`backend/njt_auth.py:1470-1473`), which a cancellation is not, so the download deadline's
+cancellation surfaces as `TimeoutError` (T7). Neither invalidates nor confirms the token.
 `staged_fetch` unlinks the stage on any exception and records the failure
 (`backend/static_shared.py:665-670`), and the loader keeps serving a usable cache. A 200 calls
 `confirm(token)` before the body is validated (`backend/njt_auth.py:1434-1436`).
@@ -1862,7 +1897,7 @@ transfer becomes `NjtUpstreamError`, which neither invalidates nor confirms the 
 | --- | --- | --- | --- |
 | T1 | 200, `Content-Length` full, connection closed at half (at a third with the public archive, V4) | `NjtUpstreamError` (`RemoteProtocolError`) | token kept, no hold, 0 getToken; no stage file, nothing promoted |
 | T2 | 200, chunked, closed with no last chunk | `NjtUpstreamError` | the same |
-| T3 | 200, close-delimited, cut | httpx returned the part as a 200; staged, then refused: "not a readable zip archive" | the same; `confirm` already called |
+| T3 | 200, close-delimited, cut (at a third with the public archive, V4) | httpx returned the part as a 200; staged, then refused: "not a readable zip archive" | the same; `confirm` already called |
 | T4 | 200, the whole archive, then `{"errorMessage":"Invalid token."}` | **promoted**, 33 trailing bytes included | token kept |
 | T5 | T1, T2 and T3 over a promoted cache | three failures, `failed_downloads` 3 | the cache byte-identical |
 | T7 | 6,000 bytes trickled in 300-byte pieces 0.3 s apart, deadline 1.5 s | `TimeoutError` at 1.503 s | token kept; the next poll used it |
@@ -1940,9 +1975,17 @@ Four fields per archive in the module-level `_ARCHIVE_STATUS` (`backend/static_s
 `_entry` at `:456-465`): `last_promoted_at` (`time.time()` at the rename), `last_download_error`,
 `failed_downloads` (reset by a promotion) and `degraded_members`. Served under `static_archives`
 on `/api/status` (`backend/routes/status.py:224`; `StaticArchiveStatus`, `backend/models.py:993`).
-A key appears only once its archive is downloaded in this process, so a boot over a warm cache
-publishes `{}` (the F07 witness prints `archive record on /api/status = {}` for its warm-cache NJ
-Transit boot). **Not recorded anywhere in app code:** `Last-Modified`, `ETag`, any conditional
+A key appears once its archive is downloaded in this process, or once a loader's cached check
+finds a usable cache failing its decorative gate: `cached_archive_draws` then writes that key's
+`degraded_members` with no download (`backend/static_shared.py:375-377`, `:383`, `_entry` at
+`:456-465`), for the subway, both railroads and NJ Transit (`backend/static_data.py:400-402`,
+`backend/railroad_static.py:523-525`, `backend/njt_static.py:1274`), as
+`backend/models.py:1168-1170` says. So a boot over a warm cache whose decorative gates all pass
+publishes no entry (the F07 witness prints `archive record on /api/status  = {}`, its `njt`
+entry, for its warm-cache NJ Transit boot,
+`docs/reviews/audit-2026-09-05/f07_static_never_refreshes.py:763`), and a boot over one whose
+cached `shapes.txt` (subway, NJ Transit) or `stop_times.txt` (railroads) fails its gate publishes
+an entry with `last_promoted_at` null and that member under `degraded_members`. **Not recorded anywhere in app code:** `Last-Modified`, `ETag`, any conditional
 request, a sha256 or other hash, the byte size, the source URL, the `feed_info` version or the
 service span (a grep over `backend/*.py`, `backend/routes/*.py`, `backend/feeds/*.py`); "No
 production module parses feed_info today" (`backend/scripts/contract_monitor.py:1760`). **A
@@ -1987,8 +2030,10 @@ loaders finds none). `validate_njt_archive` (`backend/njt_static.py:669-679`) ta
 the later of `calendar.txt`'s latest `end_date` and the latest added `calendar_dates.txt` day
 (`:682`), and refuses when it is before today in New York (`:673`, `_today` at `:595`). It is part
 of the always-gate, so it runs on every download and on each load's cached check. Measured through
-the real `validate_njt_publication` at an injected noon in New York (`m8_calendar_and_age.py`,
-re-derived by `v8_probe.py` part A):
+the real `validate_njt_publication`: the fixture's two rows at an injected noon in New York and
+the shifted fixture at the real clock by `m8_calendar_and_age.py`, and the one-day and removal
+rows by `v8_probe.py` part A, at the instants their rows name and otherwise at noon in New York on
+20261128:
 
 | Publication and clock | Verdict |
 | --- | --- |
@@ -2003,7 +2048,7 @@ re-derived by `v8_probe.py` part A):
 So a publication not yet in service, one that schedules nothing today, passes; there is no
 earliest-date or runs-today check (`backend/njt_static.py:665-679`). Past a feed's end the other
 loaders do not look: run 481 (databaseId 46123612408, created 2026-11-28 07:58:21 UTC) logged
-`WARN  path-static: feed_end_date 20260601 is in the past`, and production served `path_static`
+`WARN  path-static: feed_end_date 20260601 is in the past (acknowledged: ...)`, and production served `path_static`
 `ready` at 10:13:37 UTC.
 
 #### 2.8.5 The warmups' loops and returns
@@ -2017,8 +2062,9 @@ loaders do not look: run 481 (databaseId 46123612408, created 2026-11-28 07:58:2
 | Bus index | none: one threaded build (`backend/bus_static.py:300`) | after one build, success or not | `failed` or `partial`, neither rebuilt in the process |
 
 A failed attempt sleeps on the rungs `(15, 30, 60, STATIC_RETRY_S)` with `STATIC_RETRY_S` 300
-(`backend/main.py:125`, `:163-165`), each times `0.9 + 0.2 * random()` (`backend/warmups.py:111`),
-capped at 300 s (`:121`); each attempt runs under `STATIC_ATTEMPT_DEADLINE_S` = 300 s
+(`backend/main.py:125`, `:163-165`). Each rung is capped at `STATIC_RETRY_S`
+(`backend/warmups.py:121`) and then multiplied by `0.9 + 0.2 * rand()` (`:111`, `rand` defaulting
+to `random.random`, `:96`), so the last rung sleeps 270 to 330 s; each attempt runs under `STATIC_ATTEMPT_DEADLINE_S` = 300 s
 (`backend/main.py:197`), which cannot preempt an inline parse. All six tasks are created once in
 `lifespan` (`backend/main.py:343-357`); the F06 witness counted 8 `create_task` calls in one
 startup, 0 after the warmups finished, and no `add_done_callback` in the backend package. A failed
@@ -2067,7 +2113,7 @@ the handler answers 503 only for those. The codes that concern static data:
 | `bus-route-index-failed` | yes | the bus index `failed` (`backend/routes/status.py:328-329`) |
 | `subway-static-failed` | yes | `subway_static_status == "failed"` (`:334-335`) |
 | `subway-lines-degraded` | no | the subway is `ready` and no served route line has two points (`:821-824`); "Cleared by the next start whose lines draw, which in production is the next deploy" (`backend/models.py:1313-1314`) |
-| `subway-route-unmapped` | no, latched | the static routes-per-station index names a route outside `SUBWAY_ROUTE_GROUPS` |
+| `subway-route-unmapped` | no | the static routes-per-station index names a route outside `SUBWAY_ROUTE_GROUPS`, re-read on every call (`backend/routes/status.py:469-472`), or a decoding group has served one in this process, latched (`backend/pollers.py:646-657`) |
 | `njt-schedule-behind` | no | the held schedule contradicts the trains past the 600 s hold (`backend/routes/status.py:826`, `:440-441`); "WHAT CLEARS IT ... means a redeploy" (`backend/models.py:1343-1345`) |
 
 **No code exists for** a railroad, PATH, ferry or NJ Transit group `failed` or `loading` (railroad
@@ -2088,11 +2134,15 @@ generation of the subway, railroad, PATH or ferry archive with upstream's. Only 
 compared, and only through its trains.
 
 `production:njt-schedule` is the one check whose FAIL sentence is itself the instruction:
-"production's schedule is behind NJ Transit's publication: redeploy" (`:3651`). Two other FAILs
-carry the word: `production:healthz` FAILs on `subway-lines-degraded` (it is not in
-`_WARN_HEALTH_CODES`, `:332`) and appends that code's note, which says "a redeploy restores the
-lines only once upstream's shapes.txt draws again" (`:356-364`, appended at `:2850`); and an absent
-`degraded` key FAILs with "Redeploy from a revision that includes it." (`:2831-2836`).
+"production's schedule is behind NJ Transit's publication: redeploy" (`:3651`). Other FAIL
+texts carry the word too. `production:healthz` FAILs on every recognized code outside
+`_WARN_HEALTH_CODES` (`:332`, `:2856-2857`) and appends each reported code's note (`:2850`). All
+six notes say "redeploy" (`:355-411`); the two WARN codes' notes reach a FAIL line only beside a
+code that FAILs. Of the four notes on codes that FAIL, only `subway-lines-degraded`'s rests on a
+running process never re-fetching: "a redeploy restores the lines only once upstream's shapes.txt
+draws again" (`:356-364`). Those of `njt-mint-allowance`, `njt-mint-quota` and
+`observations-qualified` say a redeploy does not fix their state (`:370`, `:378`, `:386`). An
+absent `degraded` key FAILs with "Redeploy from a revision that includes it." (`:2831-2836`).
 
 ---
 
@@ -2154,7 +2204,7 @@ subway, 09:58:32 to 09:58:33 UTC for the railroads, PATH and ferry); 2.4.
 
 AirTrain is not an archive. `data/airtrain_jfk.json` (17,696 bytes) is committed, read once in the
 lifespan (`backend/main.py:295`), and changes only with a deploy, so it stays outside the refresh;
-its endpoint carries the file's sha256 as its stamp (3.7).
+its endpoint carries the file's sha256 as its stamp (3.7, 4.4).
 
 **The identity** each generation carries, proposed:
 
@@ -2162,17 +2212,18 @@ its endpoint carries the file's sha256 as its stamp (3.7).
 @dataclass(frozen=True)
 class ArchiveIdentity:
     archive: str                 # "njt", "subway", "railroad_LIRR", "railroad_MNR", "path", "ferry", "bus"
-    sha256: str                  # of the bytes as received; for "bus", of the six archives' digests in order
-    content: str                 # digest of (member name, CRC-32, size) read from the zip's central directory
+    sha256: str                  # of the bytes as received; for "bus", of its boroughs' sha256 values in order
+    content: str                 # digest of (member name, CRC-32, size) read from the zip's central directory; for "bus", of its boroughs' content in order
     size: int                    # bytes as received
-    etag: str | None             # as the publisher sent it, else None
+    etag: str | None             # as the publisher sent it, else None; None for "bus", whose six are its boroughs'
     last_modified: str | None    # likewise
+    boroughs: tuple["ArchiveIdentity", ...] | None  # "bus" only: each borough archive's own identity, in BUS_GTFS_URLS order; else None
     feed_version: str | None     # feed_info.txt, where the archive has one
     service_from: str | None     # YYYYMMDD, the first scheduled day
     service_through: str | None  # YYYYMMDD, the last scheduled day
     degraded_members: dict[str, str]  # decorative members this generation lacks (3.3)
     built_at: float              # the builder's injected clock when it returned
-    promoted_at: float           # the loop's clock at the assignment (set by dataclasses.replace)
+    promoted_at: float           # time.time() read on the loop at the assignment, a wall-clock instant as last_promoted_at is today (set by dataclasses.replace)
 ```
 
 Two of these fields need saying. `content` stands beside `sha256` because whether two downloads of
@@ -2221,11 +2272,16 @@ bound: the A09 witness at `16d1c19` still promotes a 536,871,856-byte publicatio
 cost of returning a generation across a process boundary is unmeasured.
 
 **The single assignment.** When the build returns, the worker assigns on the loop, in one statement:
-`app.state.static[archive] = gen`, with `promoted_at` the loop's clock at that statement. Nothing is
+`app.state.static[archive] = gen`, with `promoted_at` read from `time.time()` at that statement, a
+wall-clock instant as `last_promoted_at` is today (`backend/static_shared.py:483`), not the loop's
+monotonic `loop.time()`. Nothing is
 assigned beside it. The `*_static_status` strings the monitor reads by name (`production:statics`,
 `backend/scripts/contract_monitor.py:3061-3105`) become derived: `ready` once a generation is
 assigned, `loading` before the first, `failed` while a cold start has none and its last attempt
-failed. Status and tables then cannot disagree, and a builder that raises assigns nothing, so the
+failed. NJ Transit's fourth, `not-configured`, is not derived from a generation: the cold start sets
+it when there are no credentials, as today (`backend/warmups.py:405-412`, `backend/main.py:274-277`),
+and hands nothing to the refresh worker, so no refresh runs behind it (4.2). Status and tables then
+cannot disagree, and a builder that raises assigns nothing, so the
 mixed sets above cannot form. Today promotion and memory are two steps: `last_promoted_at` is
 stamped at the rename (`backend/static_shared.py:483`, called at `:693`), before the parse. Stamped
 at the promotion itself, the subway's tables were assigned 894.63 ms later, with 4 loop iterations
@@ -2264,28 +2320,58 @@ serves rows decoded under one generation with names from another:
 | --- | --- | --- |
 | `njt_arrivals`, `feed_cache["njt"]` trains (`backend/pollers.py:1229`, `:1206`) | keyed by held stop ids; headsigns, stop names and coordinates from the held tables | carry their generation; a route joins their rows only to that generation's names; replaced whole by the next poll |
 | `njt_feed_health` (`backend/pollers.py:1191-1199`) | counts of the decode against the held `trips` | carries its generation, which `/api/status` names beside the counts |
-| `njt_behind_run` (`backend/pollers.py:1203`) | "the held schedule contradicts the trains", ended only by a decode that can judge (`backend/feeds/njt.py:648-664`) | carries its generation; a decode under another starts from no run, so `/healthz` never names a schedule the process no longer holds |
+| `njt_behind_run` (`backend/pollers.py:1203`) | a run of decodes in which the held schedule contradicts the trains (`BehindRun`, `backend/feeds/njt.py:639-642`), ended only by a decode that can judge (`:648-664`) | carries its generation; a decode under another starts from no run, so `/healthz` never names a schedule the process no longer holds |
 | subway and railroad position anchors (`backend/feeds/shared.py:335`, `:345-347`) | an anchor keeps its coordinates until the train's next stop changes | anchors of another generation are dropped at the first poll under the new one |
 | retained trains, up to `FEED_RETENTION_MAX_S` 600 s (`backend/cache.py:104`) | deep copies carrying old coordinates and names | carry their generation; never merged into another generation's envelope |
 | `path_identity` (`backend/main.py:247`, `backend/pollers.py:930`) | slots keyed by route, direction and stop id; an advance needs `station_order` | a new epoch at the first poll under the new generation |
 | `ferry_arrivals` (`backend/feeds/ferry.py:263-266`) | buckets keyed by the route's long name from the held table | carries its generation |
+| `subway_arrivals`, `subway_arrivals_by_system`, `railroad_arrivals`, `path_arrivals` (`backend/pollers.py:444-446`) | keyed by static station or stop ids; the boards name them from the table the request reads (`backend/routes/subway.py:120`, `backend/routes/railroad.py:171`, `backend/routes/path.py:127`) | carry their generation; a board names their rows only from that generation |
 | `_ARCHIVE_STATUS` (`backend/static_shared.py:440`) | a module global written at the rename, several awaits before memory changes | replaced on `/api/status` by the identity of the generation readers hold (3.5) |
 
-On a swap the design proposes that the family's next poll starts at once, rather than after
-`POLL_INTERVAL_S` (20 s, `backend/pollers.py:70`), and that until it lands the rows decoded under
-the old generation are served only under the old generation's names, which their envelope's stamp
-says (3.7). The window in which old rows are served is then one poll, bounded by
-`REFRESH_DEADLINE_S` (45 s, `backend/pollers.py:108`), and the old generation stays alive for that
-poll and no longer (3.10). Every count of the measured mix above is zero under the two rules by
-construction; Step 1's witness has to show it.
+On a swap the design proposes that the poll loop's sleep ends early, so the next cycle starts at
+once rather than after `POLL_INTERVAL_S` (20 s, `backend/pollers.py:70`). No poll of one family
+exists to wake: `_poll_feeds` runs the five refreshers as one `TaskGroup` cycle and sleeps after it
+(`backend/pollers.py:1330`, `:1362`), and "A CYCLE ENDS ONLY WHEN EVERY CHILD HAS ENDED" (`:1288`).
+So the early cycle polls all five families, and a swap during a cycle starts no second NJ Transit
+poll beside the one in flight, which holds the old generation and, ending last, would overwrite the
+new poll's rows (`:1206`, `:1229`). Until the first poll under the new generation lands, the rows
+decoded under the old one are served only under the old generation's names, which their envelope's
+stamp says (3.7). While polls succeed, old rows are served for the rest of the cycle in flight and
+one more poll, each bounded by `REFRESH_DEADLINE_S` (45 s, `backend/pollers.py:108`): at most 90 s
+(arithmetic over that literal). A failed poll keeps the rows it does not replace ("Last-known data
+keeps being served", `backend/cache.py:239`; `backend/pollers.py:1085-1093`, `:1226-1229`; 2.4.7):
+NJ Transit's whole envelope for as long as its polls fail (`backend/pollers.py:379-380`), and one
+failed system of an aggregate for up to `FEED_RETENTION_MAX_S`, 600 s (`backend/cache.py:104`). The
+old generation stays alive while any live row carries it (3.10). An envelope carries one stamp per
+archive (4.4), so a failed group's retained trains of the old generation are either dropped at the
+swap, leaving the map until that group decodes, or served in an envelope that names both
+generations; Q22 asks which. Every count of the measured mix above is zero
+under the two rules by construction; Step 1's witness has to show it.
 
-**What the generation leaves out.** The design proposes dropping three structures no reader reads: `njt_static` whole (assigned at `backend/warmups.py:442`; read only by tests, `backend/tests/test_api.py:5609`, `:5852`), `railroad_static` (`backend/warmups.py:249`) and `path_static` (`:308`), which no app code reads (a grep at `16d1c19` for this design, 2.1). A fourth, `njt_stop_schedule` (`backend/warmups.py:471`; read only by tests, `backend/tests/test_api.py:5615`, `:5841`), is kept for now, because the lifespan reserves it "for the panel era" (`backend/main.py:273`); Q14 asks whether it goes too. `ferry_static`'s `trips` and `routes` stay, since the decode joins against them on every poll. Measured per generation (2.1): in production's NJ Transit shape (the rail-only projection), deleting `njt_static["shapes"]` freed 50,236,023 bytes and deleting `njt_stop_schedule` 4,911,728 bytes (tracemalloc deletion deltas); what `railroad_static` holds that nothing else references is 56,535,728 bytes and what `path_static` holds 22,651,175 bytes (recursive `getsizeof` over objects no served structure shares). The two instruments differ, so the figures are not summed here.
+**What the generation leaves out.** The design proposes dropping three structures no reader reads: `njt_static` whole (assigned at `backend/warmups.py:442`; read only by tests, `backend/tests/test_api.py:5609`, `:5852`), `railroad_static` (`backend/warmups.py:249`) and `path_static` (`:308`), which no app code reads (a grep at `16d1c19` for this design, 2.1). A fourth, `njt_stop_schedule` (`backend/warmups.py:471`; read only by tests, `backend/tests/test_api.py:5615`, and set by one at `:5841`), is kept for now, because the lifespan reserves it "for the panel era" (`backend/main.py:273`); Q14 asks whether it goes too. `ferry_static`'s `trips` and `routes` stay, since the decode joins against them on every poll. Measured per generation (2.1): in production's NJ Transit shape (the rail-only projection), deleting `njt_static["shapes"]` freed 50,236,023 bytes and deleting `njt_stop_schedule` 4,911,728 bytes (tracemalloc deletion deltas); what `railroad_static` holds that nothing else references is 56,535,728 bytes and what `path_static` holds 22,651,175 bytes (recursive `getsizeof` over objects no served structure shares). The two instruments differ, so the figures are not summed here.
 
 **The bus index's generation** is a directory named by its identity, written whole by the build and
 swapped by reference. Today route files are rewritten one at a time into the directory that requests
 read, and a route a newer publication drops keeps its old file, because the build sweeps only
 `*.part` (`backend/bus_static.py:169-176`, `:225-226`). After a swap the old directory is removed
 once no request holds it.
+
+Its identity is one over six archives, so a single `etag` and `last_modified` cannot hold the
+validators that a conditional GET of each borough (3.2's table) and the monitor's per-borough
+comparison (3.5, 6.5) need: the six carry six different ETags and Last-Modified values from
+15:14:41 to 15:14:45 UTC on 2026-10-16 (`probe_headers.py`, 2.2). The design proposes `boroughs`,
+one identity per borough archive in `BUS_GTFS_URLS` order (`backend/bus_static.py:57-64`), each
+with its own `sha256`, `content`, `size`, `etag` and `last_modified`, published with the rest of
+the identity (4.5). How one borough's queue entry (4.2) yields a whole directory is open. A borough
+that failed at the cold start wrote no route files, so the live directory's files plus its own
+make the whole set, since "each route is operated by one division" (`backend/bus_static.py:116-118`).
+A borough whose publication changed is harder: the build keeps no borough archive
+(`backend/bus_static.py:211`) and the manifest records no route's borough (`:246-249`), so a route
+it drops can leave only by a rebuild from all six, 54,633,368 bytes at today's sizes (2.1), or by a
+manifest that records which borough wrote each route. The six Last-Modified values fall within
+four seconds of each other (the stamps above), so the one change read moved all six. And today a failed borough is
+logged and skipped while the other five are kept (`backend/bus_static.py:239-242`), where a refresh
+could instead keep the live directory. Q23 asks both.
 
 **The archive file on disk becomes a cache of the bytes, not the state.** The worker renames the
 validated stage over `data/gtfs_static/<archive>.zip` after the assignment, not before it, and
@@ -2310,13 +2396,14 @@ change, is validated and built off the loop. Each check ends in one of five outc
 | Outcome | What the worker does | Next check |
 | --- | --- | --- |
 | `unchanged`: a 304, or a 200 whose `content` equals the live generation's | records `last_checked_at`; builds nothing | the timer, or the next rung while evidence holds |
-| `promoted` | assigns (3.1), wakes the family's poll, renames the stage | the timer |
-| `refused`: a gate or the builder refused the candidate | keeps the live generation; records why (3.3) | the next rung |
-| `failed`: transport, deadline or upstream status | keeps; records the error | the next rung |
-| `deferred`: NJ Transit only, no live token to borrow (3.4); how it is counted is Q18 | sends nothing | after the trains poll's next decode |
+| `promoted` | assigns (3.1), ends the poll loop's sleep so the next cycle runs at once (3.1), renames the stage | the timer |
+| `refused`: a gate or the builder refused the candidate | keeps the live generation; records why (3.3) | the next rung while the evidence holds (Q3), otherwise as Q20 answers |
+| `failed`: transport, deadline or upstream status | keeps; records the error | the next rung while the evidence holds (Q3), otherwise as Q20 answers |
+| `deferred`: for NJ Transit, no live token to borrow or the borrowed token refused (3.4); for any archive, memory over Q6's ceiling if Q6 sets one; how it is counted is Q18 | sends nothing, or for a refused token the one `getGTFS` POST | for the token cases, after the trains poll's next decode; for Q6's, as Q6 answers |
 
 **The timer, and a conditional GET.** For every archive with a public URL the check is a GET
-carrying the live generation's ETag (`If-None-Match`) and Last-Modified (`If-Modified-Since`). Every
+carrying the ETag (`If-None-Match`) and Last-Modified (`If-Modified-Since`) the live generation
+holds for that URL, for a bus borough its entry in `boroughs` (3.1). Every
 one of the 11 URLs the app fetches answered both with 304 and no body, as did NJ Transit's public
 file (curl, measured for this design 2026-11-28 09:41:50 to 09:42:41 UTC and again 10:18:07 to
 10:18:22 UTC, 2.2), and httpx 0.28.1, the version the lock pins, on a client built like the app's,
@@ -2353,49 +2440,86 @@ so a triggered check finds a token to borrow (3.4) unless a hold is running.
    (`backend/feeds/njt.py:628-636`, `:660-661`), not the 600 s hold after which `/healthz` names it
    (`:606`, `:667-669`). On 2026-11-27 production's trains contradicted its schedule from 20:13:00
    UTC at the latest (record:647).
-2. **The MISS share** (3.8). The 2026-11-03 shape, held trip ids that overlap the new ones nowhere,
+2. **The start of a MISS run** (3.8): the first decode whose misses that are not ADDED reach Q9's
+   trigger. The design proposes that a MISS run, like a behind run (`backend/feeds/njt.py:648-664`),
+   then holds until a decode says otherwise, so a count moving about the trigger, as 2026-11-27's 3
+   of 34 sat at Q9's recommended 3 (3.8), does not trigger a check at each crossing; what ends one
+   is Q9's. The 2026-11-03 shape, held trip ids that overlap the new ones nowhere,
    gives the mismatch rule nothing: on a stand-in of 50 new ids against 131 held, the app's decode
    read joined 0, checked 0, and `behind_run` returned `None` (measured for this design, 2.6); the
    code says so of itself: "WHAT IT CANNOT SEE is a schedule behind by misses alone"
    (`backend/models.py:1348-1351`).
-3. **The stop witness** (3.8).
+3. **The stop witness** (3.8), past Q8's trigger threshold for a decode.
 
-A fourth trigger serves every archive with a span: **validity**. A generation whose
-`service_through` is past, or within a band of, today in New York is checked at once. The F07
+A fourth trigger serves every archive with a span: **validity**. A check is triggered at once when
+today in New York first comes within a band of a generation's `service_through`, and again when
+today first passes it; otherwise the archive stays on its timer, and the trigger is not evidence
+that keeps rungs going. A generation promoted already past its span is checked on its timer: PATH's
+runs 20250522 to 20260601 (3.1) and its publisher has not republished since 2025-06-06 (the table
+below), so a trigger that fired at every check while a span was past would never stop for it. The
+band, and whether the trigger fires once per crossing, are Q19's. The F07
 witness held a calendar-expired NJ Transit archive at HTTP 200 across 40 poll cycles with `/healthz`
 passing (`docs/reviews/audit-2026-09-05/f07_static_never_refreshes.py`, run for this design at
 `16d1c19`, exit 0, 2.8); the monitor already bands NJ Transit's span at 30 days
 (`NJT_SERVICE_WARN_DAYS`, `backend/scripts/contract_monitor.py:487`, `:2066-2070`).
 
 **Backoff.** When a triggered check finds the publication unchanged, or promotes a new one and the
-trains still contradict it, the worker retries on rungs. The realtime feed can lead the schedule
+trains still contradict it, the worker retries on rungs. A behind or MISS run that starts under a
+generation the worker has just promoted takes the next rung, not a check at once, since the check
+that promoted it read the publication moments before (4.3). The realtime feed can lead the schedule
 endpoint: run 445 (42889072568, created 2026-11-10 19:49:15 UTC) counted 41 identity warnings
 against the schedule it had just downloaded, at least 5 and at most 41 of them number mismatches
 (the monitor of `4489202` counted three kinds of warning, 2.3), and the next run's download agreed
 (`backend/feeds/njt.py:602-605`). From the monitor's logs (2.3), the realtime lead on 2026-11-10 was
-under 32 h 10 min 48.47 s (under 23 h 11 min 32.74 s if run 444, 42775373334, created 2026-11-10
-07:27:05 UTC, counts as a witness) and greater than minus 19.11 s, so a lead of zero is not
+under 32 h 10 min 48.48 s (under 23 h 11 min 32.74 s if run 444, 42775373334, created 2026-11-10
+07:27:05 UTC, counts as a witness) and greater than minus 19.12 s, so a lead of zero is not
 excluded; on 2026-11-27 it lay between minus 11 h 28 min 26.37 s and plus 23 h 44 min 54.22 s (plus
 12 h 41 min 10.89 s if run 479, 45967989070, created 2026-11-27 08:44:18 UTC, counts). The design
 proposes rungs that rise from a first rung of minutes to a ceiling no longer than the archive's own
 timer period, jittered as the warmups' are (0.9 to 1.1 of the rung, `backend/warmups.py:111`), and
-kept going only while the evidence holds: once a decode that can judge says in step, or the MISS
-share falls under its threshold, the archive returns to its timer. The numbers, and whether a refused or failed check climbs the same rungs, are Q3's; for scale, the warmups' rungs are 15, 30, 60 and 300 s
+kept going while any of the evidence holds: a behind run is open, a MISS run is open, or the stop
+witness is past Q8's trigger threshold. The archive returns to its timer only once none holds: the
+behind run ended by a decode that can judge saying in step (`backend/feeds/njt.py:662-663`), or
+never begun; the MISS run ended (Q9); and the stop witness under its threshold. The numbers, and
+whether a refused or failed NJ Transit check climbs the same rungs, are Q3's; a public archive's
+refused or failed check, and a component with no generation, are Q20's; for scale, the warmups' rungs are 15, 30, 60 and 300 s
 (`backend/main.py:163-165`), sized for a process that has no generation at all.
 
+**The other direction.** The same bounds allow the API to have moved first: on 2026-11-27 by up to
+11 h 28 min 26.37 s, on 2026-11-10 by up to 19.113 s (2.3's table). A check in that window, by
+timer or by validity, finds a publication the trains are not on yet. It passes every gate of 3.3,
+since NJ Transit's checks members, rows and the calendar's end and nothing of the trains
+(`backend/njt_static.py:665-679`), and is promoted. The trains then contradict the new generation,
+a behind run starts, and its rungs find the same publication until the realtime moves, so the
+window is bounded by the API's lead. Nothing in the process returns to the generation the trains
+agree with; a redeploy in that window loads the same publication, and the monitor's own decode
+disagrees too, so `production:njt-schedule` WARNs rather than FAILs
+(`backend/scripts/contract_monitor.py:3633-3639`). Today's process in the same window serves the
+old publication rightly and is then behind from the realtime's move until a redeploy; the design
+moves the wrong window earlier and bounds it by the lead. On 2026-11-03's shape the wrong table
+would be the new one: arm B of 2.6b, old realtime under the new table, reads 682 of 917 pairs above
+160 km/h and names another station as the last stop on 63 of 90 trips. Q8's withholding covers
+those names, not the positions or the boards. Whether a refresh keeps the live generation while the
+trains agree with it and contradict the candidate is Q21.
+
 **A component that failed at the cold start** has no generation, and its archive is checked on the
-failure rungs, so the process recovers it without a deploy. That is F06's acceptance, "recovers
+failure rungs, whose numbers are Q20's, so the process recovers it without a
+deploy. That is F06's acceptance, "recovers
 without a deployment" (audit-2026-09-05.md:206), and A05's. Today a railroad system
 that failed is never retried once the other reached `ready` (`backend/warmups.py:226`; the F06
 witness, `docs/reviews/audit-2026-09-05/f06_partial_startup_no_recovery.py`, run for this design at
 `16d1c19`: 1 attempt per system across 100 shortened intervals, 2.8). Section 6 builds it in Step 4.
+A whole archive that fails at the cold start keeps its warmup's own loop, 15, 30, 60 and then 300 s
+(`backend/main.py:163-165`), since 4.2 hands an archive to the worker only where its warmup returns
+after a success; the failure rungs are for what a warmup leaves behind, a railroad system or a bus
+borough.
 
 **The cadence each timer has to meet (2.2), for Q2.** The monitor sees a change only when a field it
 prints changes (2.2), so "visible" below undercounts.
 
 | Archive | Changes visible to the monitor, runs 400 to 481 (812.28 h) | Last-Modified, read 2026-11-28 | A check costs |
 | --- | --- | --- | --- |
-| NJ Transit (the API) | 6 dated changes and 1 dated only to runs 425 to 434; from 2026-11-10 on, no two visible changes less than 24.10 h apart (2.2) | none sent | one getGTFS POST, no getToken |
+| NJ Transit (the API) | 6 dated changes and 1 dated only to runs 425 to 434; from 2026-11-10 on, no two visible changes less than 24.09 h apart (2.2) | none sent | one getGTFS POST, no getToken |
 | subway | 1, between run 410 (40693489876, created 2026-10-28 13:06:47 UTC) and run 411 (40781701629, 22:39:58 UTC) | 2026-10-28 16:39:52 UTC | a 304 |
 | LIRR, Metro-North | 0 | 2026-11-25 22:10:39 and 2026-11-26 17:30:32 UTC, both inside the window | a 304 each |
 | PATH | 0 | 2025-06-06 17:54:51 UTC | a 304 |
@@ -2406,7 +2530,10 @@ The process the 2026-11-28 Redeploy replaced had held its archives since 2026-11
 (deployment record 7988955096) through the LIRR, Metro-North and ferry uploads above; whether their bytes changed from what it held is unknown (GitHub's deployment statuses, read for this design, 2.1; the uploads, 2.2).
 
 **Questions this leaves:** Q1 (the NJ Transit trigger: the evidence, a timer, or both), Q2 (each
-archive's timer), Q3 (the rungs and their ceiling); the evidence thresholds are Q8 and Q9 (3.8).
+archive's timer), Q3 (the rungs and their ceiling), Q20 (the rungs of a component
+with no generation, and a public archive's refused or failed check), Q19 (the
+validity band, and when the trigger fires again), Q21 (whether a candidate the
+trains are not on yet is held back); the evidence thresholds are Q8 and Q9 (3.8).
 
 ### 3.3 Validation
 
@@ -2433,7 +2560,17 @@ so an attempt cut off by a deadline is recorded too. Today a deadline that expir
 `staged_fetch` arrives as a `CancelledError`, which skips `_record`
 (`backend/static_shared.py:665-670`): with a 0.05 s outer deadline around a 0.3 s validator the
 archive's record held no entry at all (measured for this design, 2.8). A builder that raises is a
-refusal (3.1). The subway's unreadable-cache arm, which unlinks the live cache on a parse error at
+refusal (3.1). Two subway loaders do not raise: `load_subway_stations` returns `{}` and
+`load_subway_route_shapes` returns `[]` on any exception (`backend/static_data.py:453-455`,
+`:543-545`; 2.4.2). Both read members the gate has just read with the same parsers
+(`backend/static_data.py:164-168`, `:254`), so only a transient fault reaches them; reused in a
+builder, such a fault would promote, over a live generation of 496 stations and 35 polylines
+(3.1's table), one with no station markers or no lines, the second the replacement F08 names
+("Bad subway geometry can replace known-good geometry", audit-2026-09-05.md:220), with
+`degraded_members` empty because the gate passed. Its `content` would equal the publication's, so
+every later check would read `unchanged` and build nothing until the MTA republished (once in runs
+400 to 481, 3.2's table). The design proposes that in a refresh a lenient loader's empty result
+is a refusal. The subway's unreadable-cache arm, which unlinks the live cache on a parse error at
 load (`backend/static_data.py:291-300`), has nothing to unlink under the design: the builder reads
 the stage.
 
@@ -2474,7 +2611,7 @@ not fresh (`:1451-1456`). Through the unwrapped shipped chain on a local fake to
 for this design with a witness script whose every request went to 127.0.0.1, 2.7), a refresh sent 0
 getToken POSTs on a token 6 h old and 1 s under the ceiling, 1 at the ceiling, 1 on an accepted
 token refused, and 2 in one attempt, the most the code allows (`get` at `:1432` and `:1455` only). A
-mint cancelled by its caller's deadline is charged and opens a 600 s hold (`:1281-1296`): on the
+mint cancelled by its caller's deadline stays counted against the allowance, which is spent before the POST (`:1274`), and opens a 600 s hold (`:1281-1296`); the code's comment says the POST "had most likely gone out and been charged" (`:1284-1285`), and whether NJ Transit charges it is unknown (below). On the
 fake, 3 getToken POSTs where the ceiling alone takes 2 (2.7). At today's deadlines (120 s for the
 transfer, 45 s for the trains poll, 20 s for an alerts fetch) a poller meets that case first, and
 the path left to a refresh alone is a re-mint begun late in its 120 s window (2.7).
@@ -2495,11 +2632,14 @@ cannot happen, because a refresh never holds a mint in flight for its deadline t
 One variant is proposed against. While a hold runs the cache serves its token whatever its age
 (`backend/njt_auth.py:1087-1098`, `:1252-1256`), and a refresh on that over-age token sent 0
 getToken POSTs (2.7). The rule above does not borrow through a hold, so a refresh defers until the
-hold ends; in the allowance case measured, 23,972.5 s of the hold remained. Borrowing it would mint
+hold ends, which for an allowance or quota hold is the next Eastern midnight plus 60 s
+(`backend/njt_auth.py:1107-1112`, `:1164-1165`); in the allowance case measured, 23,972.5 s of the
+hold remained, a length set by the hour that run's clock read (`m9_token_during_refresh.py` starts
+its fake wall clock at the real `time.time()`, its line 247). Borrowing it would mint
 nothing either. 5.1 lists it so a decision can reverse it.
 
 **What a download can meet mid-transfer**, measured for this design on the local fake (2.7; the
-first three were repeated with the real 3,295,223-byte public stand-in as the body):
+`Content-Length` and close-delimited cuts were repeated, cut at a third, with the real 3,295,223-byte public stand-in as the body, `v9_witness.py` case V4; the chunked cut ran on the 79,091-byte zipped fixture only, and the trailing invalid-token JSON was checked against the public archive by the validator alone):
 
 | Case | Outcome | Token after | Promoted |
 | --- | --- | --- | --- |
@@ -2530,7 +2670,7 @@ prints the count per case, and must show:
 - a refresh whose transfer deadline expires, with no mint of its own in flight to cancel.
 
 Its named mutations, each a one-line change the witness must catch: a refresh that calls
-`get(_mint)`, one that calls `invalidate` on a refusal, and one that calls `confirm` on its 200.
+`get(_mint)`, one that calls `invalidate` on a refusal, and one that calls `confirm` on its 200. `confirm` changes nothing on a token a poll has already seen accepted (`backend/njt_auth.py:1227-1231`), so the witness catches that mutation only if the close-delimited cut also runs on a borrowed token no poll has yet seen accepted. 6.1 carries the six cases, that run and the three mutations.
 
 **What remains unknown about NJ Transit's server** (2.2, 2.7; none of it probed, by rule): the
 token's lifetime; whether an expiry is checked only at request start (E2) or can end a transfer in
@@ -2547,8 +2687,8 @@ refresh" (audit-2026-09-05.md:216). Today `/api/status` serves `static_archives`
 (`backend/routes/status.py:224`) with four fields per archive (`backend/static_shared.py:456-465`;
 `StaticArchiveStatus`, `backend/models.py:993-1017`), and none names a publication: there is no
 ETag, Last-Modified, hash, `feed_version` or span anywhere in the app's record (a grep at `16d1c19`
-for this design, 2.8). A key appears only once its archive has been downloaded in this process
-(`backend/models.py:1168-1170`), so a boot over a warm cache publishes `{}` (the F07 witness, 2.8),
+for this design, 2.8). A key appears once its archive has been downloaded in this process, or once a cached check found the cache without its decorative member
+(`backend/models.py:1168-1170`; `backend/static_shared.py:468-471`), so a boot over a warm cache whose members all draw publishes `{}` (the F07 witness, 2.8),
 and the bus index has no key at all.
 
 **`/api/status`.** The design proposes, per archive and for the bus index, from the cold start's
@@ -2599,7 +2739,7 @@ nothing in the monitor reads `static_archives`: its one mention is prose
 (`backend/scripts/contract_monitor.py:358`). Each run already downloads six of the archives on its
 five static lines, NJ Transit's on its one token (`_NjtToken`, `:2074-2097`), so computing each
 one's `content` costs no request and no mint. The bus archives, which the monitor does not download,
-are S3 objects whose ETag is the body's MD5, so a HEAD each would compare them. The design proposes the verdict: PASS when production's `generation.content` equals the run's; FAIL when they differ and production checked that archive after the run's download ("the refresh did not take", with `last_check`), or its last check was `refused` or `failed`, or it has not checked for more than one of its periods (Q2); WARN when they differ and production's last check, within its period, came before the run's download ("production has not checked since"). Step 0's line (6.0), the run printing the identity of what it downloaded, is the first half of this check.
+are S3 objects whose ETag is the body's MD5, so a conditional GET of each with the ETag production holds for that borough (`generation.boroughs`, 3.1) compares them, answering 304 with no body while they match. The design proposes the verdict: PASS when production's `generation.content` equals the run's; FAIL when they differ and production checked that archive after the run's download yet holds a generation promoted before it ("the refresh did not take", with `last_check`), or its last check was `refused` or `failed`, or it has not checked for more than one of its periods (Q2); otherwise WARN, either when production's generation was promoted after the run's download ("upstream moved during the run"; the runner's clock is set against Railway's here, and their skew is not measured) or when production's last check, within its period, came before the run's download ("production has not checked since"). Step 0's line (6.0), the run printing the identity of what it downloaded, is the first half of this check.
 
 **Questions this leaves:** Q4 (the code's name and band, degraded or gating) and Q17 (whether Step 0 comes first).
 
@@ -2632,7 +2772,7 @@ their registries safely" (audit-2026-09-05.md:216); A06's repair, "generation/ve
 identifiers ... ensure browsers discover changed static generations"
 (ledger:267); the release table's "generation-aware frontend reload"
 (`:375`); and Stage MR3's follow-up, which the code carries as "A FOLLOW-UP, NOT A FIX: a version
-stamp on the static-derived endpoints" (`frontend/systems/shared.js:2147-2149`). F06 owes the reload
+stamp on the static-derived endpoints" (`frontend/systems/shared.js:2147-2149`), though the question that follow-up asks, whether a payload predates a field, is the build's, and a stamp of the publication does not answer it (4.7). F06 owes the reload
 rather than the stamp: stations and routes that "appear in an already-open browser without a manual
 reload" (audit-2026-09-05.md:206). A live envelope's stamp is the generation its rows
 were decoded under (3.1), not the newest one, so a page first sees a new stamp on the poll whose
@@ -2646,14 +2786,16 @@ all (read from production for this design on 2026-11-28, the last, `/api/path-ro
 UTC, 2.5; `backend/cache.py:373`, `backend/routes/airtrain.py:22`). So a reload within the hour can
 take an old table from the HTTP cache, which the code records in its own words: a returning rider
 "runs this code on yesterday's payload" (`frontend/helpers.js:360-362`). The design proposes two
-URLs per static endpoint. The bare one is served `no-cache` with the stamp as its ETag, so a reload
-revalidates for a bodiless 304, as the page's own scripts already do (`backend/main.py:469`). The
-stamped one (`?g=<stamp>`) is served `public, max-age=3600` as today, which stays safe because a new generation is a new URL. A stamped request naming a generation the process no longer holds is answered with the live generation under `no-cache`, its stamp beside it. The page boots on the bare URLs, since it holds no stamp yet, and fetches
+URLs per static endpoint. The bare one is served `no-cache` with an ETag that covers the body as well as the publication, the stamp joined to a hash of the serialized payload, so a reload
+revalidates for a bodiless 304, as the page's own scripts already do (`backend/main.py:456-470`), and a deploy that changes what an endpoint builds from the same archive changes the ETag, as a deployed change to a script changes the ETag StaticFiles sets for it (`backend/main.py:462-464`). An ETag of the stamp alone would answer 304 to a body built by older code until the publisher next changed the archive, where today `max-age=3600` bounds that at an hour, and deploys have changed static payloads over an unchanged archive: `e22f8bf` left NJ Transit's routeless stops out of `/api/njt-stops`, `fc65a74` gave NJ Transit's routes payload a `short_name`, and `92636bc` gave `/api/subway-stops` its `complex_id` (`git show` of each). The
+stamped one (`?g=<stamp>`) is served `public, max-age=3600` as today, which stays safe across publications because a new generation is a new URL. It names the publication and not the build, so after a deploy that changes a payload it can serve the older body for up to an hour, as every static URL can today. A stamped request naming a generation the process no longer holds is answered with the live generation under `no-cache`, its stamp beside it. The page boots on the bare URLs, since it holds no stamp yet, and fetches
 every later table at the stamped URL a live envelope names.
 
 **The reload.** When a poll's stamp for an archive differs from the stamp of the page's tables for
 that archive, the page refetches the archive's static endpoints and replaces its registries in one
-assignment, as the backend does. Today it cannot (2.5). The eleven loaders run once each through
+assignment, as the backend does. A stamp for an archive the page's tables did not carry counts as a
+change, which is F06's case: a page that booted while Metro-North was failing holds railroad
+tables without it. Today it cannot (2.5). The eleven loaders run once each through
 `retryUntil`, which returns for good on its first usable answer (`frontend/map.js:281-291`,
 `frontend/helpers.js:5480`). `njtStopCoords` is a `const` Map filled per station and never cleared
 (`frontend/systems/njt.js:54`, `:162`). The station registry only grows
@@ -2669,10 +2811,10 @@ map (`docs/reviews/audit-2026-10-12/a06_frontend_static_once.mjs`, run for this 
 exit 0, 2.5). The design's acceptance is that witness reversed.
 
 **Joins only within one generation.** The page joins a live row to a table only when their stamps
-agree: the NJ Transit glide (`frontend/systems/njt.js:478`), each system's route index, names and
-colours (2.5), and the station-alert join keyed `system|stationId`
+agree: the NJ Transit glide (`frontend/systems/njt.js:478`), the "Also here" crosslink keyed `NJT|<id>` (`frontend/systems/njt.js:377`), and each system's route index, names and
+colours (2.5). The station-alert join keyed `system|stationId`
 (`frontend/helpers.js:5229-5235`), through which NJ Transit's live alerts land on the page's held
-stop ids (2.5). An envelope whose stamp the page does not hold is drawn where the server placed it,
+stop ids (2.5), has no stamp to compare: `AlertFeed` gains none (4.4), and an alert's stops are the publisher's raw `informed_entity` ids (`backend/feeds/alerts.py:349-354`), which no generation resolves (2.4.7). It reads the replaced registry (4.7), so until the reload lands an NJ Transit alert naming a renumbered stop lands on the station the old table held under that id, as today (2.5.3). Whether `AlertFeed` carries a stamp and the page joins alerts only while the stamps agree is Q24. An envelope whose stamp the page does not hold is drawn where the server placed it,
 as a glide miss is today (`frontend/helpers.js:4787-4788`), until the reload lands. And each live
 request that names a static id carries the stamp of the table the id came from
 (`/api/njt-arrivals/{stop_id}?g=<stamp>`); the design proposes that the server answers a stamp other
@@ -2682,7 +2824,7 @@ named another station in the 2026-11-06 publication and 22 were gone
 (ledger:610).
 
 **Questions this leaves:** Q7 (whether the page reloads its tables silently or says so, and in which
-words).
+words and where) and Q24 (whether alerts carry a stamp).
 
 ### 3.8 The two witnesses as guards and triggers
 
@@ -2694,8 +2836,8 @@ counted nowhere that is served. The decode forms `joined` and `checked` and neve
 (`backend/models.py:884-902`); and the miss is deliberately not a warning: "warning on ADDED would
 train the operator to ignore the signal that matters" (`backend/feeds/njt.py:769-770`). An ADDED
 trip carries an empty trip id and is keyed `njt:<entity.id>` (`backend/feeds/njt.py:853-858`; 40 of
-40 ADDED trip updates in the committed capture and a recorded one, 2.6), so a stale miss and an
-ADDED train are told apart by the id alone. Measured for this design (2.6):
+40 ADDED trip updates in the committed capture and a recorded one, 2.6), so in every update measured the id alone told a stale miss from an
+ADDED train. The id is not the relationship, though: an ADDED trip that carried a trip id would read as a miss. Measured for this design (2.6):
 
 | Shape | Non-ADDED misses |
 | --- | --- |
@@ -2706,9 +2848,9 @@ ADDED train are told apart by the id alone. Measured for this design (2.6):
 | steady state: the committed pair, a recorded 164-update live capture, five production reads | 0 in every one; the 4 of 90 running trip updates and the 36 of 164 trip updates (CANCELED included) that missed were all ADDED, and 0 of 29, 73, 2, 6 and 8 placed trains were unjoined |
 
 The design proposes that the decode counts `running` (trip updates kept after CANCELED and DELETED
-are dropped, `backend/feeds/njt.py:941`), `missed` (non-ADDED) and `added`, served on `njt_feeds`.
-Past a threshold, `missed` over `running` triggers a check at once (3.2). Past a threshold it also
-raises a code, and the design proposes that the code be `njt-schedule-behind` itself, its run given
+are dropped, `backend/feeds/njt.py:941`), `missed` (non-ADDED) and `added`, served on `njt_feeds`, telling an ADDED trip by the `schedule_relationship` that same line reads, with the empty id checked beside it.
+Past a threshold on `missed`, a MISS run starts, which triggers a check at once (3.2). Past a threshold on `missed` and on `missed` over `running`, it also
+raises a code (Q9 poses the first as a count in one decode, the second as a count and a share), and the design proposes that the code be `njt-schedule-behind` itself, its run given
 a second arm, so one code says "the held schedule is not the feed's" for both shapes and the monitor
 applies the same rule to production's counts. One legitimate non-ADDED miss is known: a publication
 boundary crossed between the realtime and static downloads, which the fixture generator allows as "a
@@ -2737,14 +2879,13 @@ and 2026-11-27 incidents moved trip ids, not stop ids, and by the counts the sto
 read both as right (an inference from the stop ids' move counts, 2.6).
 
 The design proposes that the decode counts calls naming an absent stop id before dropping them, and
-pairs above a speed, and serves both on `njt_feeds`. Past Q8's threshold, a refuted or unjoined train's destination takes the fallback `_destination` already has, the line name and train number
-(`backend/feeds/njt.py:723-730`), rather than the held table's last-stop name, and a check is
-triggered at once. That answers PR #145's open note, "The last stop is named through the held table,
+pairs above a speed, and serves both on `njt_feeds`. Past Q8's trigger threshold for a decode, a check is triggered at once; and a refuted or unjoined train that either mark names, a call at an absent stop id or a pair above Q8's speed, takes the fallback `_destination` already has, the line name and train number
+(`backend/feeds/njt.py:723-730`), rather than the held table's last-stop name. That answers PR #145's open note, "The last stop is named through the held table,
 so a refuted or unjoined train reads another station's name", which the code states of itself: "THE
 NAME IS THE HELD SCHEDULE'S" (`backend/feeds/njt.py:690-692`). Whether the witness also raises a
-code, and at what threshold, are Q8.
+code, and its thresholds for the trigger, the code and the mark, are Q8.
 
-**Questions this leaves:** Q8 (the stop witness: withhold only, or also a code; its threshold), Q9
+**Questions this leaves:** Q8 (the stop witness: its trigger, whether it also raises a code, their thresholds, and the per-trip mark), Q9
 (the MISS thresholds, for the trigger and for a code).
 
 ### 3.9 Cold starts and a volume
@@ -2756,12 +2897,12 @@ downloads every archive as today, runs the same gates in their cold mode (no liv
 decorative failure degrades, 3.3), builds each generation off the loop and assigns it. That
 assignment is the archive's first `promoted` check, and its timer starts from it.
 
-**The cold-start baseline (2.1).** The eight cold starts from 2026-11-01 to 2026-11-28 took 69 to 93 s from `in_progress` to the first promotion on the six before 2026-11-23 and 28 s on both of `758c0f6`'s, 34 to 100 s to NJ Transit's promotion, and 13 to 41 s from the first promotion to the last, and Railway recorded `success` 6 to 34 s before the last archive was promoted, since a loading group is not degraded (`backend/routes/status.py:776-777`). With the builds off the loop the probe
+**The cold-start baseline (2.1).** The eight cold starts from 2026-11-01 to 2026-11-28 took 69 to 93 s from `in_progress` to the first promotion on the six before 2026-11-23 and 28 s on both of `758c0f6`'s, 34.7 to 100 s to NJ Transit's promotion, and 13 to 41 s from the first promotion to the last, and Railway recorded `success` 6 to 34 s before the last archive was promoted, since a loading group is not degraded (`backend/routes/status.py:776-777`). With the builds off the loop the probe
 answers through the warmup without the stalls of 3.1.
 
 **The hand Redeploy stays documented as the fallback**, with its measured cost. On 2026-11-28,
 `in_progress` at 08:00:16 UTC (03:00:16 Eastern) to NJ Transit's promotion at 08:00:50.670 UTC was
-34 s (record 7988955096; record:657, :658); on 2026-11-22,
+34.7 s (record 7988955096; record:657, :658); on 2026-11-22,
 `in_progress` at 23:47:21 UTC (18:47:21 Eastern) to 23:48:52 UTC was 91 s (record 7730268879's
 statuses; ledger:589). The new process mints at its start (the allowance
 read 1 of 4 at 08:33:51 UTC, record:662), every open tab keeps its tables (3.7), and every
@@ -2787,16 +2928,18 @@ here, or one, and for what).
 ### 3.10 Memory
 
 The design proposes one refresh at a time, serialized across the archives and the bus index by the
-one worker of 3.2, with each build awaited to its end (3.1). The peak is then the live set plus one
-archive's new generation, which overlaps its old one only until the first poll under it lands (3.1),
-and never two whole sets.
+one worker of 3.2, with each build awaited to its end (3.1). Once the cold start's loads have ended, the peak is then the live set plus one
+archive's new generation, which overlaps its old one until no live row carries the old one: the
+first successful poll under it, later while that family's polls fail (3.1). The one worker may start
+the next archive's build in that time, so while a family's polls fail its old generation adds to
+that peak. During the cold start that bound is not shown. The lifespan starts the five warmups and the bus build together (`backend/main.py:343-357`), each warmup retries until it succeeds (`backend/warmups.py:164`, `:215`, `:288`, `:341`, `:414`), and each hands its archive to the worker where it returns (4.2), so a check that NJ Transit's first decodes trigger (3.2) can build beside the others' loads. That adds a build whose stand-in peaked at 99.5 MB under tracemalloc (below) to a cold start whose peak with everything loading at once was not measured, since 2.1 loaded the sets one archive after another. Whether the worker waits for the cold start is Q25.
 
 **What was measured (2.1).** Two whole sets in one process, loaded one archive after another with NJ Transit's public stand-in over cached files, on this machine: the second set added 178,495,859 bytes under tracemalloc (178,470,338 in the second harness) and 201,212,072 to 202,522,768 bytes of macOS footprint over three runs. One archive alone in a fresh process, retained after gc (tracemalloc): NJ Transit's public stand-in 88,470,849 bytes, its rail-only shape 62,196,276, Metro-North 45,558,075, PATH 22,879,434, LIRR 17,459,689, the subway 3,766,401, the ferry 599,558 and the bus index 86,563 (its geometry is on disk). The tracemalloc peak during gate and load was largest for NJ Transit's stand-in, 99.5 MB, then Metro-North's 46.9 MB and the subway's 39.7 MB (99,531,820, 47,030,357 and 39,954,958 bytes in the second harness). So with one refresh at a time the addition is bounded by NJ Transit's, and the structures 3.1 drops shrink it. None of these is Linux resident memory, and the API archive may cost more than its stand-in: its last recorded download was 4,369,879 bytes (ledger:653) against the stand-in's 3,295,223, and its own parse and build were never measured, since reading it takes a mint (2.1).
 
-**The deployment's memory limit is unknown**, and its reading is pending (2.1): nothing in the repository states a plan or a limit, and the Railway CLI still answered Unauthorized at 12:50 UTC on 2026-11-28. The number goes in 2.1 and here when it arrives.
+**The deployment's memory limit is unknown**, and its reading is pending (2.1): nothing in the repository states a plan or a limit, and the Railway CLI still answered Unauthorized at 12:50 UTC (07:50 Eastern) on 2026-11-28. The number goes in 2.1 and here when it arrives.
 
 **Questions this leaves:** Q6 (the ceiling above which a refresh is not attempted, and what is done
-instead).
+instead) and Q25 (whether the worker waits for the cold start's loads).
 
 ---
 
@@ -2804,21 +2947,23 @@ instead).
 
 Every subsection ends with the line PR #108's section 4 ended every subsection with: **what is
 asserted today that this design makes false.** A design that lists only its additions hides the
-places where something correct today stops being correct. Code is cited at `16d1c19`. A name
-this section writes as `app.state.static[archive]`, a builder it calls
-`build_<archive>_generation`, and every file it calls new are this design's proposals (section
-3), listed by name in 5.1; every other name is the code's.
+places where something correct today stops being correct. Code is cited at `16d1c19`. The names
+this section writes that the code lacks are this design's proposals, each listed in 5.1:
+`app.state.static[archive]` (3.1; 5.1 item 7), the identity of 3.1 and its fields, such as
+`service_through` and `promoted_at` (5.1 item 2), the `/api/status` fields of 4.5's table (3.5;
+5.1 item 27), the envelopes' `static_generations` (3.7; 5.1 item 30) and the stamped URL's `?g=`
+(3.7; 5.1 item 31). Every other name is the code's, or HTTP's for a header.
 
 ### 4.1 The loaders and builders
 
 | File | Change |
 | --- | --- |
-| `backend/njt_static.py`, the build | A pure builder over today's parse (`_parse_zip`, `:1001`, called inline at `:1301`) and the six builders the warmup runs inline after it (`backend/warmups.py:448-473`). It takes the archive's bytes or a path and an injected clock, writes no `app.state`, opens no socket, and returns one frozen generation: the served stops, the station routes, the route lines, the trip index, the line names and the stop schedule, with the identity of 3.1, whose `service_through` is read by the gate's own `service_span` (`:682-715`), so the valid-through date the operator reads and the one the gate judged cannot differ. The whole parse, `app.state.njt_static` today, is not kept, and the stop schedule is kept unless Q14 drops it (3.1). |
+| `backend/njt_static.py`, the build | A pure builder over today's parse (`_parse_zip`, `:1001`, called inline at `:1301`) and the six builders the warmup runs inline after it (`backend/warmups.py:448-473`). It takes the archive's bytes or a path and an injected clock, writes no `app.state`, opens no socket, and returns one frozen generation: the served stops, the station routes, the route lines, the trip index, the line names and the stop schedule, with the identity of 3.1, whose `service_through` is read by the gate's own `service_span` (`backend/njt_static.py:682-715`), so the valid-through date the operator reads and the one the gate judged cannot differ. The whole parse, `app.state.njt_static` today, is not kept (3.1; Q14), and the stop schedule is kept unless Q14 drops it. |
 | `backend/njt_static.py`, the transfer | `_download_via_token` posts through `njt_auth.njt_post(url, {})` (`:773`), which mints on its own (below), and writes the buffered body on the serving loop (`:774`). The refresh's transfer takes the borrow-only path below and hands the body to the builder's worker thread; the file it writes there is a cache of the bytes, not the state (3.1). |
 | `backend/njt_auth.py` | A borrow-only read of `TOKEN_CACHE` (`:1348`): the live token when `_live_token` (`:1022`) finds one under `MAX_TOKEN_AGE_S` (`:302`) and no hold is running (`:1252-1256`), and nothing otherwise; and an `njt_post` mode that never calls `get(_mint)`, never calls `confirm` on a 200 as `:1434-1436` do today, and on `is_auth_error` (`:529-584`) neither invalidates nor re-mints, as `:1451-1456` do today, but raises a deferral (3.4). |
 | `backend/static_data.py` | The five subway loaders read `SUBWAY_GTFS_ZIP` (`:34`) by module path (`:378`, `:449`, `:513`, `:667`, `:771`), so a subway generation can be built today only from the promoted file. The builder takes the path, so it reads the stage before anything is promoted, and the monitor stops reassigning the module constant to parse a download (`backend/scripts/contract_monitor.py:1681-1682`). |
 | `backend/railroad_static.py`, `backend/path_static.py`, `backend/ferry_static.py` | Builders over today's inline parses (`railroad_static.py:546`, `path_static.py:535`, `ferry_static.py:450`) and the warmups' inline derives (`backend/warmups.py:252-273`, `:309-325`, `:360-371`). One generation per railroad system, so LIRR and Metro-North swap and retry apart (Step 4). `railroad_static` and `path_static` are not kept (3.1; Q14). The ferry generation keeps its trips and routes tables, because the ferry decoder joins them on every poll (`backend/feeds/ferry.py:111`, `:406-407`). |
-| `backend/static_shared.py` | `_stream_to_file` (`:526`) sends no conditional header (`:537-538`). The refresh's transfer sends `If-None-Match` and `If-Modified-Since` from the live generation's identity, reports `unchanged` on a 304, and on a 200 compares the body's `content` with the live generation's before anything is built (3.2). A changed body runs `staged_fetch`'s gates as a cold start does (`:645`, `:649`), the decorative gate in its replacing mode (`:647-664`), because a refresh always holds a generation that draws (3.3). |
+| `backend/static_shared.py` | `_stream_to_file` (`:526`) sends no conditional header (`:537-538`). The refresh's transfer sends `If-None-Match` and `If-Modified-Since` from the live generation's identity, reports `unchanged` on a 304, and on a 200 compares the body's `content` with the live generation's before anything is built (3.2). A changed body runs `staged_fetch`'s gates as a cold start does (`:645`, `:649`), with `cache_serves` meaning what 3.3 proposes, that the live generation's decorative member draws: replacing mode (`:647-664`) in the ordinary case, and the cold-start rule (`:598-605`) when the live generation was itself promoted without its lines or there is none, as for a component that failed at the cold start (3.2; 5.1 item 22). |
 | `backend/bus_static.py` | Route files are replaced one at a time inside the directory requests read (`:169-176`, `:312-325`), and a route a newer publication drops keeps its old file, since the build sweeps only `*.part` (`:225-226`). One directory per generation instead, written whole and then named by the reference (3.1). |
 
 **Why, measured.** The builders move into a thread because today's inline stretches hold the serving loop, NJ Transit's for 2,813.1 ms at its longest (2.1); each is one unit because a builder that raises inside today's block leaves a mixed set under `ready` (2.4.9); and what is not kept, and what that saves by instrument, is 3.1's.
@@ -2843,15 +2988,15 @@ would drop a system until the next deploy".
 - **The warmups become each archive's first check.** The five warmups
   (`backend/warmups.py:157-475`) build and assign the first generation as they load today,
   set `ready`, and then, where each `return`s now (`:199`, `:275`, `:327`, `:373`, `:475`),
-  hand the archive to the refresh worker of 3.2, its next check at its timer (Q2) or, for NJ Transit, at the evidence (Step 2). The four status strings keep their meanings (`:43-74`, `backend/main.py:274-278`), now derived from whether a generation is held (3.1); a refresh never moves a `ready` group back to `loading` or
+  hand the archive to the refresh worker of 3.2, its next check at its timer (Q2) or, for NJ Transit, at the evidence (Step 2). The four status strings keep their meanings (`:43-74`, `backend/main.py:274-278`). Three are now derived from whether a generation is held (3.1), and `not-configured` stays the cold start's terminal state, set at `:405-412` where the warmup returns without handing the archive on; a refresh never moves a `ready` group back to `loading` or
   `failed`, because a refused or failed refresh leaves the live generation serving (3.3).
 - **One refresh at a time.** The refresh worker is one task with one queue for every archive and the bus index, and it awaits each build to its end before it starts another (3.2, 3.10). The cold start keeps its five warmups and the bus build
   running together (`backend/main.py:343-357`), since it builds the first set and holds no
-  second.
+  second; a check the worker starts before they return builds beside them (3.10; Q25).
 - **Deadlines, and what a cut records.** The cold start's warmups keep `STATIC_ATTEMPT_DEADLINE_S`, 300 s (`backend/main.py:197`). A refresh check does not put it around its build, since a thread cannot be stopped (3.1): its transfer keeps `DOWNLOAD_DEADLINE_S`, 120 s (`backend/static_shared.py:523`). Today a deadline that expires inside `staged_fetch` arrives as `CancelledError`, which skips `_record` (`backend/static_shared.py:665-670`); an outer 0.05 s deadline left no entry at all (`v8_probe.py` part C, run for this design on 2026-11-28). The worker records each check's outcome itself, so a cut transfer is a `failed` with its reason, as 3.3 requires of every failure.
 - **Per-component retry (Step 4).** The railroad warmup reaches `ready` when any system has
   stops (`backend/warmups.py:226`) and never retries a `None` system; the bus index builds
-  once (`backend/main.py:357`, `backend/bus_static.py:262-309`). Each railroad system and each bus borough becomes its own entry in the refresh worker's queue, checked on the failure rungs (3.2), so a failed component retries while the others serve (F06's remedy, audit-2026-09-05.md:204).
+  once (`backend/main.py:357`, `backend/bus_static.py:262-309`). Each railroad system and each bus borough becomes its own entry in the refresh worker's queue, checked on the failure rungs (3.2; their numbers are Q20's), so a failed component retries while the others serve (F06's remedy, audit-2026-09-05.md:204).
 - **Shutdown.** `backend/main.py:359-388` cancels and awaits the refresh worker as it does the warmups now.
 
 **Asserted today that this makes false:** `backend/models.py:1334-1335`, "this process loads
@@ -2880,10 +3025,11 @@ name that was not the new generation's at their stop, measured for this design o
 each of the products a poll writes carries the id of the generation it took: `njt_arrivals`,
 the NJ Transit trains in `feed_cache`, `njt_feed_health` and `njt_behind_run`; the subway and
 railroad trains with their retained copies (up to `FEED_RETENTION_MAX_S`, 600 s,
-`backend/cache.py:104`) and their positions (`pollers.py:706`, `:823`); PATH's trains,
+`backend/cache.py:104`), their positions (`pollers.py:706`, `:823`) and their arrivals,
+`subway_arrivals`, `subway_arrivals_by_system` and `railroad_arrivals` (`pollers.py:444-445`); PATH's trains,
 `path_identity` (`pollers.py:930`) and arrivals; the ferry's boats and `ferry_arrivals`, whose
 buckets are keyed by the route's long name (`backend/feeds/ferry.py:266`). On a swap the
-archive's next poll runs at once, and until it replaces them the older rows are served only
+poll loop's next cycle runs at once (3.1), and until it replaces them the older rows are served only
 with the names of the generation they carry, never the newest's (3.1). A position anchor that
 `carry_forward_prev` would keep (`backend/feeds/shared.py:335`, written into `prev_lat` at
 `:345`) is rebuilt instead of carried when its generation differs; how long such an anchor
@@ -2896,7 +3042,7 @@ decode, not before (`SCHEDULE_BEHIND_HOLD_S`, `backend/feeds/njt.py:606`).
 
 **The decoder gains the two witnesses (Step 2).** `IdentityReport`
 (`backend/feeds/njt.py:572-587`) gains the running count and the misses that are not ADDED,
-told apart by the `njt:` key an ADDED train is served under (`:853-858`); today no variable
+told apart by the trip's `schedule_relationship` (`:941`), with the empty id of the `njt:` key an ADDED train is served under (`:853-858`) checked beside it; today no variable
 holds the running count (`:930`, `:1004`). The decode also counts the stop ids the held table
 lacks, which `_ordered_calls` drops silently before ordering today (`:249`), and the
 consecutive-call pairs whose implied speed under the held table passes Q8's threshold.
@@ -2913,16 +3059,23 @@ another station's, like every station name and place this process is serving."
   objects today (for NJ Transit `backend/routes/njt.py:87`, `:124`), eleven under `public,
   max-age=3600` and `/api/bus-route/{id}` under no `Cache-Control` at all (all twelve read by
   read-only GETs of production for this design on 2026-11-28, from 09:43:38 to 10:26:18 UTC,
-  and `/api/path-routes` at 12:50:27 UTC). Each gains its generation's stamp as a response header, so no list changes shape and no golden moves. The bare URL is served `no-cache` with the stamp as its ETag; a request whose `g` query names the live generation is served as today, `public, max-age=3600`; a request naming any other is served
+  and `/api/path-routes` at 12:50:27 UTC). Each gains the stamp of every generation it was built from as a response header (3.7): one for each of ten of them, and LIRR's and Metro-North's both for `/api/railroad-routes` and `/api/railroad-stops`, which serve the two systems in one list (`backend/routes/railroad.py:91`, `:120`). So no list changes shape and no golden moves. The bare URL is served `no-cache` with an ETag of the stamp and a hash of the serialized body, so a deploy that changes the body changes the ETag (3.7); a request whose `g` query names the live generation is served as today, `public, max-age=3600`; a request naming any other is served
   the live generation under `no-cache`, its stamp beside it (3.7: the URL names the
-  generation, so an hour of caching is an hour of one generation).
-  `cache._static_endpoint_ready` (`backend/cache.py:354-376`) carries the rule; its `ready`
-  arm is `:373`.
+  generation, so an hour of caching is an hour of one generation). For the two railroad
+  endpoints the ETag and `g` name both systems' stamps, so a change to either system is a new
+  URL: a `g` naming one alone would let the stamped URL serve the other system's old table for
+  as long as its `max-age=3600` holds (`backend/cache.py:373`).
+  `cache._static_endpoint_ready` (`backend/cache.py:354-376`, its `ready` arm `:373`) carries
+  the rule for the ten GTFS endpoints that call it (`backend/routes/subway.py:43`, `:55`;
+  `railroad.py:79`, `:105`; `path.py:40`, `:68`; `ferry.py:40`, `:68`; `njt.py:77`, `:122`;
+  a `git grep -n _static_endpoint_ready` at `16d1c19`). `/api/airtrain` sets its own header
+  (`backend/routes/airtrain.py:22`) and `/api/bus-route/{route_id}` sets none
+  (`backend/routes/buses.py:24-48`), so each of the two takes the rule in its own handler.
 - **The stamp.** A prefix of the generation's `content` digest (3.1, 3.7): the archive's for one archive, the six borough archives' together for the bus index, and the committed file's sha256 for AirTrain (`data/airtrain_jfk.json`, read once at `backend/main.py:295`, which changes only
   with a deploy, since the file is in the repository).
 - **Every live envelope carries the stamps of the archives its rows were built from.**
   `SubwayFeed`, `RailroadFeed`, `PathFeed`, `FerryFeed`, `NjtFeed` and the five arrivals
-  envelopes gain a `static_generations` map, archive to stamp, optional with a
+  envelopes gain a `static_generations` map (`AlertFeed` too if Q24 says so, 3.7), archive to stamp, optional with a
   default, the convention `SubwayFeed.systems` already follows (`backend/models.py:264`). The
   field-set locks are updated, not relaxed: `test_arrivals_envelope_field_set_is_locked` and
   `test_every_arrivals_envelope_is_locked` over `ARRIVALS_ENVELOPES`
@@ -2935,7 +3088,8 @@ another station's, like every station name and place this process is serving."
   after Step 4's retry it says the index is retrying.
 
 **Asserted today that this makes false:** `backend/models.py:1168-1170`, "A key appears once
-its archive has been downloaded in this process ... so on a boot with a warm cache the map
+its archive has been downloaded in this process, or once a cached check found the cache without
+its decorative member (its degraded_members say which), so on a boot with a warm cache the map
 holds only those", since every held generation publishes its identity; and
 `backend/routes/buses.py:37`, "restart the server to retry".
 
@@ -2948,7 +3102,7 @@ rules for that field (`backend/models.py:1015-1016`):
 
 | Field | What it says | Nearest thing today |
 | --- | --- | --- |
-| `generation` | the identity of 3.1: archive, sha256, `content`, size, `etag` and `last_modified` when the publisher sent them, `feed_version`, the service span, `degraded_members`, `built_at` and `promoted_at` | nothing: no hash, header, size or span is recorded anywhere in app code (a `grep -i` of `backend/*.py`, `backend/routes/*.py` and `backend/feeds/*.py` for validators, hashes and `feed_info`, run for this design on 2026-11-28) |
+| `generation` | the identity of 3.1: archive, sha256, `content`, size, `etag` and `last_modified` when the publisher sent them, `feed_version`, the service span, `degraded_members`, `built_at` and `promoted_at`, and for the bus index `boroughs`, each borough's own identity | nothing: no hash, header, size or span is recorded anywhere in app code (a `grep -i` of `backend/*.py`, `backend/routes/*.py` and `backend/feeds/*.py` for validators, hashes and `feed_info`, run for this design on 2026-11-28) |
 | `last_promoted_at`, redefined | the instant of the reference assignment, equal to `generation.promoted_at` | the instant of the rename (`backend/static_shared.py:483`, called at `:693`), at least 894.6 ms ahead of the subway's assignment in one cold run on this machine (`verify_runtime.py`, stamped at the promotion itself) and at least 9.176 s ahead of LIRR's in production (its stamp 08:00:46.056 against Metro-North's 08:00:55.232 UTC on 2026-11-28, both read from `/api/status`; the railroad warmup assigns both systems only after both promote) |
 | `last_checked_at`, `next_check_at` | when the last check ran, and when the next will | nothing |
 | `last_check` | `unchanged`, `promoted`, `refused`, `failed` or `deferred` (3.2; Q18) | nothing |
@@ -2970,7 +3124,10 @@ three it is (`backend/models.py:1404-1408`) unless Q4 says otherwise; a degraded
 **Asserted today that this makes false:** `backend/routes/status.py:462`, "The index is fixed
 for the process, so it is read here rather than latched", and `backend/models.py:1343-1345`,
 "WHAT CLEARS IT is a decode with trains enough to judge by that does not see it, which means a
-process holding the current publication, which means a redeploy".
+process holding the current publication, which means a redeploy"; and
+`backend/models.py:1313-1314`, "Cleared by the next start whose lines draw, which in production
+is the next deploy: a running process neither re-fetches a promoted archive nor reloads its
+lines", which Step 4's subway refresh makes false.
 
 ### 4.6 The monitor
 
@@ -2990,6 +3147,11 @@ process holding the current publication, which means a redeploy".
   archive, with the publication the run downloaded; today nothing in the monitor reads
   `static_archives` but one prose string (`:358`; a `grep -n` of the monitor for
   `static_archives` and its four fields).
+- **Q4's code.** `static-refresh-failing` joins the monitor's mirrored `PRODUCTION_HEALTH_CODES`
+  (`backend/scripts/contract_monitor.py:303-315`), and like every recognized code outside
+  `_WARN_HEALTH_CODES` it FAILs `production:healthz` (`:332`, `:2856-2857`). If Q4 says so, it
+  WARNs instead in a run whose own static line for that archive refused its download, as
+  `production:njt-schedule`'s refused arm does (`:3640-3647`).
 - **The channel.** If Q5 builds one here, the workflow's own sentence changes with it
   (`.github/workflows/contract-monitor.yml:11-15`).
 
@@ -3001,18 +3163,21 @@ it".
 
 | Surface | Change |
 | --- | --- |
-| The loaders | `retryUntil` returns for good at the first truthy result (`frontend/helpers.js:5480`), and the eleven loaders start once each (`frontend/map.js:281-291`). Each poll's envelope now names its archives' stamps; when one differs from the stamp the page's tables came from, the page refetches that archive's static endpoints under `?g=` with the new stamp, and only that archive's (3.7). |
+| The loaders | `retryUntil` returns for good at the first truthy result (`frontend/helpers.js:5480`), and the eleven loaders start once each (`frontend/map.js:281-291`). Each poll's envelope now names its archives' stamps; when one differs from the stamp the page's tables came from, the page refetches that archive's static endpoints under `?g=` with the new stamp, and only that archive's (3.7). A stamp for an archive the page's tables did not carry counts as a change. |
 | The NJ Transit tables | `njtStopCoords` is a `const` Map filled per station and never cleared (`frontend/systems/njt.js:54`, `:162`); it is cleared and refilled from the new payload. The route tables are already reassigned together from one payload (`:82-86`). |
 | The station registry | `stationRegistry` only grows (`frontend/systems/shared.js:2808`, push at `:2816`); a system's entries are replaced as a set, markers removed and added with them, and each station's arrivals URL, built once at load today (`frontend/systems/subway.js:575`, `railroad.js:231`, `path.js:106`, `ferry.js:94`, `njt.js:166`), is rebuilt with its entry. |
-| The other tables | the subway's `routeIndex` (`frontend/systems/subway.js:220`, set at `:246`) and complexes, the railroad, PATH and ferry route maps (`frontend/systems/railroad.js:7`, `:10`, `:24`; `path.js:9`, `:17`; `ferry.js:13`, `:14`): replaced from their new payloads. |
-| The alerts join | `matchStationAlerts` keys a station's alerts by system and station id (`frontend/helpers.js:5229-5231`) over the page-held station list, for every system with an alerts feed, NJ Transit's included (its callers at `frontend/systems/subway.js:582`, `railroad.js:242`, `ferry.js:116`, `njt.js:199`); it reads the replaced registry. |
-| The one re-read | `fetchRoutesPayload`'s `cache: "reload"` re-read for an absent field stays (`frontend/systems/shared.js:2156-2180`); the stamp is the thing its comment asks for. |
+| The other tables | the subway's `routeIndex` (`frontend/systems/subway.js:220`, set at `:246`) and complexes, the railroad, PATH and ferry route maps (`frontend/systems/railroad.js:7`, `:10`, `:24`; `path.js:9`, `:10`, `:17`; `ferry.js:13`, `:14`): replaced from their new payloads. |
+| The drawn lines | every route loader adds polylines to a layer group that nothing clears: the subway's `routeLinesLayer`, with the `subwayRibbons` registry route focus restyles (`frontend/systems/subway.js:280`, `:302-303`); `lirrRouteLinesLayer`, `mnrRouteLinesLayer` and `njtRouteLines` through `railDrawRibbons` (`frontend/systems/railroad.js:132-151`, called at `:68` and `njt.js:106`); `pathRouteLines` (`path.js:63`) and `ferryRouteLines` (`ferry.js:54`). The groups are declared at `frontend/systems/shared.js:1072`, `:1087`, `:1090`, `:1105`, `:1110` and `:1116`, and the only `clearLayers` call in the page's own scripts is on the bus route's group (`frontend/systems/buses.js:183`; a `git grep -n clearLayers` at `16d1c19`). Each group the refetched payload draws into is cleared before the new payload draws, `subwayRibbons` emptied with the subway's group, and the subway's ribbon tags and key are refreshed from the new list by `refreshSubwayKey` (`frontend/systems/shared.js:654-664`, retagging at `:658`), which the route list's resolution and the poll tail already call (`:652`). |
+| The joins | the NJ Transit glide (`frontend/systems/njt.js:478`), the "Also here" crosslink (`:377`) and each system's route index, names and colours join a live row only when the envelope's `static_generations` entry equals the stamp of the page's tables; otherwise the row is treated as a miss is today (2.5.3), drawn where the server placed it, until the reload lands (3.7). |
+| The arrivals URLs | each carries `?g=<stamp>` of the table its id came from, and is rebuilt with its registry entry (3.7, 4.4). |
+| The alerts join | `matchStationAlerts` keys a station's alerts by system and station id (`frontend/helpers.js:5229-5231`) over the page-held station list, for every system with an alerts feed, NJ Transit's included (its callers at `frontend/systems/subway.js:582`, `railroad.js:242`, `ferry.js:116`, `njt.js:199`); it reads the replaced registry, with no stamp to compare unless Q24 gives `AlertFeed` one (3.7). |
+| The one re-read | `fetchRoutesPayload`'s `cache: "reload"` re-read for an absent field stays (`frontend/systems/shared.js:2156-2180`), because the stamp names the publication and not the build, so it does not answer the comment's question, whether the payload predates a field (`:2147-2148`). |
 | What a rider is told | nothing, or a line, by Q7. |
 
 **Asserted today that this makes false:** `frontend/map.js:277-278`, "each loader stops for
-good after its first successful populate", and `frontend/systems/shared.js:2147-2149`, "A
+good after its first successful populate". Not made false: `frontend/systems/shared.js:2147-2149`, "A
 FOLLOW-UP, NOT A FIX: a version stamp on the static-derived endpoints would let the frontend
-ASK whether the payload predates the field instead of inferring it from absence."
+ASK whether the payload predates the field instead of inferring it from absence." The stamp names the publication and not the build, so that follow-up stays open (the re-read row above).
 
 ### 4.8 The tests and goldens
 
@@ -3030,6 +3195,17 @@ ASK whether the payload predates the field instead of inferring it from absence.
 - `BEHIND` (`backend/tests/test_contract_monitor.py:3219`) and
   `test_production_behind_a_clean_decode_fails_and_says_redeploy` (`:3258`) pin the word
   "redeploy" that 3.5 replaces.
+- `test_the_schedule_code_is_a_warn_on_the_health_line_with_its_note`
+  (`backend/tests/test_contract_monitor.py:3464-3486`) pins the `njt-schedule-behind` note
+  verbatim, "production:njt-schedule says whether a redeploy fixes it" included, and
+  `test_the_lines_code_is_watched_and_explained_in_words` (`:4841-4857`) asserts "never
+  re-fetches" in the `subway-lines-degraded` note: the two notes 4.6 moves.
+
+One mirror test moves with the status model rather than with the one-shot shape:
+`test_the_counts_this_reads_are_the_counts_the_app_publishes` (`:3446-3453`) holds the
+monitor's mirrored counts equal to `NjtFeedHealth`'s fields less `total`, `ok` and `failed`
+(`:3453`), so the generation and 3.8's counts that `njt_feeds` gains (3.5) land in the
+monitor's mirror or in that exclusion set in the same change.
 
 **The goldens.** No golden should move. The stamp rides an envelope or a header and the
 generation's id rides internal live state, so no decoded row gains a field, and the decoder
@@ -3042,10 +3218,11 @@ table, 6 of 90 trips have a pair above 250 km/h (arm A of `speed_witness.py`, re
 moves is explained in the commit that regenerates it, never absorbed (PR #108's 4.6).
 
 **New tests**, each named by what it pins: the builders are pure (no `app.state` write and no
-socket, under the hermetic guard the audit scripts use); the swap is one reference (a 1 ms
-watcher sees no mixed set, the instrument of `verify_m4a.py` part D); a poll that awaited
+socket, under the hermetic guard the audit scripts use); the swap is one reference (a builder made
+to raise on a second build assigns nothing, the instrument of `verify_m4a.py` part F; a 1 ms
+watcher cannot tell, since the block it would watch holds no await, 2.4.1); a poll that awaited
 across a swap serves no row under the other generation's names; the PATH poll reads one
-generation; and the refresh's NJ Transit path sends no getToken POST in each case of 2.7's tables that no test drives today (a static download on a token another caller minted, a real socket cut after a 200, a close-delimited cut, the trailing bytes, a token killed mid-download, a refresh beside polls at the ceiling), with the contract tier gaining a refresh beside both pollers and the simulator's mint count asserted (`tests/contract/test_contract_api.py:1215` and `:1871` pin today's static mint counts).
+generation; one refresh at a time (two checks due at once build in turn, 3.10); and the refresh's NJ Transit path sends no getToken POST in each case of 2.7's tables that no test drives today (a static download on a token another caller minted, a real socket cut after a 200, a close-delimited cut, the trailing bytes, a token killed mid-download, a refresh beside polls at the ceiling), with the contract tier gaining a refresh beside both pollers and the simulator's mint count asserted (`tests/contract/test_contract_api.py:1215` and `:1871` pin today's static mint counts).
 
 **Asserted today that this makes false:** `backend/tests/test_static_shared.py:1483-1484`, "A
 cold boot with a warm cache downloads nothing, so the map is empty".
@@ -3063,12 +3240,13 @@ re-run by its verifier:
 | `docs/reviews/audit-2026-09-05/f07_static_never_refreshes.py` | "all 6 static tasks return permanently, each loader runs exactly once, and a 30-day-stale, calendar-expired NJT snapshot keeps serving as ready with max-age while nothing reloads or revalidates" (its measured age is 2,678,400 s, 31 days) | Step 1 for its NJ Transit arm, Step 4 for the other five |
 | `docs/reviews/audit-2026-09-05/f06_partial_startup_no_recovery.py` | one injected Metro-North failure leaves `ready` with Metro-North stops `None` after exactly 1 attempt per system across 100 shortened retry intervals, and `ensure_index` builds once | Step 4 |
 | `docs/reviews/audit-2026-10-12/a06_frontend_static_once.mjs` | "All 11 frontend static loaders retried through 3 refusals, took 1 usable answer each, then made 0 requests in 25 simulated hours ... 0 of the changed coordinates reached the map" | Step 3 |
-| `docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py` | arms 2 and 3 stand: 536,871,856 bytes, 70,005 members and 2,147,483,720 declared bytes promoted; arms 1 and 1d pin their repairs | does not flip: its ceilings are out of scope (the list before section 1; 5.3). Its arm 1 drives the real subway warmup under a 10 ms attempt deadline, so the restructured warmup must keep it green, and its arm 1d's ratio rule (89 ms against 1,170 ms, ledger:425) is the form Step 1's stall check takes |
+| `docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py` | arms 2 and 3 stand: 536,871,856 bytes, 70,005 members and 2,147,483,720 declared bytes promoted; arms 1 and 1d pin their repairs | does not flip: its ceilings are out of scope (the list before section 1; 5.3). Its arm 1 drives the real subway warmup under a 10 ms attempt deadline, so the restructured warmup must keep it green, and its arm 1d's rule, the shortest of three attempts' longest heartbeat gaps under a quarter of the loader timed alone (89 ms against 1,170 ms when the arm was written, ledger:425), is the form Step 1's stall check takes |
 
-The A06 frontend witness's kill record already lists the repair's shape among its second fixes,
-each exit 1: re-reads keyed on "a new static generation (in a body key or a header)" and "one
-keyed on a `static_generation` body key no fixture carried"
-(`docs/reviews/audit-2026-10-12/README.md:117`). The rewrite serves the stamp in its fixtures,
+The A06 frontend witness's kill record already names the repair's shape twice: among its
+second fixes, each exit 1, re-reads on "a new static generation (in a body key or a header)";
+and in its adversarial round, each exit 0 before the script was hardened and exit 1 after, "one
+keyed on a `static_generation` body key no fixture carried"; the hardened script "gives every
+live body seven announced keys" (`docs/reviews/audit-2026-10-12/README.md:117`). The rewrite serves the stamp in its fixtures,
 so what it measures is the page's repair and not a fixture that happens to carry a key.
 
 **Asserted today that this makes false:** each of the first three exits 0 because its defect
@@ -3085,7 +3263,7 @@ for the hand Redeploy, though it ended two of the three incidents (record:592). 
 `static_archives.<archive>`'s `last_check` and `last_refresh_error`; if the publication is good
 and the process will not take it, Railway's Redeploy, not Restart (the record's own words,
 record:589), whose cost is measured: 28 s from `in_progress` to the first promotion
-and 34 s to NJ Transit's on 2026-11-28, 69 to 93 s to the first on the six cold starts of
+and 34.7 s to NJ Transit's on 2026-11-28, 69 to 93 s to the first on the six cold starts of
 2026-11-01 to 2026-11-22 (each deployment record's statuses, read with `gh api`, set beside the
 recorded promotion times by `durations.py` and again by `rederive.py`), and one cold mint
 (`backend/njt_auth.py:172-173`). Whether a Restart keeps the data directory is not measured
@@ -3093,7 +3271,9 @@ recorded promotion times by `durations.py` and again by `rederive.py`), and one 
 why the runbook names Redeploy.
 
 **Asserted today that this makes false:** `README.md:790-791` and `README.md:962-963`, as
-quoted.
+quoted, and `README.md:1298-1299`, which quotes the monitor's FAIL text "production's schedule
+is behind NJ Transit's publication: redeploy" (`backend/scripts/contract_monitor.py:3651`), the
+words 4.6 rewrites.
 
 ---
 
@@ -3108,7 +3288,7 @@ Amendment 1's A1.5 did. Where a question in 5.2 settles part of one, it is named
    contract, one process with one worker, and A09's ceilings taken up only as far as a refresh
    needs (the list before section 1; 5.3).
 2. One immutable generation per archive (`njt`, `subway`, `railroad_LIRR`, `railroad_MNR`,
-   `path`, `ferry`) and one for the bus index, holding only what readers read, with the identity
+   `path`, `ferry`) and one for the bus index, holding only what readers read, `njt_stop_schedule` aside (item 14; Q14 asks whether the unread structures go), with the identity
    of 3.1: archive, sha256, `content`, size, `etag`, `last_modified`, `feed_version`, service
    span, `degraded_members`, `built_at` and `promoted_at` (3.1).
 3. The `content` digest beside the sha256 (each member's name, CRC-32 and size from the zip's
@@ -3132,10 +3312,15 @@ Amendment 1's A1.5 did. Where a question in 5.2 settles part of one, it is named
     are dropped; retained trains are never merged across generations; `path_identity` starts a
     new epoch; ferry buckets carry their generation; `_ARCHIVE_STATUS` is replaced by the held
     identity (3.1, 4.3).
-11. On a swap the family's next poll starts at once, and until it lands the older rows are
-    served only under their own generation's names (3.1, 4.3).
+11. On a swap the poll loop's sleep ends early, so the next cycle, all five families, starts at
+    once; a cycle in flight is neither cut short nor joined by a second poll; until the first
+    poll under the new generation lands, the older rows are served only under their own
+    generation's names, and the old generation lives while any live row carries it (3.1, 4.3;
+    a failed group's retained rows at the swap are Q22).
 12. The bus index's generation as a directory named by its identity, swapped by reference, the
-    old one removed once no request holds it (3.1, 4.1).
+    old one removed once no request holds it, its identity carrying one identity per borough
+    archive, `boroughs`, from which each borough is checked and compared (3.1, 3.2, 3.5, 4.1;
+    how one borough's change becomes a whole directory is Q23).
 13. AirTrain outside the refresh, its stamp the committed file's sha256 (3.1, 4.4).
 14. `njt_stop_schedule` kept in NJ Transit's generation for now (3.1, 4.1; Q14 asks whether it
     goes).
@@ -3146,14 +3331,19 @@ Amendment 1's A1.5 did. Where a question in 5.2 settles part of one, it is named
 17. NJ Transit's check as a full `getGTFS` download on the borrowed token, compared by
     `content`, and NJ Transit's public `rail_data.zip` not used as a trigger (3.2).
 18. The behind-run trigger at the start of a behind run, not at the 600 s hold (3.2).
-19. A validity trigger for every archive with a service span (3.2).
+19. A validity trigger for every archive with a service span, fired when a generation enters its
+    band and when its span ends, not at every check while it is past (3.2; the band is
+    Q19's).
 20. The backoff's shape: rising rungs jittered 0.9 to 1.1, a ceiling no longer than the
-    archive's own timer period, continued only while the evidence holds (3.2; the numbers, and
-    whether a refused or failed check climbs them, are Q3's).
-21. A component that failed at the cold start, a railroad system or a bus borough, retried as its own entry on the failure rungs without a deploy (3.2, 4.2), which is F06's and A05's recovery.
+    archive's own timer period, continued while any of the evidence holds and ended only when none
+    does, a run that starts just after a promotion taking the next rung rather than a check at
+    once (3.2; the numbers, and whether a refused or failed NJ Transit check climbs them, are
+    Q3's; a public archive's, Q20's).
+21. A component that failed at the cold start, a railroad system or a bus borough, retried as its own entry on the failure rungs without a deploy (3.2, 4.2; the rungs are Q20's), which is F06's and A05's recovery.
 22. A refresh runs a cold start's gates, with `cache_serves` meaning "the live generation's
     decorative member draws": replacing mode in the ordinary case, the cold-start rule when the
-    live generation is itself degraded (3.3, 4.1).
+    live generation is itself degraded or there is none, as for a component that failed at the
+    cold start (3.2, 3.3, 4.1).
 23. A refused or failed refresh keeps the live generation, and the worker records each check's
     outcome itself, outside `staged_fetch`, so a check cut by a deadline is recorded (3.3,
     4.2); Q4's code also names an NJ Transit generation held past its `service_through` with no
@@ -3175,27 +3365,30 @@ Amendment 1's A1.5 did. Where a question in 5.2 settles part of one, it is named
 30. The page's stamp: a response header on the static endpoints and a `static_generations` body
     field on the envelopes and boards, an envelope's stamp being the generation its rows were
     decoded under (3.7, 4.4).
-31. Two URLs per static endpoint: the bare one `no-cache` with the stamp as its ETag, the stamped
+31. Two URLs per static endpoint: the bare one `no-cache` with an ETag of the stamp and the body's hash, the stamped
     `?g=` one `public, max-age=3600`, and any other stamp answered with the live generation under
-    `no-cache` (3.7, 4.4).
+    `no-cache`; for an endpoint built from two generations, the ETag and `g` naming both (3.7, 4.4).
 32. On a stamp change the page refetches only that archive's endpoints and replaces its
-    registries in one assignment; it joins rows to tables only within one stamp, and draws an
+    registries in one assignment, the route lines drawn from the old payload cleared before the new ones draw; it joins rows to tables only within one stamp, and draws an
     envelope whose stamp it lacks where the server placed it (3.7, 4.7).
 33. A live request naming a static id carries its table's stamp, and the server answers a
     mismatch as stale (3.7, 4.4).
-34. The decode counting `running`, `missed` (not ADDED) and `added`, served on `njt_feeds`; the
-    MISS trigger; and the MISS code being `njt-schedule-behind` itself, its run given a second
+34. The decode counting `running`, `missed` (not ADDED) and `added`, ADDED told by `schedule_relationship` with the empty id checked beside it, served on `njt_feeds`; the
+    MISS trigger at the start of a MISS run, which holds until a decode says otherwise; and the
+    MISS code being `njt-schedule-behind` itself, its run given a second
     arm (3.8, 4.3; the thresholds are Q9's).
 35. The decode counting calls at stop ids the held table lacks and pairs above a speed, served
-    on `njt_feeds`; past Q8's threshold a refuted or unjoined train's destination takes
-    `_destination`'s fallback, and a check is triggered (3.8, 4.3; whether it also raises a code
-    is Q8).
+    on `njt_feeds`; past Q8's decode threshold a check is triggered, and a refuted or unjoined
+    train that either mark names takes `_destination`'s fallback (3.8, 4.3; the thresholds, and
+    whether it also raises a code, are Q8's).
 36. The hand Redeploy kept and documented as the fallback, with its measured cost (3.9, 4.10;
     the volume is Q11).
 37. One refresh at a time across the archives and the bus index (3.10, 4.2; the memory ceiling
     is Q6).
 38. The tests and witness rewrites of 4.8 and 4.9, and the order of section 6, NJ Transit first,
     with its witnesses, mutations and watches.
+39. In a refresh, an empty result from a lenient subway loader, `load_subway_stations`' `{}` or `load_subway_route_shapes`' `[]`, is a refusal, not a promotion (3.3).
+40. F09 and H2 taken up only where a builder raises (section 6, its last paragraph). NJ Transit's geometry builder raising on a nonfinite coordinate, as F09's witness found it does ("the real geometry builder raises", audit-2026-09-05.md:431), is a refusal that keeps the live generation (3.3); the finite and range checks H2 asks of the parsers (ledger:545-547) are not built here. A refresh, running a cold start's gates (3.3), would then promote a subway publication with a nonfinite stop coordinate and serve it as `"lat":null`, as a cold start does today (audit-2026-09-05.md:431).
 
 ### 5.2 The open questions
 
@@ -3205,7 +3398,7 @@ they are answered, because a question rewritten after its answer stops being evi
 was asked.
 
 **Q1. Should NJ Transit's check be triggered both by a timer and by the evidence, the evidence
-being `njt-schedule-behind`'s run and the MISS share?** The evidence alone misses a
+being `njt-schedule-behind`'s run, the MISS share and the stop witness?** The evidence alone misses a
 republication that renumbers nothing; the timer alone finds the same bytes while the trains
 already contradict them. On 2026-11-03's shape the mismatch rule sees nothing: with the old
 seven-digit ids held and the realtime on the new ones, a stand-in decode of 50 realtime ids
@@ -3220,9 +3413,11 @@ The monitor, on misses alone, WARNs at most and only when its own decode checked
 timer alone: NJ Transit's realtime can move before its schedule endpoint. Run 445 (databaseId
 42889072568, created 2026-11-10 19:49:15 UTC, 14:49:15 Eastern) counted 41 identity warnings of
 three kinds, five pairs named, against a schedule it had just downloaded, and run 446's
-download agreed with the trains; the realtime's lead over the API was under 32 h 10 min 48.47 s
-and more than minus 19.11 s (`m3_lines_and_bounds.py` and `v3_bounds.py` over the two runs'
-logs), so a lead of zero is not excluded. *Recommendation: both, with the MISS share counted as
+download agreed with the trains; the realtime's lead over the API was under 32 h 10 min 48.48 s
+and more than minus 19.12 s (`m3_lines_and_bounds.py` and `v3_bounds.py` over the two runs'
+logs), so a lead of zero is not excluded. The bounds of 2026-11-27 also allow the API first by up
+to 11 h 28 min 26.37 s (2.3), a window a timer check would promote into (3.2;
+Q21). *Recommendation: both, with the MISS share counted as
 evidence, because 2026-11-03's shape gives the mismatch rule nothing to count.*
 
 **Q2. What should each archive's timer be?** A check that finds nothing costs headers only on
@@ -3236,7 +3431,7 @@ the 2026-11-06 publication (ledger:653), and whether `getGTFS`
 calls are metered is recorded nowhere (`backend/njt_auth.py:140-146` records only getToken's
 ten, and that the usage counter cannot be read). How often each publisher moved in runs 400 to
 481 (2026-10-25 to 2026-11-28): NJ Transit's API archive six dated times, with intervals
-between visible changes from 24.10 h to 169.30 h at least and 47.79 h to 192.68 h at most
+between visible changes, from creation to creation, from 24.09 h (1 d 0 h 5 min 55 s) to 169.30 h at least and 47.79 h to 192.68 h at most
 (`cadence.py` over the `njt-static` lines of 86 attempts, re-derived by `vwindows.py`; a
 seventh difference is dated only to runs 425 to 434); the subway once (its `Last-Modified`
 2026-10-28 16:39:52 UTC); LIRR and Metro-North at least once each (`Last-Modified` 2026-11-25 22:10:39 and 2026-11-26 17:30:32 UTC, against the 2026-10-14 and 2026-10-15 the ledger read on 2026-10-15, ledger:825, :834-835, with other bytes and other `stop_times.txt` row counts now, 2.2); the ferry at least twice (runs 424 to 425, and
@@ -3254,21 +3449,30 @@ Q3's rungs.*
 contradict, while the evidence holds, should it retry at 10, 20 and 40 minutes and then every
 60 minutes, 60 minutes being the ceiling, for as long as the evidence holds; and should a check
 that fails outright retry on the same rungs while the evidence holds, and otherwise at the next
-timer tick?** The lead to cover is run 445's: under 32 h 10 min 48.47 s on 2026-11-10 (23 h 11
+timer tick?** The lead to cover is run 445's: under 32 h 10 min 48.48 s on 2026-11-10 (23 h 11
 min 32.74 s counting run 444 as a conditional witness), and under 23 h 44 min 54.22 s on
 2026-11-27 (12 h 41 min 10.89 s counting run 479) (`v3_bounds.py`). Each rung is a full
 download on the live token and no mint (3.4). By arithmetic over those rungs, the longest
-measured lead costs 35 checks (the one at once, the three short rungs and 31 at the ceiling),
+lead the logs allow costs 35 checks (the one at once, the three short rungs and 31 at the ceiling),
 152,945,765 bytes at the 2026-11-07 size; a 120-minute ceiling would cost 19 checks and
-83,027,701 bytes and leave a publication unadopted for up to two hours. Riders are carried
-through that time by PR #145's rule, which shows each refuted train its own number (record:589). The warmup's own rungs, 15, 30, 60 and 300 s
+83,027,701 bytes and leave a publication unadopted for up to two hours. Where trains are refuted, in the trip-id shapes (1.1.2, 1.1.3), riders are carried
+through that time by PR #145's rule, which shows each refuted train its own number (record:589).
+In 2026-11-03's shape no train is refuted (joined 0, checked 0, 2.6a): each unjoined train shows
+its own number (`backend/feeds/njt.py:819`, `:825`), but it is placed on boards by the held stop
+table, as when board 112, titled "Newark Penn Station", listed Morris & Essex trains (ledger:653,
+1.1.1), and named by the held table's name for its last stop (`:828`), another station on 62 of
+90 stand-in trips (3.8), until Q8's withholding removes that name. Nothing in this design
+withholds a board row, so in that shape the time a publication waits unadopted is time riders
+read boards built on the held stop table. The warmup's own rungs, 15, 30, 60 and 300 s
 (`backend/main.py:163-165`), are for a process that holds nothing; a refresh holds a
 generation, so a failed check need not be retried that fast. *Recommendation: yes to both, with
 the 60-minute ceiling.*
 
 **Q4. Should a refresh that is refused or keeps failing raise `static-refresh-failing` on
 `/healthz`, degraded and never gating, once an archive's `consecutive_failures` reaches 3 or
-its last good check is older than three of its timer periods?** Never gating, for the reason
+its last good check is older than three of its timer periods, not counting time its checks
+spent deferred (Q18); and should `production:healthz` WARN rather than FAIL on it in a run whose
+own upstream static line refuses the same archive?** Never gating, for the reason
 every non-gating code gives: the status code is read once, while a build is promoted
 (`backend/models.py:1376-1383`), so gating would refuse every build for a fault in the world,
 the build that fixes it included (`:1353-1355`); the gating set is three codes (`:1404-1408`).
@@ -3282,15 +3486,16 @@ the evidence holds. *Recommendation: yes, that name, that band, degraded and nev
 `production:healthz` WARNing rather than FAILing on it in a run whose own upstream check
 refuses the same archive.*
 
-**Q5. By which channel should Ben be told that a refresh did not take, and is it built here
-(Step 0) or on its own small branch?** The channel today is the run status: "GitHub's own
+**Q5. Should Ben be told that a refresh did not take by (b), an outside poller of `/healthz`
+that he sets up outside the repository, and in the repository by (a), a push from the monitor
+on FAIL, built on its own small branch before Step 1 rather than in Step 0?** The channel today is the run status: "GitHub's own
 scheduled-workflow-failure notifications reach the repo admins"
-(`.github/workflows/contract-monitor.yml:11-13`). Runs 480 (databaseId 46070185338) and 481 (46123612408) both ended `failure`, and when Ben answered at 2026-11-28 12:43:47 UTC (07:43:47 Eastern) neither email had arrived, at least 15 h 18 min 0 s and 4 h 44 min 54 s after the two runs ended; which account GitHub notifies for a scheduled workflow is not measured (1.3). The monitor is also slow by cadence: its scheduled runs came a median 11 h 5 min 56 s apart (1.2). On 2026-11-27 `/healthz` carried `njt-schedule-behind` 1 h 2 min 44 s before run 480's FAIL, and nothing reads `/healthz` on a schedule except the monitor (record:666; 3.6). The four options, with what each needs and cannot see, are 3.6's table: (a) a push from the monitor on FAIL, which needs a secret and an outside service and alerts at the monitor's cadence; (b) an outside poller of `/healthz` alerting when `degraded` is not empty, which alerts within its own interval but must read the body, since `/healthz` answers 200 for every degraded code (`backend/routes/status.py:828`, `:853`), and needs an account outside the repository; (c) a GitHub issue opened on FAIL, which needs `issues: write` where the workflow grants only `contents: read` (`:38-39`), and whose notice rides GitHub's notifications, the path 1.3 could not measure; (d) Railway's own alerts, which read the healthcheck only at promotion (`backend/models.py:1376-1383`) and so cannot see a degraded code. *Recommendation: (b) first, set up by Ben outside the repository; and in the repository (a), on its own small branch before Step 1, since it touches only the workflow and the monitor, deploys nothing, and does not ride GitHub's notifications.*
+(`.github/workflows/contract-monitor.yml:11-13`). Runs 480 (databaseId 46070185338) and 481 (46123612408) both ended `failure`, and when Ben answered at 2026-11-28 12:43:47 UTC (07:43:47 Eastern) neither email had arrived, at least 15 h 18 min 0 s and 4 h 44 min 54 s after the two runs ended; which account GitHub notifies for a scheduled workflow is not measured (1.3). The monitor is also slow by cadence: its scheduled runs came a median 11 h 5 min 56 s apart (1.2). On 2026-11-27 `/healthz` carried `njt-schedule-behind` 1 h 2 min 44 s before run 480's FAIL, and nothing reads `/healthz` on a schedule except the monitor (record:666; 3.6). The four options, with what each needs and cannot see, are 3.6's table: (a) a push from the monitor on FAIL, which needs a secret and an outside service and alerts at the monitor's cadence; (b) an outside poller of `/healthz` alerting when `degraded` is not empty, which alerts within its own interval but must read the body, since `/healthz` answers 200 for every degraded code (`backend/routes/status.py:828`, `:853`), and needs an account outside the repository; (c) a GitHub issue opened on FAIL, which needs `issues: write` where the workflow grants only `contents: read` (`.github/workflows/contract-monitor.yml:38-39`), and whose notice rides GitHub's notifications, the path 1.3 could not measure; (d) Railway's own alerts, which read the healthcheck only at promotion (`backend/models.py:1376-1383`) and so cannot see a degraded code. *Recommendation: yes, (b) first, set up by Ben outside the repository; and in the repository (a), on its own small branch before Step 1, since it touches only the workflow and the monitor, deploys nothing, and does not ride GitHub's notifications.*
 
 **Q6. Above what resident memory should a refresh not be attempted, and is it deferred to the
 next check when it is not?** The limit is unknown: no plan or memory field is in the repository
 (`railway.json`, `nixpacks.toml`, and a `git grep` for a plan or a limit), Ben was asked, and
-the Railway CLI is logged out (it still answered Unauthorized at 12:50 UTC); a reading is
+the Railway CLI is logged out (it still answered Unauthorized at 12:50 UTC, 07:50 Eastern); a reading is
 pending, and the first number to read is the Metrics series of deployment 7988955096 since
 2026-11-28 08:00:16 UTC (03:00:16 Eastern), production's resident memory holding one
 generation. Every figure below is macOS, this machine, not Linux. A whole second set added
@@ -3300,12 +3505,13 @@ archives in sequence, gates included, cached), and 178,495,859 bytes under trace
 (`m1_measure.py generations trace`). One archive at a time is what 3.10 holds the peak to; the
 largest is NJ Transit's: on the public stand-in, alone, cached, 88,470,849 bytes retained
 (tracemalloc), a footprint delta of 116.0 MB and a tracemalloc peak of 99.5 MB for gate and load; on the rail-only projection, 62,196,276 bytes retained and 95.9 MB of footprint (`m1_measure.py plain` and `trace`, each archive alone in a fresh process; 2.1's table). The API archive's
-last measured size, 4,369,879 bytes, is 1.326 times the stand-in's 3,295,223 (arithmetic over
-the two literals), so its costs may exceed the stand-in's. *Recommendation: once the limit L is
-read, do not start a refresh while resident memory exceeds L less 160 MB (116.0 MB scaled by 1.326 is 153.8 MB, rounded up), record the check as deferred (Q18), and try again at the next check; until
+last measured size, 4,369,879 bytes, is 1.326 times the public stand-in's 3,295,223 and 1.748 times the rail-only projection's
+2,499,303, the shape production serves (2.1; arithmetic over the literals), so its costs may
+exceed either stand-in's. *Recommendation: once the limit L is
+read, do not start a refresh while resident memory exceeds L less 170 MB (the larger of 116.0 MB scaled by 1.326, 153.8 MB, and 95.9 MB scaled by 1.748, 167.7 MB, rounded up), record the check as deferred (Q18), and try again at the next check; until
 L is read, no ceiling, since none can be grounded.*
 
-**Q7. Should the page replace its tables silently when a generation changes?** Today an open
+**Q7. Should the page replace its tables silently when a generation changes, and if it should say so, in which words and on which surface?** Today an open
 tab never replaces them: the A06 witness's page took one usable answer per loader and made 0
 static requests in 25 simulated hours while the backend restarted into a changed publication,
 and 0 of the changed coordinates reached the map (run for this design four times on 2026-11-28 under Node v26.0.0, 2.5.4). The ledger measured what that costs on NJ Transit's
@@ -3319,37 +3525,46 @@ schedule's generation. *Recommendation: yes, silently; a sentence about a schedu
 a rider nothing to act on, and the tables it replaces only make the map agree with the rows it
 already shows.*
 
-**Q8. Should the stop witness, beyond withholding a name, raise a code, and at what
-threshold?** It was measured for this design on 2026-11-28 by `speed_witness.py`, re-derived by
+**Q8. Should the stop witness, beyond withholding a name, trigger a check and raise a code, at what
+threshold for each, and should the name be withheld per trip, on either of that trip's own marks?** It was measured for this design on 2026-11-28 by `speed_witness.py`, re-derived by
 `verify_speed.py`, on four arms, two right and two wrong, every new-numbering arm a stand-in
 (no realtime capture with per-call times exists on the new numbering). Stop ids the held table
 lacks: none in any right arm, and 20 distinct ids in every wrong arm, on 69 of 90 trips (old
 realtime under the new table), 85 of 90 (2026-11-03's shape) and 1,151 of 1,387 (the new
 schedule under the old table). Pairs above 250 km/h under the held table: 8 of 1,130 (0.7%) on
-the right arm, 516 of 768 (67.2%) on 2026-11-03's shape; per trip, 6 of 90 right trips have
-one, and every one of the 86 measured trips of 2026-11-03's shape does, its slowest trip's
-fastest pair at 256.1 km/h. All 14 right pairs above 160 km/h lie on express trips, and three
-of them have no measured cause (`verify_express.py`). *Recommendation: yes, a code, at 5 or
+the right arm, and on 2026-11-03's shape 516 of 768 (67.2%) as measured and 556 of 919 (60.5%)
+with absent calls dropped before pairing, as the decoder drops them (`speed_witness.py`'s
+decoder-order arm, re-derived by `verify_extra.py`); per trip, 6 of 90 right trips have one,
+and of 2026-11-03's shape 86 of 90 trips do under either pairing, the slowest of them at 256.1
+km/h, while the other 4 (trains 3953, 3957, 3961 and 3963), which the first pairing cannot
+measure, each call at 3 or 4 stop ids the held table lacks (`verify_extra.py`,
+`r5_d1_trips.py`). All 14 right pairs above 160 km/h lie on express trips, of which 12
+are local pairs on late trains whose predicted delay falls between two calls faster than a train
+can recover it and 2 are express pairs at calls the trip's own schedule does not list
+(`dump_trips.py`, `verify_express.py`). *Recommendation: yes to a check and a code, both at 5 or
 more trips in one decode calling at a stop id the held table lacks, or 25% or more of a
-decode's measured pairs above 250 km/h, held 600 s as `njt-schedule-behind` is; and the code be
+decode's measured pairs above 250 km/h, the code held 600 s as `njt-schedule-behind` is; and the code be
 `njt-schedule-behind` itself, its note widened to name which witness raised it, since the cause
 is the same held schedule. Withhold a refuted or unjoined trip's last-stop name on either mark
 of that trip.*
 
 **Q9. What should the MISS thresholds be: 3 or more misses that are not ADDED in one decode to
-trigger a check, and 5 or more making 10% or more of the running trip updates, held 600 s, for
+start a MISS run that triggers a check, the run ending only at a decode that can judge (`checked`
+at least 5, `backend/feeds/njt.py:599`, `:609-613`) and counts no miss that is not ADDED, the steady
+state's measured count; and 5 or more making 10% or more of the running trip updates, held 600 s, for
 a code?** In every steady-state measurement, misses that were not ADDED were 0: all 108 non-empty trip ids of the committed capture named a trip in the full live publication of its run (the trim
 keeps a capture trip only when that publication has it,
 `backend/scripts/njt_fixture_trim.py:290`), and production in step read no unjoined train in
 reads of 29, 73, 2, 6 and 8 trains (ledger:589, record:589, and two reads for this design on 2026-11-28; 2.6a). ADDED trains are
-told apart by their `njt:` key (`backend/feeds/njt.py:853`). The generator allows "a handful"
+told apart by their `schedule_relationship` (`backend/feeds/njt.py:941`), the empty id of their `njt:` key (`:853`) checked beside it (3.8). The generator allows "a handful"
 of misses at a publication boundary crossed between its two downloads
 (`backend/scripts/gen_njt_rt_fixture.py:174-176`). On the three shapes, at train level:
 2026-11-03's 56 of 56, 2026-11-22's 8 of 50 sampled trips (16.0%) and 13.5% to 16.7% per poll
 over 30 polls, and 2026-11-27's 3 of 34 trains (8.8%), whose ADDED share is not recorded (PR
 #137's body; `miss_share.py` over `backend/tests/fixtures/njt_drift_2026-11-22.json`; record:589, :649). A trigger costs one NJ Transit download
 and no mint; a code is read by the monitor as a FAIL (Q4's evidence). *Recommendation: yes to
-both numbers, the code again `njt-schedule-behind`, so one cause reads as one code;
+both numbers and to that end of a run, so a count moving about the trigger starts one run and
+not one per crossing; the code again `njt-schedule-behind`, so one cause reads as one code;
 2026-11-27's 8.8% stays below the code because its mismatches already raised it.*
 
 **Q10. Should the 30-day cold-start rule survive?** `MAX_AGE_DAYS = 30` sits in six modules and
@@ -3370,7 +3585,7 @@ failed cold download leaves the subway raising, NJ Transit, PATH and the ferry e
 railroad system `None`, each retrying: `backend/static_data.py:412-415`,
 `backend/njt_static.py:1289-1291`, `backend/path_static.py:526-528`,
 `backend/ferry_static.py:439-441`, `backend/railroad_static.py:535-537`), and make the 30-day
-branch live again (Q10). What a cold start costs without one is 3.9's baseline (2.1): 28 to 93 s from `in_progress` to the first promotion and 34 to 100 s to NJ Transit's, plus one cold mint per deploy (`backend/njt_auth.py:172-173`). No deploy on record met an upstream outage.
+branch live again (Q10). What a cold start costs without one is 3.9's baseline (2.1): 28 to 93 s from `in_progress` to the first promotion and 34.7 to 100 s to NJ Transit's, plus one cold mint per deploy (`backend/njt_auth.py:172-173`). No deploy on record met an upstream outage.
 *Recommendation: yes, no volume; revisit it if a deploy meets one.*
 
 **Q12. In a refresh, should NJ Transit's calendar guard (a) refuse a candidate that schedules
@@ -3400,7 +3615,8 @@ the 3,295,223-byte public archive, the same sweep). A `getGTFS` answer with anyt
 promoting it and records the trailing bytes, since refusing it there serves no NJ Transit.*
 
 **Q14. Should the generation drop the structures no reader reads: the whole NJ Transit parse,
-`railroad_static` and `path_static`?** No production code reads any of them (4.1). The savings
+`railroad_static` and `path_static`; and should `njt_stop_schedule` stay until a branch reads it?**
+No production code reads any of the four (2.1, a `git grep` at `16d1c19`; 3.1). The savings
 are 50,236,023 bytes for `njt_static`'s shapes table alone (tracemalloc deletion delta,
 rail-only projection, `verify_m4a.py` part C), 56,535,728 bytes for `railroad_static` and
 22,651,175 for `path_static` (recursive `sys.getsizeof` walk, `verify_m4c.py`), each held once
@@ -3426,7 +3642,16 @@ warmup, with its heavy work in threads, the loop's longest gap was 16.3 to 18.3 
 deadline; its cost, a second interpreter and the generation copied back, is not measured. The
 longest gap a gate in a thread left was 45.3 ms (`gate_thread_gaps.py`), against a 45 s poll
 deadline (`backend/pollers.py:108`) and the page's 15 s fetch deadline
-(`frontend/helpers.js:1702`). *Recommendation: a thread.*
+(`frontend/helpers.js:1702`). With one worker
+(3.2), every other archive's check, NJ Transit's evidence-triggered ones included, waits for the
+build in progress. A CPU-bound build ends on its own ("a CPU-bound parse finishes on its own",
+`backend/main.py:192-193`), so the wait is the build's own length: the A09 witness's run, whose
+arms 2 and 3 promoted its 536,871,856-byte, 70,005-member and 2,147,483,720-declared-byte archives
+through the real gates, took 18 s in all (2.8), and a build over those archives is unmeasured.
+What a thread cannot bound is the build's memory, since the subway's routes-per-station loader
+reads `stop_times.txt` whole ("inflates it whole",
+`docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py:115`); Q6's ceiling addresses that, and a
+subprocess would keep that memory out of the serving process. *Recommendation: a thread.*
 
 **Q17. Should Step 0, the monitor printing the API archive's identity on the mint it already
 spends, come first?** The API archive's size has not been read since 4,369,879 bytes on
@@ -3436,13 +3661,39 @@ unknown, because the app drops its headers (`backend/njt_auth.py:716`); and whet
 deploys nothing (`railway.json`'s watch patterns exclude `/backend/scripts/**`).
 *Recommendation: yes; its first two runs say whether NJ Transit's check could compare by `sha256` alone.*
 
-**Q18. Should a check that defers (no live token, or memory over Q6's ceiling) record
-`last_check: deferred`, counted apart from `consecutive_failures`?** 3.2 and 3.5 add a fifth outcome, `deferred`, for 3.4's case. A deferral can be long: while a hold runs, `get()` serves the held token whatever
+**Q18. Should a check that defers (no live token, a borrowed token refused on `getGTFS`, or memory
+over Q6's ceiling) record `last_check: deferred`, counted apart from `consecutive_failures`?** 3.2 and 3.5 add a fifth outcome, `deferred`, for 3.4's two cases and, if Q6 sets a ceiling, for Q6's. A deferral can be long: while a hold runs, `get()` serves the held token whatever
 its age (`backend/njt_auth.py:1087-1098`), and an allowance or quota hold lasts to the next
 Eastern midnight plus 60 s (`:1107-1112`, `:1164-1165`); measured on a local fake by
 `m9_token_during_refresh.py` (its case R5b), an over-age token served a refresh 23,972.5 s
-before its allowance hold ended. Counted as failures, a deferral would raise Q4's code during a
-budget hold that `njt-mint-allowance` or `njt-mint-quota` already names. *Recommendation: yes.*
+before its allowance hold ended, a length set by the hour that run's clock read. Counted as failures, a deferral would raise Q4's code during a
+budget hold that `njt-mint-allowance` or `njt-mint-quota` already names. A refused post is named by
+no code unless the trains poll meets the same refusal and re-mints, which 3.4 assumes and nothing
+has measured: `is_auth_error` matches only HTTP 500 with "Invalid token."
+(`backend/njt_auth.py:529-584`). If only `getGTFS` refused a token the trains poll kept using, each
+check would re-post it after the trains poll's next decode (3.2's table), once a poll cycle
+(`POLL_INTERVAL_S`, 20 s between cycles, `backend/pollers.py:70`), until the token reached
+`MAX_TOKEN_AGE_S` (12 h, `backend/njt_auth.py:302`); counted apart from failures, that reaches Q4's
+code only by its age arm, and 12 h is inside three of Q2's recommended 6-hour periods (18 h,
+arithmetic). Uncounted, it would
+still raise Q4's code through the age arm in a hold that ends more than three timer periods
+after the last good check, 18 h at Q2's recommended 6 h; every such hold begun before 06:00
+Eastern does, since it runs to the next midnight (arithmetic over those literals). Q4 therefore
+asks whether that arm leaves deferred time out. *Recommendation: yes.*
+
+**Q19. Should the validity trigger fire when today in New York comes within 30 days of a generation's `service_through`, and once more when today passes it, once per generation at each of the two crossings rather than at every check while a span is past?** No other question asks for the band, and 3.2 gives it no number. The monitor already bands NJ Transit's span at 30 days, "deliberately the same 30 days as FEED_END_WARN_DAYS" (`NJT_SERVICE_WARN_DAYS`, `backend/scripts/contract_monitor.py:485-487`). PATH's held archive runs 20250522 to 20260601 and its publisher has not republished since 2025-06-06 (3.1, 3.2), and on all 86 attempts of runs 400 to 481 the monitor printed the acknowledged `path-static` WARN on `feed_end_date 20260601` (2.2), so a trigger read as a state rather than a crossing would fire at every PATH check from the first. The F07 witness held a calendar-expired NJ Transit archive at HTTP 200 across 40 poll cycles with `/healthz` passing (`docs/reviews/audit-2026-09-05/f07_static_never_refreshes.py`, run for this design at `16d1c19`, 2.8). *Recommendation: yes, 30 days, once at each crossing, the timer otherwise.*
+
+**Q20. Should a component that holds no generation after the cold start, a railroad system or a bus borough, be checked on the warmups' rungs, 15, 30, 60 and then 300 s, jittered 0.9 to 1.1, until it holds one, and only then join its timer; and should a refused or failed check of a public archive that holds a generation wait for its next timer tick?** Q3 asks only for NJ Transit's rungs, and the failure rungs of 3.2, 4.2 and Step 4 carry no number. The warmups' rungs are `STATIC_RETRY_SCHEDULE_S`, 15, 30, 60 and `STATIC_RETRY_S`, which is 300 (`backend/main.py:125`, `:163-165`), jittered by 0.9 to 1.1 (`backend/warmups.py:111`). Today a railroad system that failed is tried once in 100 shortened intervals (the F06 witness, `docs/reviews/audit-2026-09-05/f06_partial_startup_no_recovery.py`, run for this design at `16d1c19`, 2.8), and the bus index builds once (`backend/main.py:357`); a whole archive that fails keeps its warmup's own loop (3.2, 4.2). Q4 reads "Three failures is three timer periods for a public archive at Q2's hour", which assumes a public archive's failed check waits for its timer, where 3.2's outcome table sent it up the rungs. *Recommendation: yes to both.*
+
+**Q21. Before assigning a new NJ Transit generation, should the worker decode the trains poll's latest trip-update body against the candidate and against the live generation, and keep the live generation, recording the reason "the trains are not on this publication yet", when the trains are in step under the live generation (a decode that can judge, its misses under Q9's trigger) and not under the candidate (behind, or its misses past that trigger), retrying on Q3's rungs?** On 2026-11-27 the bounds allow the API first by up to 11 h 28 min 26.37 s, and on 2026-11-10 by up to 19.113 s (2.3's table); a check in that window passes every gate of 3.3 and is promoted, and nothing then returns to the generation the trains agree with (3.2). On 2026-11-03's shape the new table under the old realtime reads 682 of 917 pairs above 160 km/h and names another station as the last stop on 63 of 90 trips (2.6b, arm B). A live decode that cannot judge (`checked` under 5, `backend/feeds/njt.py:599`, `:609-613`), as at night, would not hold the candidate back. The decode is the pure decoder's, run in the worker's thread on a body the trains poll already fetched, so it costs no request; its time is not measured. Counted as `refused`, three such checks would reach Q4's code during a lead the trains close by themselves. *Recommendation: yes, with the held check counted apart from `consecutive_failures`, as Q18 counts a deferral, so a lead raises no code.*
+
+**Q22. At a swap, should a failed subway group's or railroad system's retained trains, decoded under the old generation, be dropped, rather than served in an envelope that names both generations?** An envelope carries one stamp per archive (`static_generations`, archive to stamp, 4.4), and 3.1's live-state rule never merges retained trains into another generation's envelope. Today a failed group's trains are carried forward for up to `FEED_RETENTION_MAX_S`, 600 s (`backend/cache.py:104`; 2.4.7), as "honest context a rider can use" (`backend/cache.py:96-97`). Dropped, that group's trains leave the map from the swap until it decodes; kept, the envelope must name two generations for one archive, and the old one stays alive while they are served (3.1, 3.10). NJ Transit is one system, so a failed poll keeps its whole envelope under the generation it was decoded under and the question does not arise for it (`backend/pollers.py:379-380`). How often a swap meets a failed group is not measured; the subway changed once in runs 400 to 481 (3.2's table). *Recommendation: yes, dropped: what they lose is at most 600 s of trains already shown as stale, and the envelope keeps one stamp per archive.*
+
+**Q23. When one bus borough's publication changes, should the build download all six and write a whole new directory, rather than keep a record of which borough wrote each route and rebuild only that borough's routes; and should a bus refresh in which any borough fails be `failed`, keeping the live directory whole?** The build keeps no borough archive (`backend/bus_static.py:211`), takes a route from the first borough that has it (`:128`), and records in its manifest only `routes`, `failed` and `built_at` (`:246-249`), so a route a changed borough drops can leave only by a rebuild from all six or by a new record (3.1). A rebuild downloads 54,633,368 bytes at today's sizes (2.1). The six archives' Last-Modified values fall within four seconds of each other (2026-10-16 15:14:41 to 15:14:45 UTC, `probe_headers.py`, 2.2), so the one change read moved all six. A borough that failed at the cold start wrote nothing, so its recovery adds its routes to the live directory's under either answer (3.1). Today a failed borough is logged and skipped and the other five are kept (`backend/bus_static.py:239-242`). *Recommendation: yes to both: rebuild all six, since they publish together, and keep the live directory over a partial one.*
+
+**Q24. Should `AlertFeed` carry, per system, the stamp of the generation the server holds, and the page join a system's alerts to its stations only while its own stamp for that system matches?** Alerts carry no generation today: `AlertFeed` has no such field (`backend/models.py:956-968`), each alert's stops are the publisher's own `informed_entity` ids, kept as they arrive (`backend/feeds/alerts.py:349-354`), and 4.4's list of envelopes that gain `static_generations` does not name it. The page joins alerts by `system|stationId` (`frontend/helpers.js:5229-5235`) for the subway, LIRR, Metro-North, the ferry and NJ Transit (2.5.3), so NJ Transit's alerts land on whichever station the tab holds under the id they name. That id follows the publisher's current numbering, which a held table can lag: of the 172 ids production served from the 2026-11-01 archive, 101 named another station in the 2026-11-06 publication and 22 were gone (ledger:610). A stamp would tell the page that its table and the server's disagree, not that the alert's ids match either, since no generation decodes them: while the server itself holds a schedule behind the publisher, the stamps agree and the join is as exposed as today. *Recommendation: yes; while the stamps differ the page leaves that system's alerts off its stations, since an alert on another station misleads where one left off only omits, and the window lasts only until the reload lands (3.7).*
+
+**Q25. Should the refresh worker start no build until each cold-start warmup has returned or ended its first attempt, and the bus build has returned?** The lifespan starts the five warmups and the bus build as concurrent tasks (`backend/main.py:343-357`); each warmup loops until it succeeds, on rungs of 15, 30, 60 and then 300 s (`backend/warmups.py:164`, `:215`, `:288`, `:341`, `:414`; `backend/main.py:125`, `:163-165`), and the bus index builds once (`backend/main.py:357`, `backend/bus_static.py:262-309`). Under 4.2 each warmup hands its archive to the worker where it returns, and NJ Transit's first decodes can trigger a check at once (3.2), so after a Redeploy that loads a still-behind archive the worker can build a second NJ Transit generation while the other archives still load. What that costs is not measured: 2.1 measured memory with the sets loaded one archive after another, and NJ Transit's public stand-in alone peaked at 99.5 MB under tracemalloc during gate and load (2.1, 3.10). On the eight cold starts of 2.1 the last archive was promoted 13 to 41 s after the first (3.9), and the bus build's end is dated by no record read (2.1). A failing warmup never returns, so a wait on every return alone would hold NJ Transit's checks back for as long as another archive's upstream is down. *Recommendation: yes, so 3.10's bound holds from the first refresh, with a first attempt that fails counted as ended, so an archive that is down holds no check back; a later retry of that archive can still build beside a refresh, which this leaves open.*
 
 ### 5.3 Out of scope
 
@@ -3485,8 +3736,9 @@ its day one, with `njt_mint_allowance` beside them.
 ### 6.0 Step 0: the monitor's identity line (no deploy), and the channel if Q5 says here
 
 **What it builds.** 4.6's first item: `njt-static` prints the API archive's sha256, `content` digest, bytes, member sizes, trips, `stop_times` and `calendar_dates` rows and any `ETag` or `Last-Modified`
-the response carried, on the run's one token; the four public static lines print the sha256, `content`, `ETag` and `Last-Modified` of what they downloaded. If Q5 puts the channel in the repository,
-it lands here as its own commit.
+the response carried, on the run's one token; the four public static lines print the sha256, `content`, `ETag` and `Last-Modified` of what they downloaded. If Q5's answer puts the channel in Step 0
+rather than on its own branch, it lands here as its own commit. Under Q5's recommendation, (a) on its own small
+branch before Step 1 (3.6), it is not one of these six steps.
 
 **Deploys:** no.
 
@@ -3498,7 +3750,13 @@ run prints the API archive's identity, and the NJ Transit mint count per run sta
 through a fake fetcher that serves a committed archive with and without `ETag` and
 `Last-Modified` and counts POSTs to the token URL; they assert the printed sha256 and sizes
 against the archive's own, and exactly one token POST per run across `njt-static` and
-`njt-realtime`. The field witness is the run log itself.
+`njt-realtime`. The same file gains one case each through `check_subway_static`,
+`check_railroad_static`, `check_path_static` and `check_ferry_static`
+(`backend/scripts/contract_monitor.py:1809`, `:1865`, `:1931`, `:1987`) over their committed
+fixtures zipped, with and without `ETag` and `Last-Modified`, asserting the printed sha256 and
+`content` against the bytes the fake fetcher served; each case truncates, once it is written, the
+temp copy its line parses (`:1656-1659`, the subway's at `:1678-1682`), so a hash taken from that
+copy differs from the served bytes'. The field witness is the run log itself.
 
 **Mutations, each one line the witness must catch:**
 
@@ -3512,16 +3770,29 @@ against the archive's own, and exactly one token POST per run across `njt-static
    truncates: the printed hash is the truncated file's.
 
 **Watch.** Two scheduled runs, first attempts, each printing the identity line and one mint.
-Their two sha256 values for an unchanged publication answer Q17's question: equal, and NJ Transit's check could compare by sha256 alone; different with equal `content`, and it must compare `content`, as 3.1 proposes.
+Their two sha256 values for an unchanged publication settle the point Q17's recommendation names: equal, and NJ Transit's check could compare by sha256 alone; different with equal `content`, and it must compare `content`, as 3.1 proposes.
 
 ### 6.1 Step 1: NJ Transit's generation, swap and refresh on a timer, no mint
 
 **What it builds.** For NJ Transit only: the generation and its pure builder in a thread (4.1);
 `app.state.static["njt"]` and the readers that take it once (`_refresh_njt`, `/api/njt-stops`,
 `/api/njt-routes`, `/api/njt-arrivals`, `/healthz`'s NJ Transit block); live state stamped with
-its generation (4.3); the refresh worker on Q2's timer, comparing by `content`, under a cold start's gates (3.3), one refresh at a time; the borrow-only token path (4.1); and
-`static_archives.njt`'s fields of 3.5 (4.5), so the watch can see a check happen. The whole
+its generation (4.3); the refresh worker on Q2's timer, comparing by `content`, under a cold start's gates (3.3), one refresh at a time; the validity trigger of 3.2 (Q19); the borrow-only token path (4.1); and
+`static_archives.njt`'s fields of 3.5 (4.5), so the watch can see a check happen. The `content` digest moves from
+`backend/scripts/contract_monitor.py`, where Step 0 writes it, into `backend/static_shared.py`,
+which the monitor already imports (`backend/scripts/contract_monitor.py:81`), so one function
+computes both sides of Step 5's comparison; Step 0 cannot put it there, since `railway.json`
+watches `/backend/**` outside `backend/tests/` and `backend/scripts/` (`railway.json:6-8`). The whole
 parse is dropped if Q14 says so.
+
+**What it leaves to Step 3.** Until Step 3 the page does not follow a swap: an open tab keeps
+the tables it loaded (2.5.4), and a reload within the hour can take `/api/njt-stops` from the
+HTTP cache (`backend/cache.py:373`). After a swap of a publication that renumbers its stops, as
+2026-11-03's did, such a tab opens boards by old ids; in that renumbering 101 of the 172 ids
+production served named another station (ledger:610). That is the state a hand Redeploy leaves
+today (3.9), and the state every tab and production's own board were in before production loaded
+that renumbering: at 2026-11-07 00:18:55 UTC its board at 112, titled Newark Penn Station,
+listed Morris & Essex trains (ledger:653). The order is the ledger's (ledger:682-694) and 5.1's item 38.
 
 **Deploys:** yes.
 
@@ -3534,7 +3805,8 @@ service-day boundary and a changing upstream publication without a restart"*
 token server and a fake `getGTFS`: publication B replaces A at a timer tick and
 `static_archives.njt.generation` reads B's identity, with no restart; a bad replacement C, refused by the
 gate, leaves B serving with `last_check: refused` and the gate's reason; the clock crosses B's
-last service day and the next check adopts D; a swap held at the poll's await serves 0 boards
+last service day and a check runs at once with `last_check_trigger: validity`, before the timer's
+next tick, and adopts D; a swap held at the poll's await serves 0 boards
 under the other generation's names, where today it served 100 of 144 (`verify_m4a.py` part E);
 and the refresh sends 0 getToken POSTs in every case, where today's chain sent up to 2 in one
 attempt (`v9_witness.py`, its case V6).
@@ -3551,29 +3823,42 @@ attempt (`v9_witness.py`, its case V6).
   `_httpx_post` over a real socket to a local fake, refusing any other host. Its cases are
   theirs: a token 6 h old, one at `MAX_TOKEN_AGE_S`, one refused at
   request start, one killed mid-download in both server models, bodies cut under
-  `Content-Length`, chunked and close-delimited, and a complete archive with trailing bytes. It
+  `Content-Length`, chunked and close-delimited, and a complete archive with trailing bytes; and two more of 3.4's: a transfer cut by its deadline (T7's shape, 2.7), which must show 0 getToken POSTs from the refresh, a `failed` record with its reason and the live generation byte-identical, and the close-delimited cut again on a borrowed token no poll has yet seen accepted. It
   prints, per case, getToken POSTs from the refresh and in the world, the outcome, the cache's
   bytes unchanged or not, and the token state after.
 - `backend/tests/test_static_generation.py`, new: the builder writes no `app.state` and opens no
-  socket; a 1 ms watcher over the swap sees no tick with a mixed set (the instrument of
-  `verify_m4a.py` part D); the build's longest heartbeat gap is under a tenth of the build's own
-  wall time, the ratio rule A09's arm 1d uses (89 ms against 1,170 ms,
-  ledger:425), where today's inline stretch was 2,813.1 ms
-  (`verify_m4a.py` part D).
+  socket; a builder made to raise on a second build assigns nothing, so `app.state.static["njt"]` is
+  the same object after it, the status is unchanged and the check reads `refused` (3.1, 3.3; the
+  instrument of `verify_m4a.py` part F, 2.4.9); the shortest of three builds' longest heartbeat
+  gaps is under a quarter of the same build timed alone, the rule A09's arm 1d asserts
+  (`docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py:92-96`, `max_gap_ms < s_ms / 4` at
+  `:1089`), whose quarter leaves room for a garbage collection on the worker thread (89 ms
+  against 1,170 ms when the arm was written, ledger:425), where today's inline stretch was 2,813.1 ms
+  (`verify_m4a.py` part D); and a poll held at its await across a swap serves 0 boards under the other generation's names (the instrument of `verify_m4a.py` part E), which catches mutation 2.
 
 **Mutations:**
 
-1. The generation's fields assigned one at a time, as `backend/warmups.py:442-473` does: the
-   watcher sees a mixed tick.
+1. The generation's fields built and assigned one at a time, as `backend/warmups.py:442-473`
+   does: with one builder made to raise on the second build, `app.state` holds new fields beside
+   old ones (3 new and 4 old when `build_njt_route_shapes` raised, `verify_m4a.py` part F), where
+   the test asserts that nothing changed. A 1 ms watcher on the loop cannot see this mutation:
+   the block holds no await, and 0 of 395 ticks saw a mixed set (2.4.1).
 2. The poll reading `app.state.static["njt"]` again after its await: the held swap serves a row
    under the other generation's names.
 3. The refresh calling plain `njt_auth.njt_post(url, {})`, as `backend/njt_static.py:773` does:
    the `MAX_TOKEN_AGE_S` case counts 1 getToken POST from the refresh, as
    `m9_token_during_refresh.py` measured today's chain doing (its case R2).
-4. `asyncio.to_thread` removed around the build: the heartbeat gap passes a tenth of the build.
+4. `asyncio.to_thread` removed around the build: the shortest heartbeat gap passes a quarter of
+   the build timed alone.
 5. The decorative gate run in cold-start mode (`cache_serves` false): bad geometry C is promoted
    over B with a degraded member instead of refused.
 6. A refused candidate clearing the live generation: `/api/njt-stops` serves `[]` after C.
+7. The validity trigger removed: D is adopted only at the next timer tick, and `last_check_trigger`
+   reads `timer`.
+8. A second NJ Transit poll started at the swap beside the one in flight: the in-flight poll,
+   holding the old generation, ends last and overwrites the new poll's rows.
+9. The refresh calling `invalidate` on a refusal: in the refused case the cache holds no token after the refresh, before any poll has met the refusal itself (`backend/njt_auth.py:1040-1045`).
+10. The refresh calling `confirm` on its 200: on the borrowed token no poll had seen accepted, the cut close-delimited 200 leaves it read as accepted and no longer fresh (`backend/njt_auth.py:1227-1231`).
 
 **Watch.** Its deployment record to `success`, and `static_archives.njt.promoted_at` set by the
 new process; then two scheduled runs, each `production:njt-schedule` PASS or a FAIL naming what
@@ -3585,8 +3870,10 @@ its promotion is read; if not, the acceptance rests on the witnesses, and the wa
 ### 6.2 Step 2: the evidence triggers, the witnesses, and the operator surfaces
 
 **What it builds.** The MISS count and the stop witness in the decoder (4.3); a check at once
-on `njt-schedule-behind`'s run and on Q9's MISS trigger, and Q3's rungs while the evidence
-holds; the last-stop name withheld by Q8's marks; Q4's code and, if Q8 and Q9 say a code, the
+on `njt-schedule-behind`'s run, at the start of a MISS run (Q9) and on Q8's stop trigger, and Q3's
+rungs while the evidence
+holds; the last-stop name withheld by Q8's marks; Q4's code, with `production:healthz`'s WARN
+on it beside a refused upstream line if Q4 says so (4.6), and, if Q8 and Q9 say a code, the
 widened `njt-schedule-behind`; the monitor's "the refresh did not take" (4.6) and the model and
 README notes (4.5, 4.10).
 
@@ -3599,33 +3886,53 @@ a restart"*, now in each of the three incidents' shapes, and F07's remedy for th
 0) the MISS trigger starts a check and the new publication is adopted, the mismatch rule having
 seen nothing; on 2026-11-22's (42 of 50 joined trips refuted, 8 missed) the behind run starts
 one; on run 445's (the publication unchanged while the trains contradict it) the rungs retry
-until the fake publishes and stop when the evidence ends; and in steady state (the committed
-pair's 4 ADDED misses of 90, 0 stale) nothing triggers.
+until the fake publishes and stop when the evidence ends; on 2026-11-22's, with the misses thinned
+under Q9's trigger while the trains are still refuted, the rungs continue while the behind run is
+open; and in steady state (the committed
+pair's 4 ADDED misses of 90, 0 stale) nothing triggers. With three successive candidates refused
+by the gate, Q4's code is raised on the refusal that reaches Q4's band, the third under its
+recommendation, while `/healthz` answers 200.
 
 **Witness.**
 
 - `backend/tests/test_njt_refresh_evidence.py`, new, over the committed fixtures:
   `njt_drift_2026-11-22.json` (8 of 50 missed, 42 refuted, as `test_njt_drift_incident.py:29`
-  asserts), `njt_tu.pb` with `njt_gtfs` (4 ADDED of 90, 0 stale), and 2026-11-03's stand-in
-  (50 of 50). It asserts each shape's MISS share, mismatch count and stop-witness counts, and which
-  trigger fires.
+  asserts), `njt_tu.pb` with `njt_gtfs` (4 ADDED of 90, 0 stale; 0 calls absent and 14 of 1,130 pairs
+  above 160 km/h, 2.6b's arm A), 2026-11-03's stand-in (50 of 50), and a stop stand-in committed
+  with its generator: `njt_tu.pb` with every stop id carried into the new numbering by 2.6b's
+  station join, as arm D1 carries it, and every trip id replaced by one `njt_gtfs` lacks, since
+  2026-11-03 moved both (2.6a), decoded under `njt_gtfs` (arm D1: 215 of 1,231 calls absent, 20
+  distinct ids, on 85 of 90 trips, 2.6b). It asserts each shape's MISS share, mismatch count and stop-witness counts, and which
+  trigger fires, and that a trip update marked ADDED but given a trip id counts as added.
 - `docs/reviews/audit-2026-10-12/a06_njt_refresh_evidence.py`, new: the real app with a fake
-  TripUpdates feed and a fake `getGTFS` driven through the three shapes and run 445's lead. It
+  TripUpdates feed and a fake `getGTFS` driven through the three shapes, run 445's lead and three successive candidates the gate
+  refuses. It
   prints, per shape, the instant each trigger fired, every check with its outcome, the instant of
   adoption, the codes `/healthz` raised and when, and `production:njt-schedule`'s line as the
   monitor would print it over that `/api/status`.
 
 **Mutations:**
 
-1. ADDED trains counted as misses (the `njt:` key not excluded): steady state triggers on every
-   poll.
+1. ADDED trains counted as misses (neither `schedule_relationship` nor the `njt:` key read): steady state triggers on every
+   poll. With the `njt:` key read alone, the trip update marked ADDED but given a trip id counts as a miss.
 2. The MISS trigger gated on `can_judge_schedule` (`backend/feeds/njt.py:609-613`): 2026-11-03's
    shape never triggers.
 3. The evidence condition dropped from the rungs: checks continue after the evidence ends.
-4. The withholding reverted: 2026-11-03's stand-in names another station as a refuted train's
-   last stop.
+4. The withholding reverted: on the stop stand-in an unjoined train is named by the held
+   table's name for its last stop, where withheld it reads its line and number
+   (`backend/feeds/njt.py:726-732`); under the old table the last call names another station on
+   62 of arm D1's 90 trips (`diag_last_stop.py`, 2.6b).
 5. `production:njt-schedule`'s FAIL text back to "redeploy": its test fails.
-6. Q4's code added to `HEALTH_GATING_CODES`: `/healthz` answers 503 on a refused refresh.
+6. Q4's code added to `HEALTH_GATING_CODES`: `/healthz` answers 503 from the refusal that reaches Q4's band, the
+   third of the witness's refused candidates under Q4's recommendation.
+7. The stop trigger dropped: a stand-in whose trip ids all join the held trips but whose calls
+   name 2026-11-03's new stop ids never triggers a check.
+8. The rungs ended on one signal alone: on 2026-11-22's shape, with the misses thinned under the
+   trigger while the trains are still refuted, the rungs stop and the archive waits for its timer.
+9. The MISS trigger fired on every decode past its threshold rather than at a MISS run's start: a
+   count moving between 2 and 3 checks at each crossing.
+10. If Q4 asks for the WARN, that arm dropped: `production:healthz` FAILs on
+   `static-refresh-failing` in a run whose `njt-static` line refused the same publication.
 
 **Watch.** Its deployment record to `success`; two scheduled runs, first attempts, by run
 number, each with `production:njt-schedule` and `production:healthz` as printed; and, between
@@ -3634,49 +3941,72 @@ production.
 
 ### 6.3 Step 3: the page's stamp and reload
 
-**What it builds.** 4.4's stamps on the twelve static endpoints and the live envelopes, the
-`?g=` rule, and 4.7's page: refetch on a changed stamp, registries replaced, silent or said by
+**What it builds.** 4.4's stamps where a generation or a committed file stands behind them,
+which before Step 4 are `/api/njt-stops`, `/api/njt-routes` and `/api/airtrain`, the NJ Transit
+envelope and its arrivals board; for those three endpoints the
+`?g=` rule, and 4.7's page: refetch on a changed stamp, registries replaced, joins made only within one stamp, arrivals requests carrying their table's stamp, silent or said by
 Q7.
+
+**What waits for Step 4.** The other nine static endpoints (`/api/subway-stops`,
+`/api/subway-routes`, `/api/railroad-stops`, `/api/railroad-routes`, `/api/path-stops`,
+`/api/path-routes`, `/api/ferry-stops`, `/api/ferry-routes` and `/api/bus-route/{route_id}`) and
+the subway, railroad, PATH and ferry envelopes and boards gain their stamps in Step 4, with the
+generations whose `content` they carry (6.1 builds NJ Transit's alone). Until then 4.7's page,
+built here for every archive, treats an archive its envelope names no stamp for as unchanged.
 
 **Deploys:** yes (`/frontend/**` and `/backend/**` are watched).
 
-**Acceptance, in the auditors' terms.** F06's last clause, *"its stations/routes appear in an
-already-open browser without a manual reload"* (audit-2026-09-05.md:206); A06's
+**Acceptance, in the auditors' terms.** A06's
 *"ensure browsers discover changed static generations"*
 (ledger:267); and F07's *"Let clients detect changed static
-versions and update their registries safely"* (audit-2026-09-05.md:216).
+versions and update their registries safely"* (audit-2026-09-05.md:216), here for NJ Transit's,
+the one generation a refresh swaps at this step. F06's last clause, *"its stations/routes appear in an
+already-open browser without a manual reload"* (audit-2026-09-05.md:206), needs a component
+that recovers without a deployment, which Step 4 builds, so it is accepted there (6.4).
 Concretely, in the A06 witness's world: after the backend swaps NJ Transit's generation, the
 open page makes one request per NJ Transit static loader and none for the others, draws every
-changed coordinate where today it draws 0, and holds no entry for an id the new generation
-lacks.
+changed coordinate where today it draws 0, leaves no line of the replaced payload drawn, and
+holds no entry for an id the new generation lacks.
 
 **Witness.** `docs/reviews/audit-2026-10-12/a06_frontend_static_once.mjs`, rewritten to pin the
 repair: the production page in `node:vm` as today, the fixtures carrying the stamp, the backend
-swapping one archive's generation at t = 360 s, and an HTTP cache modelled by URL under each
-response's `Cache-Control`. It prints, per loader, the static requests after the swap, the v2
-coordinates drawn, the stale `njtStopCoords` entries, the duplicate registry entries, and its
+swapping one archive's generation at t = 360 s and again later in its 25 simulated hours
+(2.5.4), the page reloaded once within the hour of its boot and after the first swap, with what
+it draws before its first poll printed apart, and an HTTP cache modelled by URL under each
+response's `Cache-Control` and `ETag`. It prints, per loader, the static requests after the swap, the v2
+coordinates drawn, the v1 coordinates still drawn after the swap, the stale `njtStopCoords` entries, the duplicate registry entries, the trains glided under an envelope whose stamp the page did not yet hold, the arrivals requests sent without `?g=`, and its
 old record's BEFORE line. `frontend/helpers.test.js` gains the stamp comparison as a pure
 function.
 
 **Mutations:**
 
 1. The page ignoring the envelope's stamp: 0 v2 coordinates drawn, today's finding.
-2. The refetch under the bare URL rather than `?g=`: the modelled cache answers with the old body
-   for up to 3600 s.
+2. The bare URL served `public, max-age=3600` as today (`backend/cache.py:373` left as it is):
+   the reloaded page draws the old generation's coordinates from the modelled cache until its
+   first poll names the new stamp, where under `no-cache` it revalidates and draws the new at once.
 3. `njtStopCoords` refilled without being cleared: a gone id keeps its coordinates.
 4. The registry appended to, as `frontend/systems/shared.js:2816` does: duplicate stations.
 5. Every archive refetched on any change: requests for archives whose stamp did not change.
-6. The stamp read from the first poll only: a second swap is never seen.
+6. The comparison made only until the first refetch: the second swap is never seen.
+7. The glide joining across stamps: a train under an envelope whose stamp the page does not yet hold glides toward a coordinate of the old generation.
+8. Arrivals URLs built without `?g=`: the witness counts them, and an id the new generation gave another station is answered under that station's names, not as stale.
+9. A route layer not cleared before the redraw: v1 coordinates stay drawn after the swap, where the answer is 0.
 
 **Watch.** Its deployment record to `success`; two scheduled runs, first attempts, by run
-number; and read-only GETs of the twelve static endpoints whose stamp headers match
-`static_archives`' identities.
+number; and read-only GETs of `/api/njt-stops`, `/api/njt-routes` and `/api/airtrain`, whose
+stamp headers match the prefix of `static_archives.njt.generation.content` and the committed
+AirTrain file's sha256 (`data/airtrain_jfk.json`, 4.4).
 
 ### 6.4 Step 4: the other five archives and the bus index, with F06/A05's per-component retry
 
 **What it builds.** 4.1's generations for the subway, LIRR, Metro-North, PATH and the ferry,
-and the bus index's directory per generation; their conditional-GET timers (Q2); the
-per-component retry (4.2); one generation per poll for PATH (4.3); the subway builders taking a
+and the bus index's directory per generation; their conditional-GET timers (Q2) and, for each
+archive with a span, the validity trigger of 3.2; the
+per-component retry (4.2); one generation per poll for PATH (4.3); the live-state rule of 3.1 and
+4.3 for the five archives (5.1 item 10: anchors of another generation dropped, retained trains
+never merged across generations, `path_identity`'s new epoch, ferry buckets and the subway,
+railroad, PATH and ferry arrivals carrying their generation); 4.4's stamps and `?g=` rule on the
+other nine static endpoints and on the subway, railroad, PATH and ferry envelopes and boards; the subway builders taking a
 path; Q10's answer on the 30-day rule; and the whole parses dropped if Q14 says so.
 
 **Deploys:** yes.
@@ -3687,7 +4017,7 @@ manual reload"* (audit-2026-09-05.md:206). A05's: *"Verify boot with one failed
 system, subsequent upstream recovery and no process restart"*
 (ledger:257). F07's again, for each of the five
 (audit-2026-09-05.md:218). Concretely: Metro-North failing at boot is retried on
-its rungs and served when it recovers, LIRR serving throughout, where today it is tried once in
+Q20's rungs and served when it recovers, LIRR serving throughout, where today it is tried once in
 100 shortened intervals (the F06 witness, run for this design on 2026-11-28); a failed bus
 borough is rebuilt; and an unchanged public archive's check downloads 0 body bytes.
 
@@ -3699,34 +4029,54 @@ borough is rebuilt; and an unchanged public archive's check downloads 0 body byt
   record's 1 attempt per system beside them.
 - `docs/reviews/audit-2026-09-05/f07_static_never_refreshes.py`, its remaining five arms: per
   archive, checks made, 304s, body bytes downloaded, promotions and refusals.
-- `docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py`, unchanged and kept green: arms 1 and
-  1d drive the real subway warmup, which this step restructures.
+- `backend/tests/test_static_generation.py`, extended to the five archives and the bus index
+  with 4.8's tests: each builder, given an archive outside `data/gtfs_static`
+  (`backend/static_data.py:34`), reads that archive; a subway, railroad, PATH and ferry poll held
+  at its fetch across a swap serves 0 rows under the other generation's names; the PATH poll's
+  decode and matcher read one generation; and a bus-route request made during a build reads one
+  directory's route set.
+- `docs/reviews/audit-2026-10-12/a06_frontend_static_once.mjs`, a second world: Metro-North
+  absent at boot from `/api/railroad-stops`, `/api/railroad-routes` and the railroad envelope,
+  and its generation assigned at t = 360 s. It prints the Metro-North stations and routes the
+  open page holds after the next poll; today the railroad loaders stop at their first truthy
+  answer (`frontend/helpers.js:5480`, `frontend/map.js:282`, `:284`), so an answer without
+  Metro-North is the last they take.
+- `docs/reviews/audit-2026-10-12/a09_unbounded_upstream.py`, kept green: its arms 1c and 1d drive the
+  real subway warmup, which this step restructures (`a09_unbounded_upstream.py:136-137`), and its
+  arms 1d, 2 and 3 call `static_data.load_subway_route_shapes()` and
+  `static_data.load_subway_stops()` with no path (`:1063`, `:1130`, `:1179`). Either those
+  loaders keep their signatures beside the builder that takes a path, and the script is
+  unchanged, or this step passes the path in the script, with arms 2 and 3 still reproducing.
+- `backend/tests/test_static_generation.py`, a serialization case: two archives' checks fall due at once, each builder stubbed to record its entry and exit. It asserts the second builder enters after the first returns, and prints the most builds in flight at once, which one refresh at a time (3.10) holds to one.
 
 **Mutations:**
 
 1. The railroad warmup returning once any system has stops (`backend/warmups.py:226`):
    Metro-North is never retried.
-2. The conditional headers dropped: each unchanged subway check downloads 5,606,305 bytes (its
+2. The conditional headers dropped: each unchanged subway check downloads the served archive's
+   whole body where it should download 0 bytes (in production 5,606,305 bytes, its
    `Content-Length`, read by `download.sh` on 2026-11-28).
 3. `_refresh_path` reading `path_station_order` from `app.state` after its await
    (`backend/pollers.py:933`): the matcher reads another generation than the decode.
 4. The bus build writing into the live directory, as `backend/bus_static.py:169-176` does: a
    request during a build reads a mixed route set.
-5. A second refresh worker started: two archives build at once, and the witness's tracemalloc peak
-   passes the live set plus one archive.
+5. A second refresh worker started: two archives build at once, and the serialization case counts 2 builds in flight.
 6. A subway builder reading `static_data.SUBWAY_GTFS_ZIP` rather than its argument: the builder
    test, given a path elsewhere, reads the wrong archive.
+7. A stamp for an archive the page's tables never carried ignored: the second world's open page
+   never draws Metro-North's stations.
 
 **Watch.** Its deployment record to `success`; two scheduled runs, first attempts, by run
-number; and `static_archives` read for all six archives and the bus index, each `last_check`
-`unchanged` or `promoted` at its period.
+number; `static_archives` read for all six archives and the bus index, each `last_check`
+`unchanged` or `promoted` at its period; and read-only GETs of the nine static endpoints that
+gain their stamps here, whose stamp headers match `static_archives`' identities.
 
 ### 6.5 Step 5: the monitor's held-versus-upstream check for every archive
 
 **What it builds.** 4.6's third item: one production line comparing, per archive, the identity
 production holds with what the run downloaded: the `content` digest for NJ Transit and for the public archives the run already downloads, and for the bus index a conditional GET of each borough
-with production's `ETag`, which answers 304 with no body while they match (`probe_headers.py`,
-2026-11-28). Its verdict is 3.5's rule: PASS when they match; FAIL when they differ and production checked that archive after the run's download, or its last check was refused or failed, or it has not checked for more than one period; WARN otherwise, production's check of it not yet due.
+with the `ETag` production publishes for that borough (`static_archives.bus.generation.boroughs`, 3.1), which answers 304 with no body while they match (`probe_headers.py`,
+2026-11-28). Its verdict is 3.5's rule: PASS when they match; FAIL when they differ and production checked that archive after the run's download yet holds a generation promoted before it, or its last check was refused or failed, or it has not checked for more than one period; WARN otherwise, production's generation promoted after the run's download or its check of it not yet due.
 
 **Deploys:** no.
 
@@ -3737,7 +4087,7 @@ are (`production:njt-schedule`), and the monitor reads nothing of production but
 (`backend/scripts/contract_monitor.py:2709-2751`).
 
 **Witness.** `backend/tests/test_contract_monitor.py`, new cases over a fake `/api/status` and
-fake upstreams: the same identity PASSes; a newer upstream that production has not checked since the download, within its period, WARNs; a newer upstream that production checked after the download FAILs; a newer upstream unchecked past its period FAILs; a refused check FAILs; and the bus comparison
+fake upstreams: the same identity PASSes; a newer upstream that production has not checked since the download, within its period, WARNs; a newer upstream that production checked after the download FAILs, in two forms, one renumbering its trip ids under the same `service_through` and one of the held archive's byte size; a newer upstream unchecked past its period FAILs; a refused check FAILs; a production generation promoted after the download, not the run's, WARNs; a fake `/api/status` carrying the identity the app's own `content` function computed over the bytes the fake upstream serves PASSes; and the bus comparison
 downloads no body.
 
 **Mutations:**
@@ -3746,9 +4096,9 @@ downloads no body.
    renumbers its trips and keeps its last service day passes.
 2. Archives compared by size: a same-size republication passes.
 3. `railroad_LIRR` and `railroad_MNR` read crosswise: both lines report the other's archive.
-4. The bus boroughs downloaded rather than conditionally fetched: the test counts their bodies,
-   54,633,368 bytes for today's six (their `Content-Length`s, read by `download.sh` on
-   2026-11-28).
+4. The bus boroughs downloaded rather than conditionally fetched: the test counts the six fake
+   bodies where it should count none (in production 54,633,368 bytes for today's six, their
+   `Content-Length`s, read by `download.sh` on 2026-11-28).
 5. FAIL on any difference whatever `last_checked_at` says: a refresh not yet due fails the run.
 
 **Watch.** No deploy; two scheduled runs, first attempts, by run number, each printing the new
